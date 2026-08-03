@@ -1,0 +1,25 @@
+{
+  "name": "orekenoid",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 8080",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 8080",
+    "test": "vitest run",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@dimforge/rapier2d-compat": "latest",
+    "pixi.js": "latest"
+  },
+  "devDependencies": {
+    "@playwright/test": "latest",
+    "@types/node": "^26.1.2",
+    "esbuild": "^0.28.1",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}

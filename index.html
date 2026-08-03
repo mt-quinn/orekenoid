@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080b0c" />
+    <title>Orekenoid — Extraction Test</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="viewport" id="gameHost" aria-label="Orekenoid game">
+        <div class="aperture-mark aperture-mark-a"></div>
+        <div class="aperture-mark aperture-mark-b"></div>
+
+        <header class="hud-top">
+          <div class="objective" id="objective">
+            <strong id="objectiveTitle">SECURE ORE</strong>
+            <span id="objectiveDetail">Break resource bricks. Catch the drops.</span>
+          </div>
+          <div class="place">
+            <strong id="biomeLabel">SURVEYOR'S KARST</strong>
+            <span id="bandLabel">B1</span>
+            <span id="depthLabel">126m</span>
+          </div>
+        </header>
+
+        <section class="tutorial" id="tutorial" aria-label="Controls">
+          <header>CONTROLS</header>
+          <ul id="tutorialList"></ul>
+        </section>
+
+        <div class="forge-compass" id="forgeCompass" aria-hidden="true">
+          <i></i><span id="forgeCompassRange"></span>
+        </div>
+
+        <div class="arrival" id="arrival" aria-live="polite"></div>
+        <div class="toast" id="toast" aria-live="polite"></div>
+
+        <div class="resonance" id="resonance" aria-live="polite"></div>
+
+        <section class="crafting" id="crafting" aria-label="Refit Bay">
+          <header class="forge-head">
+            <div class="forge-title">
+              <b>REFIT BAY</b>
+              <small id="craftingHint">Click or press a number. ESC closes.</small>
+            </div>
+            <div class="forge-stats" id="forgeStats"></div>
+          </header>
+          <div class="forge-bank" id="forgeBank"></div>
+          <div class="forge-body" id="craftingList"></div>
+        </section>
+
+        <footer class="hud-bottom">
+          <div class="cargo" id="cargo"></div>
+          <div class="bank-notice" id="bankNotice"></div>
+          <div class="hints" id="instructions"></div>
+          <div class="stakes">
+            <div class="stat balls" id="ballsStat">
+              <span>BALLS</span>
+              <div class="pips" id="ballPips"></div>
+            </div>
+            <div class="stat load" id="loadStat">
+              <span>LOAD</span>
+              <strong id="claimValue">0</strong>
+              <small id="claimDetail">/ 18 ARMOR</small>
+            </div>
+            <div class="stat damage" id="damageStat">
+              <span>DAMAGE</span>
+              <strong id="damageValue">0</strong>
+            </div>
+            <div class="health" id="integrityStat">
+              <div class="health-head">
+                <span>HEALTH</span>
+                <b id="soakValue">ARMOR 18</b>
+              </div>
+              <div class="health-read">
+                <strong id="healthValue">40</strong>
+                <small id="healthMax">/ 40</small>
+              </div>
+              <i class="health-bar"><b id="healthBar"></b></i>
+            </div>
+          </div>
+        </footer>
+
+        <div class="telemetry" id="telemetry"></div>
+
+        <section class="deployment loading" id="briefing" aria-labelledby="deploymentTitle" aria-busy="true" data-render-state="loading">
+          <div class="deployment-loader" id="deploymentLoader" role="status">
+            <b>INITIALIZING PADDLES</b>
+            <i aria-hidden="true"></i>
+          </div>
+          <header class="deployment-heading">
+            <div>
+              <h1 id="deploymentTitle">Choose a paddle</h1>
+            </div>
+          </header>
+
+          <div class="paddle-bay">
+            <button class="paddle-option needle" type="button" data-chassis="0" aria-pressed="false">
+              <span class="field-window" aria-hidden="true"></span>
+              <span class="option-name"><b>Needle</b><small>quick / narrow</small></span>
+              <span class="option-data"><b>7×15</b><small>FIELD</small></span>
+              <span class="option-data"><b>12</b><small>ARMOR</small></span>
+              <span class="option-data"><b>30</b><small>HEALTH</small></span>
+              <span class="option-speed"><i style="--speed: 92%"></i><small>PADDLE SPEED</small></span>
+            </button>
+
+            <button class="paddle-option surveyor" type="button" data-chassis="1" aria-pressed="false">
+              <span class="field-window" aria-hidden="true"></span>
+              <span class="option-name"><b>Surveyor</b><small>balanced</small></span>
+              <span class="option-data"><b>11×11</b><small>FIELD</small></span>
+              <span class="option-data"><b>18</b><small>ARMOR</small></span>
+              <span class="option-data"><b>40</b><small>HEALTH</small></span>
+              <span class="option-speed"><i style="--speed: 68%"></i><small>PADDLE SPEED</small></span>
+            </button>
+
+            <button class="paddle-option bastion" type="button" data-chassis="2" aria-pressed="false">
+              <span class="field-window" aria-hidden="true"></span>
+              <span class="option-name"><b>Bastion</b><small>wide / heavy</small></span>
+              <span class="option-data"><b>15×9</b><small>FIELD</small></span>
+              <span class="option-data"><b>28</b><small>ARMOR</small></span>
+              <span class="option-data"><b>60</b><small>HEALTH</small></span>
+              <span class="option-speed"><i style="--speed: 46%"></i><small>PADDLE SPEED</small></span>
+            </button>
+          </div>
+
+          <p class="armor-rule">At the end of a game, any bricks remaining in the arena over your paddle's Armor will be deducted from your paddle's Health.</p>
+
+          <footer class="deploy-row">
+            <button id="beginButton" type="button" disabled><span id="beginLabel">CHOOSE</span> <i>→</i></button>
+          </footer>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
