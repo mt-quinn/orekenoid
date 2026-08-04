@@ -161,9 +161,13 @@ Do not build all seven provinces. Add one **vertical slice of contrast** to the 
 
 This slice tests the entire design thesis at low cost: whether a biome can change arena placement, whether an authored location can remain spatially open, whether an upgrade transforms all future Breakout, and whether a secret can be readable without explanation.
 
-## Unresolved product decision
+## Resolved product decision — forgiving expedition (2026-08-04)
 
-This brief assumes **run-based worlds**: death resets geography and capabilities while player knowledge persists. That supports Noita-like opening mastery, but it conflicts with the emotional investment of mapping an almost unbelievable mine. My recommendation is a forgiving expedition model—major cornerstone completions create limited restart anchors—rather than pure full-world permadeath. This must be decided before designing resource economy, map persistence, or average campaign length.
+This was previously open. It is now decided in favour of the **forgiving expedition model**, as recommended: one persistent world per seed, autosaved. Death costs cargo only; banked material, crafted capacity and earned verbs all survive, and cornerstone completions create restart anchors. Geography and capabilities are never reset.
+
+The reasoning: the emotional investment of mapping an almost unbelievable mine is the point, and pure permadeath actively fights the Atlas and annotation systems this brief requires elsewhere. Noita-like opening mastery is preserved through deliberate re-seeding — a player who wants a fresh world starts one — rather than through forced world loss.
+
+Nothing in the resource economy, map persistence, or campaign length should be designed around losing a world. Saves are portable: geology is a pure function of the seed, so a save file is the seed plus an ordered log of world mutations, and can be exported, kept, or handed to another player.
 
 ## Research lineage
 

@@ -252,7 +252,10 @@ button { color: inherit; font: inherit; }
   z-index: auto;
   inset: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  /* heading, expedition, paddle bay, armor rule, deploy row. Only the bay flexes:
+     the chassis previews are the point of this screen, so everything else is
+     content-height and the bay takes whatever is left. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   gap: clamp(10px, 1.4cqw, 20px);
   padding: clamp(20px, 2.8cqw, 40px) clamp(24px, 3.4cqw, 48px) clamp(18px, 2.4cqw, 34px);
   background:
@@ -261,11 +264,12 @@ button { color: inherit; font: inherit; }
   transition: opacity .3s ease, transform .72s cubic-bezier(.16, 1, .3, 1);
 }
 .deployment.hidden { opacity: 0; transform: translateY(-4%); pointer-events: none; }
-.deployment-heading, .paddle-bay, .armor-rule, .deploy-row { transition: opacity .18s ease; }
+.deployment-heading, .paddle-bay, .armor-rule, .deploy-row, .expedition { transition: opacity .18s ease; }
 .deployment-heading, .paddle-bay, .deploy-row { position: relative; z-index: 3; }
 .deployment.loading .deployment-heading,
 .deployment.loading .paddle-bay,
 .deployment.loading .armor-rule,
+.deployment.loading .expedition,
 .deployment.loading .deploy-row { opacity: 0; pointer-events: none; }
 .deployment-loader {
   position: absolute;
@@ -324,7 +328,7 @@ button { color: inherit; font: inherit; }
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 1fr repeat(3, auto);
+  grid-template-columns: repeat(3, 1fr);
   grid-template-rows: minmax(0, 1fr) auto auto;
   column-gap: clamp(9px, 1.05cqw, 16px);
   row-gap: clamp(10px, 1cqw, 15px);
@@ -354,16 +358,29 @@ button { color: inherit; font: inherit; }
   overflow: hidden;
   top: clamp(10px, 1.2cqw, 18px);
   right: clamp(10px, 1.2cqw, 18px);
-  bottom: clamp(92px, 8.5cqw, 126px);
+  /* Clears the stat row and the speed bar. The name no longer sits in the flow, so
+     the window reaches further down the card than it used to. */
+  bottom: clamp(74px, 6.9cqw, 102px);
   left: clamp(10px, 1.2cqw, 18px);
   display: block;
   pointer-events: none;
 }
 .deployment-preview-canvas { position: absolute; inset: 0; display: block; width: 100% !important; height: 100% !important; }
-.option-name { position: relative; z-index: 1; display: grid; align-self: end; min-width: 0; }
-.option-name b { color: #efe1c6; font-family: "Helvetica Neue Condensed Black", "DIN Condensed", "Arial Narrow", sans-serif; font-size: clamp(24px, 2.2cqw, 33px); font-weight: 900; line-height: .86; letter-spacing: -.01em; }
+/* The name labels the preview rather than sharing the stat row.
+   Sharing it never worked: three stat columns leave the name roughly 50px, and a
+   condensed 33px "Surveyor" ran straight through the FIELD figure beside it.
+   Lifting it over the field window gives it the full card width, frees the stat
+   row to spread across three even columns, and keeps the preview full height --
+   which matters, because the preview is what the screen is for. */
+.option-name { position: absolute; z-index: 2; top: clamp(21px, 2.3cqw, 33px); left: clamp(11px, 1.3cqw, 19px); display: grid; gap: 1px; max-width: calc(100% - clamp(22px, 2.6cqw, 38px)); }
+.option-name b {
+  color: #efe1c6; font-family: "Helvetica Neue Condensed Black", "DIN Condensed", "Arial Narrow", sans-serif;
+  font-size: clamp(22px, 2.1cqw, 32px); font-weight: 900; line-height: .86; letter-spacing: -.01em;
+  white-space: nowrap; text-shadow: 0 2px 12px #060705, 0 0 3px #060705;
+}
+.option-name small { text-shadow: 0 2px 10px #060705; }
 .option-name small, .option-data small, .option-speed small { color: #b4a485; font-size: clamp(9px, .78cqw, 12px); font-weight: 800; letter-spacing: .085em; }
-.option-data { position: relative; z-index: 1; display: grid; align-self: end; align-content: end; min-width: clamp(52px, 4.8cqw, 72px); padding-left: clamp(8px, .8cqw, 12px); text-align: right; }
+.option-data { position: relative; z-index: 1; display: grid; align-self: end; align-content: end; min-width: 0; text-align: right; }
 .option-data b { padding-bottom: 2px; border-bottom: 1px solid #6d5e44; font-size: clamp(22px, 2cqw, 30px); line-height: .88; color: var(--ink); font-variant-numeric: tabular-nums; }
 .option-speed { position: relative; z-index: 1; grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
 .option-speed::before { content: ""; grid-column: 1; grid-row: 1; height: 7px; background: repeating-linear-gradient(90deg, #494233 0 2px, #171812 2px 10px); }
@@ -633,3 +650,114 @@ button { color: inherit; font: inherit; }
   color: var(--brass); font-size: clamp(11px, .95cqw, 15px); font-weight: 900; letter-spacing: .12em;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------------------
+   Expedition persistence and the Atlas.
+
+   The Atlas is a full-aperture overlay rather than a corner minimap: at world
+   scale the whole 240x144 mine fits one aperture at 5 px per cell, so there is
+   nothing to pan and no reason to make the player squint at a thumbnail.
+   --------------------------------------------------------------------------- */
+
+.expedition {
+  position: relative; z-index: 3;
+  display: flex; align-items: center; justify-content: space-between; gap: clamp(10px, 1.2cqw, 20px);
+  margin-bottom: clamp(8px, .9cqw, 14px);
+  padding: clamp(9px, 1cqw, 15px) clamp(11px, 1.2cqw, 18px);
+  background: linear-gradient(96deg, #14150f, #1b1810 62%, #12130f);
+  box-shadow: inset 3px 0 var(--ore), inset -1px 0 #3a3529, 0 4px 0 #070806;
+}
+.expedition-read { display: grid; gap: 3px; min-width: 0; }
+.expedition-read b { color: #efe1c6; font-size: clamp(12px, 1.05cqw, 16px); font-weight: 900; letter-spacing: .1em; }
+.expedition-read small { color: #b4a485; font-size: clamp(9px, .8cqw, 12px); font-weight: 700; letter-spacing: .05em; }
+.expedition-actions { display: flex; flex: none; gap: 7px; }
+.expedition-actions button,
+.atlas-actions button,
+.atlas-editor button {
+  border: 1px solid #6d5e44; padding: 8px 12px 7px;
+  background: #23201a; color: #e2d6bd; box-shadow: 2px 2px 0 #080806;
+  font-family: inherit; font-size: clamp(9px, .82cqw, 12px); font-weight: 900; letter-spacing: .1em;
+  cursor: pointer; transition: background .16s ease, transform .16s ease, color .16s ease;
+}
+.expedition-actions button:hover,
+.atlas-actions button:hover,
+.atlas-editor button:hover { background: #332d23; transform: translateY(-1px); }
+.expedition-actions button.primary { border-color: #e1a263; background: #b95a32; color: #21160e; }
+.expedition-actions button.primary:hover { background: var(--ore-hot); }
+.expedition-actions button.danger,
+.atlas-editor button.danger { border-color: #7d4038; color: #e8a79d; }
+.expedition-actions button.danger:hover,
+.atlas-editor button.danger:hover { background: #43221d; }
+.expedition-actions button[hidden] { display: none; }
+
+.save-flash {
+  position: absolute; z-index: 11; right: clamp(14px, 1.5cqw, 26px); top: clamp(12px, 1.3cqw, 22px);
+  padding: 5px 10px 4px; background: rgb(12 14 12 / .9);
+  color: var(--brass); font-size: clamp(9px, .78cqw, 12px); font-weight: 900; letter-spacing: .14em;
+  opacity: 0; pointer-events: none; transition: opacity .3s ease;
+}
+.save-flash.show { opacity: 1; }
+.save-flash.error { color: #ff8f83; box-shadow: inset 0 0 0 1px #7d4038; }
+
+.atlas {
+  position: absolute; z-index: 12; inset: 0;
+  display: none; grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: clamp(7px, .8cqw, 12px);
+  padding: clamp(12px, 1.4cqw, 22px);
+  /* Near-opaque rather than translucent: at .96 the live HUD ghosted through and
+     competed with the map's own labels. */
+  background: #060808;
+}
+.atlas.open { display: grid; }
+.atlas-head, .atlas-foot { display: flex; align-items: center; justify-content: space-between; gap: clamp(9px, 1cqw, 16px); }
+.atlas-title { display: grid; gap: 2px; }
+.atlas-title b { color: #efe1c6; font-size: clamp(13px, 1.2cqw, 19px); font-weight: 900; letter-spacing: .2em; }
+.atlas-title small, .atlas-hint { color: #9e937c; font-size: clamp(9px, .78cqw, 12px); font-weight: 700; letter-spacing: .06em; }
+.atlas-tools { display: flex; align-items: center; gap: clamp(9px, 1cqw, 16px); }
+.atlas-icons { display: flex; gap: 4px; }
+.atlas-icons button {
+  width: 30px; height: 28px; border: 1px solid #4a4335; padding: 0;
+  background: #17180f; color: #cabf9f; font-size: 15px; line-height: 1; cursor: pointer;
+  transition: background .14s ease, color .14s ease, border-color .14s ease;
+}
+.atlas-icons button:hover { background: #26261a; }
+.atlas-icons button[aria-checked="true"] { border-color: var(--ore-hot); background: #35240f; color: #ffd9a3; }
+
+.atlas-stage { position: relative; min-height: 0; overflow: hidden; }
+#atlasCanvas {
+  /* Absolutely positioned and centred with `margin: auto`, which is the point:
+     as a normal grid item the canvas contributed to the height of the row it was
+     being measured against, so any attempt to fit it -- in CSS or in JS -- either
+     failed to resolve or oscillated, and the intrinsic 1200x720 overflowed the
+     stage and painted over the legend and the save buttons. Out of flow, the stage
+     is definite, `max-height` resolves against it, and the fit is stable. */
+  position: absolute; inset: 0; margin: auto;
+  width: auto; height: auto; max-width: 100%; max-height: 100%; aspect-ratio: 1200 / 720;
+  /* One cell must stay one crisp block; smoothing turns the map to mush. */
+  image-rendering: pixelated;
+  background: #070a0b; box-shadow: 0 0 0 1px #3b372c, 0 10px 30px rgb(0 0 0 / .7);
+  cursor: crosshair;
+}
+.atlas-editor {
+  position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 6px; padding: 7px;
+  background: rgb(12 14 12 / .95); box-shadow: 0 0 0 1px #4a4335, 0 6px 18px rgb(0 0 0 / .7);
+}
+.atlas-editor[hidden] { display: none; }
+.atlas-editor input {
+  width: clamp(160px, 22cqw, 280px);
+  border: 1px solid #4a4335; padding: 7px 9px 6px;
+  background: #0d0f0c; color: #e8dcc2;
+  font-family: inherit; font-size: clamp(10px, .85cqw, 13px); font-weight: 700; letter-spacing: .04em;
+}
+.atlas-editor input:focus { outline: 1px solid var(--ore-hot); outline-offset: -2px; }
+
+.atlas-legend { display: flex; flex-wrap: wrap; gap: clamp(8px, .95cqw, 15px); }
+.atlas-legend span { display: flex; align-items: center; gap: 5px; color: #9e937c; font-size: clamp(8px, .72cqw, 11px); font-weight: 800; letter-spacing: .1em; }
+.atlas-legend .swatch { width: 11px; height: 11px; box-shadow: 0 0 0 1px #000; }
+.swatch.province-karst { background: #5a5346; }
+.swatch.province-mirrorreef { background: #2f3850; }
+.swatch.province-rootwarren { background: #4a4327; }
+.swatch.excavated { background: #6b6354; }
+.swatch.structure { background: #e7dbc0; }
+.atlas-actions { display: flex; flex: none; gap: 7px; }

@@ -23,15 +23,16 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await expect(page.locator(".deployment-preview-canvas")).toHaveCount(3);
   await page.waitForFunction(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
-    return game.deploymentPreviews.length === 3
-      && game.deploymentPreviews.every((arena: any) => arena.bricks.length > 0 && arena.balls.length === 1);
+    const arenas = game.deploymentPreviews.arenas;
+    return arenas.length === 3
+      && arenas.every((arena: any) => arena.bricks.length > 0 && arena.balls.length === 1);
   });
   const previewAlignment = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     return [...document.querySelectorAll<HTMLElement>(".field-window")].map((element, index) => {
       const rect = element.getBoundingClientRect();
-      const preview = game.deploymentPreviews[index];
-      const bounds = game.deploymentPreviewContent[index].getBounds();
+      const preview = game.deploymentPreviews.arenas[index];
+      const bounds = game.deploymentPreviews.contents[index].getBounds();
       const contentRect = {
         left: rect.left + bounds.x,
         top: rect.top + bounds.y,
@@ -88,7 +89,7 @@ test("deployment previews, generated world, province rules, and the crafting cha
   // --- Tutorial controls ---------------------------------------------------
   // Large, checked off by doing, then removed from the DOM for good.
   await expect(page.locator("#tutorial")).toBeVisible();
-  await expect(page.locator("#tutorialList li")).toHaveCount(5);
+  await expect(page.locator("#tutorialList li")).toHaveCount(6);
   await expect(page.locator("#tutorialList li.done")).toHaveCount(0);
 
   // --- Generated world -----------------------------------------------------
@@ -221,10 +222,15 @@ test("deployment previews, generated world, province rules, and the crafting cha
   const hintsAfterServe = await page.locator("#instructions").innerText();
   expect(hintsAfterServe).not.toContain("serve");
 
-  // Move the paddle to finish the checklist, then the panel retires permanently.
+  // Move the paddle and read the Atlas to finish the checklist, then the panel
+  // retires permanently. The Atlas is readable mid-arena by design.
   await page.keyboard.down("KeyD");
   await page.waitForTimeout(400);
   await page.keyboard.up("KeyD");
+  await page.keyboard.press("KeyM");
+  await expect(page.locator("#atlas")).toHaveClass(/open/);
+  await page.keyboard.press("KeyM");
+  await expect(page.locator("#atlas")).not.toHaveClass(/open/);
   const checklist = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     return { done: game.tutorial.filter((step: any) => step.done).length, total: game.tutorial.length };

@@ -32,6 +32,31 @@ const GEM_BY_BAND: Record<Band, ResourceId> = {
   4: "ruby",
 };
 
+/**
+ * Which materials may carry which resource -- law 1 of the economy, as a predicate.
+ *
+ * A reagent is bound to the rule-material that produces it, so wanting coal means breaking
+ * coal seams in Karst and wanting diamond means framing the Bright Fault. A metal is an ore
+ * inclusion and rides in any host rock. Stated here rather than reimplemented by each
+ * caller, because a resource on a material that cannot host it is invisible in a screenshot
+ * and breaks the recipes.
+ */
+const REAGENT_SOURCE: Partial<Record<ResourceId, readonly MaterialKind[]>> = {
+  coal: ["coalSeam"],
+  sapphire: ["facet", "chargedFacet"],
+  emerald: ["facet", "chargedFacet"],
+  ruby: ["facet", "chargedFacet"],
+  sulfur: ["living", "sporeBulb"],
+  diamond: ["mirrorSlate"],
+  saltpeter: ["chalkroot"],
+  vitriol: ["bloomcrystal"],
+};
+
+export function canHost(kind: MaterialKind, resource: ResourceId): boolean {
+  const source = REAGENT_SOURCE[resource];
+  return source ? source.includes(kind) : HOST_ROCK.includes(kind);
+}
+
 function weightedPick(entries: ReadonlyArray<[ResourceId, number]>, roll: number): ResourceId {
   const total = entries.reduce((sum, [, weight]) => sum + weight, 0);
   let cursor = roll * total;

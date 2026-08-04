@@ -13,6 +13,19 @@ export const TERRAIN_SCALE = 0.82;
 /** Chunks within this many cells of the camera focus stay resident. */
 export const CHUNK_RESIDENCY_CELLS = 46;
 
+/**
+ * The drone's hull, in pixels, measured off the silhouette drawn in
+ * `view/actors.ts` rather than invented.
+ *
+ * `createDrone` draws its body as a polygon spanning `paddleWidth * CELL + 26`
+ * across and 20 tall, so the hull is that box: the nose overhang is the 13px the
+ * silhouette extends past the paddle face on each side, and the half-thickness is
+ * half of the 20px body. The survey mast is deliberately excluded -- it is a thin
+ * antenna, and treating it as hull would make the machine unable to pass anything.
+ */
+export const DRONE_NOSE_PX = 13;
+export const DRONE_HALF_THICKNESS_PX = 10;
+
 export const PHYSICS_STEP = 1 / 120;
 export const BRICK_HALF = 0.42;
 export const BRICK_RADIUS = 0.14;

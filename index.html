@@ -84,6 +84,35 @@
         </footer>
 
         <div class="telemetry" id="telemetry"></div>
+        <div class="save-flash" id="saveFlash" aria-live="polite"></div>
+
+        <section class="atlas" id="atlas" aria-label="Atlas" aria-hidden="true">
+          <header class="atlas-head">
+            <div class="atlas-title">
+              <b>ATLAS</b>
+              <small id="atlasSeed"></small>
+            </div>
+            <div class="atlas-tools">
+              <div class="atlas-icons" id="atlasIcons" role="radiogroup" aria-label="Marker"></div>
+              <span class="atlas-hint" id="atlasHint">Click the map to mark it. M closes.</span>
+            </div>
+          </header>
+          <div class="atlas-stage" id="atlasStage">
+            <canvas id="atlasCanvas" width="1200" height="720"></canvas>
+            <div class="atlas-editor" id="atlasEditor" hidden>
+              <input id="atlasNote" type="text" maxlength="48" placeholder="note (optional)" aria-label="Marker note" />
+              <button id="atlasSaveNote" type="button">SET</button>
+              <button id="atlasDeleteNote" type="button" class="danger">DELETE</button>
+            </div>
+          </div>
+          <footer class="atlas-foot">
+            <div class="atlas-legend" id="atlasLegend"></div>
+            <div class="atlas-actions">
+              <button id="atlasExport" type="button">EXPORT SAVE</button>
+              <button id="atlasImport" type="button">IMPORT SAVE</button>
+            </div>
+          </footer>
+        </section>
 
         <section class="deployment loading" id="briefing" aria-labelledby="deploymentTitle" aria-busy="true" data-render-state="loading">
           <div class="deployment-loader" id="deploymentLoader" role="status">
@@ -95,6 +124,18 @@
               <h1 id="deploymentTitle">Choose a paddle</h1>
             </div>
           </header>
+
+          <section class="expedition" id="expedition" hidden>
+            <div class="expedition-read">
+              <b id="expeditionTitle">EXPEDITION IN PROGRESS</b>
+              <small id="expeditionDetail"></small>
+            </div>
+            <div class="expedition-actions">
+              <button id="continueButton" type="button" class="primary">CONTINUE <i>→</i></button>
+              <button id="importButton" type="button">IMPORT SAVE</button>
+              <button id="abandonButton" type="button" class="danger">NEW EXPEDITION</button>
+            </div>
+          </section>
 
           <div class="paddle-bay">
             <button class="paddle-option needle" type="button" data-chassis="0" aria-pressed="false">

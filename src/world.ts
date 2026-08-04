@@ -32,6 +32,35 @@ export interface FramedBrick {
   persistent: boolean;
 }
 
+/**
+ * An ordered log of every mutation applied to the generated world.
+ *
+ * Geology is a pure function of the seed, so a save does not store terrain -- it
+ * stores this log and replays it. Keys are terse because a long expedition
+ * produces thousands of cuts and the whole log goes into one save file.
+ */
+export type WorldEdit =
+  | {
+    /** A cut: one oriented footprint removed from the rock. */
+    t: "cut";
+    x: number;
+    y: number;
+    hw: number;
+    hh: number;
+    a: number;
+    /** 1 when the cut exhausted the resources it covered. */
+    e?: 1;
+    /** 1 when the cut was allowed to break persistent structure. */
+    p?: 1;
+  }
+  | {
+    /** Bounded Rootwarren regrowth restoring a cell to solid. */
+    t: "grow";
+    x: number;
+    y: number;
+    k: MaterialKind;
+  };
+
 export interface SurveyReading {
   province: ProvinceId;
   ecotone: EcotoneId | null;
@@ -51,11 +80,81 @@ export class WorldModel {
   /** Listeners notified when a cut changes terrain, so rendering can stay incremental. */
   private readonly cutListeners: Array<(footprint: OrientedFootprint) => void> = [];
   readonly start: { x: number; y: number };
+  /**
+   * Ordered mutation log. Replaying this over a freshly generated world of the
+   * same seed reproduces the exact world state, which is what a save file holds.
+   */
+  readonly history: WorldEdit[] = [];
+  /** Suppressed while a save is being replayed, so replay does not re-log itself. */
+  private recording = true;
+  /** One bit per cell: has the player ever seen this cell? Drives the map's fog. */
+  readonly discovered = new Uint8Array(WORLD_COLS * WORLD_ROWS);
+  discoveredCount = 0;
 
   constructor(seedLabel: string = DEFAULT_SEED) {
     this.generated = generateWorld(seedLabel);
     this.cells = this.generated.cells;
     this.start = this.generated.start;
+  }
+
+  // --- Discovery ----------------------------------------------------------
+
+  isDiscovered(x: number, y: number): boolean {
+    if (x < 0 || y < 0 || x >= WORLD_COLS || y >= WORLD_ROWS) return false;
+    return this.discovered[Math.floor(y) * WORLD_COLS + Math.floor(x)] === 1;
+  }
+
+  /**
+   * Reveal a disc of cells around a point. Called from the drone each frame, so
+   * the map records where the player has actually been rather than what the
+   * generator produced.
+   */
+  markDiscovered(cx: number, cy: number, radius: number): number {
+    let added = 0;
+    const minX = Math.max(0, Math.floor(cx - radius));
+    const maxX = Math.min(WORLD_COLS - 1, Math.ceil(cx + radius));
+    const minY = Math.max(0, Math.floor(cy - radius));
+    const maxY = Math.min(WORLD_ROWS - 1, Math.ceil(cy + radius));
+    const limit = radius * radius;
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const dx = x + 0.5 - cx;
+        const dy = y + 0.5 - cy;
+        if (dx * dx + dy * dy > limit) continue;
+        const index = y * WORLD_COLS + x;
+        if (this.discovered[index] === 1) continue;
+        this.discovered[index] = 1;
+        added++;
+      }
+    }
+    this.discoveredCount += added;
+    return added;
+  }
+
+  // --- Mutation replay ----------------------------------------------------
+
+  /**
+   * Replay a saved mutation log. Terrain listeners still fire, so whatever
+   * rendering is attached rebuilds itself exactly as it would have during play.
+   */
+  applyHistory(edits: readonly WorldEdit[]): void {
+    this.recording = false;
+    try {
+      for (const edit of edits) {
+        if (edit.t === "cut") {
+          this.removeFootprint(
+            { center: { x: edit.x, y: edit.y }, halfWidth: edit.hw, halfHeight: edit.hh, angle: edit.a },
+            edit.e === 1,
+            edit.p === 1,
+          );
+        } else {
+          this.restoreCell(edit.x, edit.y, edit.k);
+        }
+      }
+    } finally {
+      this.recording = true;
+    }
+    this.history.push(...edits);
   }
 
   get seedLabel(): string {
@@ -157,10 +256,46 @@ export class WorldModel {
     return !cuts?.some((cut) => this.pointInFootprint(x, y, cut));
   }
 
-  isOpenWorldPixels(x: number, y: number, radius = 12): boolean {
-    return [[-radius, -radius], [radius, -radius], [-radius, radius], [radius, radius]].every(([ox, oy]) => {
-      return !this.solidAt((x + ox) / CELL, (y + oy) / CELL);
-    });
+  /**
+   * Is an oriented rectangle clear of rock?
+   *
+   * This is the drone's real hull test. It replaced a fixed 24-pixel square, which
+   * was 0.57 cells across against a machine drawn 3.7 cells wide -- so the drone
+   * clipped visibly through rock and, worse, *no passage in the world could ever
+   * constrain it*. With an honest oriented hull, heading becomes a traversal tool:
+   * a drone turned broadside needs nearly four cells, the same drone turned edge-on
+   * needs half of one, and the player has to decide which way to face to get
+   * through. That is the same key that aims the survey frame, so squeezing through a
+   * gap and choosing where to claim are the same act.
+   *
+   * Extents are in cells, measured along the hull's own axes: `halfLength` runs
+   * along the machine's long axis (the direction its paddle face spans), and
+   * `halfThickness` across it.
+   */
+  isHullOpen(x: number, y: number, heading: number, halfLength: number, halfThickness: number): boolean {
+    // The hull's long axis in world space. This matches the drone's drawn rotation
+    // and `FrameGeometry`'s `side` vector, so the hitbox and the survey frame agree.
+    const alongX = Math.cos(heading);
+    const alongY = Math.sin(heading);
+    const acrossX = -alongY;
+    const acrossY = alongX;
+
+    // Sample at strictly under one cell so a one-cell wall can never be tunnelled.
+    // Endpoints are always included, so the extremities are tested exactly.
+    const steps = (extent: number) => Math.max(1, Math.ceil((extent * 2) / 0.4));
+    const lengthSteps = steps(halfLength);
+    const thicknessSteps = steps(halfThickness);
+
+    for (let i = 0; i <= lengthSteps; i++) {
+      const along = -halfLength + (i / lengthSteps) * halfLength * 2;
+      for (let j = 0; j <= thicknessSteps; j++) {
+        const across = -halfThickness + (j / thicknessSteps) * halfThickness * 2;
+        const cellX = x / CELL + alongX * along + acrossX * across;
+        const cellY = y / CELL + alongY * along + acrossY * across;
+        if (this.solidAt(cellX, cellY)) return false;
+      }
+    }
+    return true;
   }
 
   removeCell(x: number, y: number, exhausted = false): void {
@@ -252,6 +387,19 @@ export class WorldModel {
 
   removeFootprint(footprint: OrientedFootprint, exhausted = false, includePersistent = false): void {
     this.cuts.push(footprint);
+    if (this.recording) {
+      const edit: WorldEdit = {
+        t: "cut",
+        x: footprint.center.x,
+        y: footprint.center.y,
+        hw: footprint.halfWidth,
+        hh: footprint.halfHeight,
+        a: footprint.angle,
+      };
+      if (exhausted) edit.e = 1;
+      if (includePersistent) edit.p = 1;
+      this.history.push(edit);
+    }
     const cosine = Math.abs(Math.cos(footprint.angle));
     const sine = Math.abs(Math.sin(footprint.angle));
     const extentX = cosine * footprint.halfWidth + sine * footprint.halfHeight;
@@ -284,6 +432,7 @@ export class WorldModel {
     cell.hp = definition.hp;
     cell.maxHp = definition.hp;
     this.cutsByCell.delete(`${x},${y}`);
+    if (this.recording) this.history.push({ t: "grow", x, y, k: kind });
     return true;
   }
 
@@ -301,17 +450,34 @@ export class WorldModel {
     return false;
   }
 
+  /**
+   * Clear everything a resolved claim consumed, leaving landmarks standing.
+   *
+   * Cuts are applied unconditionally rather than skipping any footprint that touches
+   * persistent material. Skipping was the obvious reading of "landmarks survive claim
+   * resolution", but it is wrong at the sub-cell scale a rotated frame works at: a
+   * footprint straddling a landmark and ordinary rock was abandoned whole, leaving
+   * shards of solid rock inside a claim the player had already paid for. Applying the
+   * cut is safe because `solidAt` short-circuits on `persistent`, so a landmark stays
+   * solid however many cuts cover it -- the flag protects the landmark, not the
+   * footprint around it.
+   */
   exhaustFrame(frame: FrameGeometry): void {
     for (let row = 0; row < frame.depth; row++) for (let column = 0; column < frame.width; column++) {
       const u = -frame.width / 2 + 0.5 + column;
       const v = row + 0.5;
-      const footprint: OrientedFootprint = { center: this.localToWorld(u, v, frame), halfWidth: 0.5, halfHeight: 0.5, angle: frame.angle };
-      if (!this.footprintContainsPersistent(footprint)) this.removeFootprint(footprint, true);
+      this.removeFootprint(
+        { center: this.localToWorld(u, v, frame), halfWidth: 0.5, halfHeight: 0.5, angle: frame.angle },
+        true,
+      );
     }
+    // The paddle's own lane, half a cell deep, so no lip is left along the near edge.
     for (let column = 0; column < frame.width; column++) {
       const u = -frame.width / 2 + 0.5 + column;
-      const footprint: OrientedFootprint = { center: this.localToWorld(u, frame.depth + 0.25, frame), halfWidth: 0.5, halfHeight: 0.25, angle: frame.angle };
-      if (!this.footprintContainsPersistent(footprint)) this.removeFootprint(footprint, true);
+      this.removeFootprint(
+        { center: this.localToWorld(u, frame.depth + 0.25, frame), halfWidth: 0.5, halfHeight: 0.25, angle: frame.angle },
+        true,
+      );
     }
   }
 

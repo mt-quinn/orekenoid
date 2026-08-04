@@ -478,4 +478,62 @@ export class Economy {
       return true;
     });
   }
+
+  /**
+   * Everything a save needs. Crafted upgrades are stored as *both* the craft
+   * counts and the resulting module totals, deliberately: replaying `craft()` to
+   * rebuild the totals would charge the player for their own modules a second
+   * time, and craft counts alone are what repeat-cost growth is priced against.
+   */
+  snapshot(): EconomySnapshot {
+    return {
+      resources: Object.fromEntries(this.resources) as Partial<Record<ResourceId, number>>,
+      banked: Object.fromEntries(this.banked) as Partial<Record<ResourceId, number>>,
+      crafted: Object.fromEntries(this.crafted),
+      upgrades: Object.fromEntries([...this.upgradesByChassis].map(([id, value]) => [id, { ...value }])),
+      verbs: [...this.verbs],
+      fabricated: [...this.fabricated],
+      resonanceGrades: this.resonanceGrades,
+      blastCharges: this.blastCharges,
+      totalSecured: this.totalSecured,
+    };
+  }
+
+  restore(snapshot: EconomySnapshot): void {
+    this.resources.clear();
+    this.banked.clear();
+    this.crafted.clear();
+    this.upgradesByChassis.clear();
+    this.verbs.clear();
+    this.fabricated.clear();
+    for (const [resource, count] of Object.entries(snapshot.resources ?? {})) {
+      if (typeof count === "number") this.resources.set(resource as ResourceId, count);
+    }
+    for (const [resource, count] of Object.entries(snapshot.banked ?? {})) {
+      if (typeof count === "number") this.banked.set(resource as ResourceId, count);
+    }
+    for (const [key, count] of Object.entries(snapshot.crafted ?? {})) {
+      if (typeof count === "number") this.crafted.set(key, count);
+    }
+    for (const [chassisId, upgrades] of Object.entries(snapshot.upgrades ?? {})) {
+      this.upgradesByChassis.set(chassisId, { ...emptyUpgrades(), ...upgrades });
+    }
+    for (const verb of snapshot.verbs ?? []) this.verbs.add(verb);
+    for (const chassisId of snapshot.fabricated ?? []) this.fabricated.add(chassisId);
+    this.resonanceGrades = snapshot.resonanceGrades ?? 0;
+    this.blastCharges = snapshot.blastCharges ?? 0;
+    this.totalSecured = snapshot.totalSecured ?? 0;
+  }
+}
+
+export interface EconomySnapshot {
+  resources: Partial<Record<ResourceId, number>>;
+  banked: Partial<Record<ResourceId, number>>;
+  crafted: Record<string, number>;
+  upgrades: Record<string, ChassisUpgrades>;
+  verbs: VerbId[];
+  fabricated: string[];
+  resonanceGrades: number;
+  blastCharges: number;
+  totalSecured: number;
 }

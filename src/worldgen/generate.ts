@@ -12,6 +12,8 @@ import { carveCaves, carveCorridor, openComponents, reachableFrom, type CaveFiel
 import { CORNERSTONES, LANDING, LANDING_FEATURES, REQUIRED_NODES, stampCornerstones, stampLanding } from "./landmarks";
 import { bandAt, sampleRegion, type RegionSample } from "./regions";
 import { hashString, Rng } from "./rng";
+import { stampRooms, type RoomStampReport } from "./rooms";
+import { StructureMap } from "./structureMap";
 
 export interface GeneratedWorld {
   seed: number;
@@ -23,6 +25,8 @@ export interface GeneratedWorld {
   landingFeatures: typeof LANDING_FEATURES;
   /** Diagnostics from the verification pass, surfaced for tests and debug. */
   report: GenerationReport;
+  /** Which authored rooms landed where, and the features they placed. */
+  rooms: RoomStampReport;
 }
 
 export interface GenerationReport {
@@ -35,6 +39,9 @@ export interface GenerationReport {
   provinceCells: Record<ProvinceId, number>;
   bandDensity: Record<Band, number>;
   bandI: { copper: number; coal: number };
+  /** Rooms stamped, and features placed by their markers. */
+  roomsPlaced: number;
+  featuresPlaced: number;
 }
 
 const cellIndex = (x: number, y: number) => y * WORLD_COLS + x;
@@ -82,18 +89,89 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
     cells.push(row);
   }
 
+  // --- Density contract ---------------------------------------------------
+  // Measured here, before anything is stamped, because the contract is a statement
+  // about the *procedural* generator: rock must get denser with depth. Measuring it at
+  // the end meant every authored thing perturbed it -- which is why the old code had to
+  // exclude the Landing with a hardcoded rectangle, and why a hall carving 648 cells out
+  // of a shallow band could invert two adjacent bands by less than a percent. Taken here
+  // the number means exactly what it claims, and nothing downstream can launder it.
+  const bandDensity = measureBandDensity(cells);
+
   // --- Stamp authored territory -------------------------------------------
   stampLanding(cells, caves.open);
   stampCornerstones(cells, caves.open);
 
-  // Landing stamps edit solidity directly, so mirror those edits back into the
-  // openness grid before connectivity is judged.
+  // --- Stamp rooms --------------------------------------------------------
+  // After authored territory, so the Landing and the cornerstones can reserve their
+  // ground first and no room can ever land on a guaranteed teaching feature. Before
+  // the repair passes, so a room that pinches a route shut gets reconnected rather
+  // than orphaning part of the world.
+  const structures = new StructureMap();
+  structures.reserve({ x: LANDING.x - 18, y: LANDING.y - 14, width: 40, height: 32 });
+  for (const site of CORNERSTONES) {
+    structures.reserve({ x: site.x - 12, y: site.y - 10, width: 24, height: 20 });
+  }
+  const rooms = stampRooms(cells, seed, samples, rng, structures, (x, y) => ({
+    province: cells[y]?.[x]?.province ?? "karst",
+    ecotone: cells[y]?.[x]?.ecotone ?? null,
+  }));
+
+  // Landing, cornerstone and room stamps all edit solidity directly, so mirror those
+  // edits back into the openness grid before connectivity is judged.
   syncOpenFromCells(cells, caves.open);
 
   // --- Repair and verify --------------------------------------------------
-  resolveIsolatedPockets(cells, caves);
-  const report = verify(seed, cells, caves, samples);
+  // Buried room contents are protected from the repair passes below, which are free to
+  // carve anywhere they need to and would otherwise open a seam or a cache and hand the
+  // player its reward for nothing.
+  const protectedCells = new Set<number>();
+  for (const feature of rooms.features) {
+    if (feature.marker !== "seam" && feature.marker !== "cache") continue;
+    for (let oy = -1; oy <= 1; oy++) {
+      for (let ox = -1; ox <= 1; ox++) {
+        const x = feature.x + ox;
+        const y = feature.y + oy;
+        if (x < 0 || y < 0 || x >= WORLD_COLS || y >= WORLD_ROWS) continue;
+        if (cells[y][x].resource) protectedCells.add(cellIndex(x, y));
+      }
+    }
+  }
+
+  resolveIsolatedPockets(cells, caves, protectedCells);
+
+  // Re-assert authored territory, *before* verification.
+  //
+  // Both repair passes carve corridors wherever they need to, and `syncCellsFromOpen`
+  // then applies that openness to every non-persistent cell -- so a repair route can pass
+  // straight through the Landing's teaching faces and quietly hollow them out. Reserving
+  // ground against *room placement* does not help, because the damage comes from repair
+  // rather than from stamping. Stamping is idempotent, so the fix is to stamp again.
+  //
+  // The ordering matters and cost me a false pass: doing this *after* `verify` fixed the
+  // world but left the report describing the damaged one, so `missingLandingFeatures`
+  // named a feature that was present by the time anyone could look at it. Verification
+  // has to run on the world that ships.
+  stampLanding(cells, caves.open);
+  stampCornerstones(cells, caves.open);
+  // And mirror it into the openness grid. The stamps write cell solidity but only touch
+  // `open` for the lander hull, so without this the two disagree -- and verification's
+  // corridor repair, which trusts `open`, un-solidifies the very teaching faces that were
+  // just restored. That is what made the Banked Face vanish once enough rooms placed to
+  // trigger repairs regularly.
+  syncOpenFromCells(cells, caves.open);
+
+  const report = verify(seed, cells, caves, samples, protectedCells, bandDensity);
+
+  // Verification's own corridor repair can carve as well, on the rare seed where a
+  // required node is unreachable. Idempotent, so simply assert the authored ground again.
+  stampLanding(cells, caves.open);
+  stampCornerstones(cells, caves.open);
+
   enforceInvariants(cells);
+
+  report.roomsPlaced = rooms.placed.length;
+  report.featuresPlaced = rooms.features.length;
 
   return {
     seed,
@@ -104,7 +182,29 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
     cornerstones: CORNERSTONES,
     landingFeatures: LANDING_FEATURES,
     report,
+    rooms,
   };
+}
+
+/**
+ * Solid fraction per depth band, over procedural geology only.
+ *
+ * The two-cell world border is excluded because it is not geology at all -- it is a
+ * frame, and counting it makes every band read denser than it is.
+ */
+function measureBandDensity(cells: Cell[][]): Record<Band, number> {
+  const solid: Record<Band, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  const total: Record<Band, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  for (let y = 4; y < WORLD_ROWS - 4; y++) {
+    for (let x = 4; x < WORLD_COLS - 4; x++) {
+      const cell = cells[y][x];
+      total[cell.band]++;
+      if (cell.solid) solid[cell.band]++;
+    }
+  }
+  const density: Record<Band, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  for (const band of [1, 2, 3, 4] as Band[]) density[band] = total[band] ? solid[band] / total[band] : 0;
+  return density;
 }
 
 function syncOpenFromCells(cells: Cell[][], open: Uint8Array): void {
@@ -115,12 +215,24 @@ function syncOpenFromCells(cells: Cell[][], open: Uint8Array): void {
   }
 }
 
-function syncCellsFromOpen(cells: Cell[][], open: Uint8Array): void {
+/**
+ * Apply the openness grid back onto the cells.
+ *
+ * `protected` cells are left alone. They hold room contents -- a buried seam, a cache
+ * -- and a repair corridor routed straight through one would delete the reward the
+ * room exists to offer. Leaving them solid can plug a repaired corridor with a few
+ * cells of mineable rock, which is a cost the design already accepts elsewhere: the
+ * carve deliberately seals fourteen tubes with 3x3 plugs for exactly this reason, so
+ * that progress sometimes requires committing a claim rather than walking around.
+ */
+function syncCellsFromOpen(cells: Cell[][], open: Uint8Array, protectedCells: ReadonlySet<number>): void {
   for (let y = 0; y < WORLD_ROWS; y++) {
     for (let x = 0; x < WORLD_COLS; x++) {
       const cell = cells[y][x];
       if (cell.persistent) continue;
-      const shouldBeSolid = open[cellIndex(x, y)] !== 1;
+      const index = cellIndex(x, y);
+      if (protectedCells.has(index)) continue;
+      const shouldBeSolid = open[index] !== 1;
       cell.solid = shouldBeSolid;
       cell.baseSolid = shouldBeSolid;
     }
@@ -134,7 +246,7 @@ function syncCellsFromOpen(cells: Cell[][], open: Uint8Array): void {
  * gets a corridor; a few eroded cells get filled back in. Leaving them would mean
  * caves the player can see and never enter, which is worse than either fix.
  */
-function resolveIsolatedPockets(cells: Cell[][], caves: CaveField): void {
+function resolveIsolatedPockets(cells: Cell[][], caves: CaveField, protectedCells: ReadonlySet<number>): void {
   const MIN_CHAMBER = 14;
   for (let pass = 0; pass < 4; pass++) {
     const reachable = reachableFrom(caves.open, LANDING.x, LANDING.y);
@@ -167,7 +279,7 @@ function resolveIsolatedPockets(cells: Cell[][], caves: CaveField): void {
       }
     }
     if (!changed) break;
-    syncCellsFromOpen(cells, caves.open);
+    syncCellsFromOpen(cells, caves.open, protectedCells);
   }
 }
 
@@ -194,7 +306,14 @@ function enforceInvariants(cells: Cell[][]): void {
  * world the player cannot traverse is not a world. Everything else is reported so
  * the test suite can assert on it.
  */
-function verify(seed: number, cells: Cell[][], caves: CaveField, samples: RegionSample[][]): GenerationReport {
+function verify(
+  seed: number,
+  cells: Cell[][],
+  caves: CaveField,
+  samples: RegionSample[][],
+  protectedCells: ReadonlySet<number>,
+  bandDensity: Record<Band, number>,
+): GenerationReport {
   // Contract 1 & 2: the Landing and every required node must be mutually reachable.
   let repairedCorridors = 0;
   const unreachableRequiredNodes: string[] = [];
@@ -211,6 +330,7 @@ function verify(seed: number, cells: Cell[][], caves: CaveField, samples: Region
       repairedCorridors++;
       for (let y = 0; y < WORLD_ROWS; y++) {
         for (let x = 0; x < WORLD_COLS; x++) {
+          if (protectedCells.has(cellIndex(x, y))) continue;
           if (caves.open[cellIndex(x, y)] === 1 && cells[y][x].solid && !cells[y][x].persistent) {
             cells[y][x].solid = false;
             cells[y][x].baseSolid = false;
@@ -226,24 +346,12 @@ function verify(seed: number, cells: Cell[][], caves: CaveField, samples: Region
   let reachableCells = 0;
   const provinceCells: Record<ProvinceId, number> = { karst: 0, mirrorreef: 0, rootwarren: 0 };
   const ecotoneReagents: Record<EcotoneId, number> = { brightFault: 0, chalkWarren: 0, bloomShelf: 0 };
-  const bandSolid: Record<Band, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
-  const bandTotal: Record<Band, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
   const bandI = { copper: 0, coal: 0 };
 
   for (let y = 0; y < WORLD_ROWS; y++) {
     for (let x = 0; x < WORLD_COLS; x++) {
       const cell = cells[y][x];
       provinceCells[cell.province]++;
-      // Density is a measure of *procedural* geology. Two things are excluded:
-      // the solid world border, which is not geology at all, and the authored
-      // Landing, whose teaching faces are deliberately solid rock and would
-      // otherwise make Band I read as denser than the world beneath it.
-      const interior = x > 3 && y > 3 && x < WORLD_COLS - 4 && y < WORLD_ROWS - 4;
-      const authored = x >= 10 && x <= 44 && y >= 4 && y <= 36;
-      if (interior && !authored) {
-        bandTotal[cell.band]++;
-        if (cell.solid) bandSolid[cell.band]++;
-      }
       if (caves.open[cellIndex(x, y)] === 1) openCells++;
       if (reachable[cellIndex(x, y)] === 1) reachableCells++;
       // Contract 4: every ecotone must carry a claimable seam of its rare reagent.
@@ -281,11 +389,6 @@ function verify(seed: number, cells: Cell[][], caves: CaveField, samples: Region
     return !hasNearby(cells, feature.x, feature.y, 3, (c) => c.solid && !c.persistent);
   }).map((feature) => feature.id);
 
-  const bandDensity: Record<Band, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
-  for (const band of [1, 2, 3, 4] as Band[]) {
-    bandDensity[band] = bandTotal[band] ? bandSolid[band] / bandTotal[band] : 0;
-  }
-
   void seed;
   void samples;
 
@@ -299,6 +402,10 @@ function verify(seed: number, cells: Cell[][], caves: CaveField, samples: Region
     provinceCells,
     bandDensity,
     bandI,
+    // Filled in by the caller: rooms are stamped before verification runs, but the
+    // counts belong in the same report the contract tests read.
+    roomsPlaced: 0,
+    featuresPlaced: 0,
   };
 }
 

@@ -8,7 +8,12 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 8080",
     "test": "vitest run",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "rooms": "node tools/drawrooms.mjs && node tools/roomkit.mjs check && node tools/roomkit.mjs build",
+    "rooms:palette": "node tools/roomkit.mjs palette",
+    "rooms:preview": "node tools/roomkit.mjs preview",
+    "rooms:ascii": "node tools/roomkit.mjs ascii",
+    "rooms:profile": "node tools/roomkit.mjs profile"
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "latest",

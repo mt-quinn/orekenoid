@@ -95,6 +95,24 @@ export class ChunkedTerrain {
     this.queue.length = 0;
   }
 
+  /**
+   * Discard every built chunk so they rasterize again from current world state.
+   *
+   * Loading a save replays excavation into `WorldModel` before the terrain knows
+   * about it, and `applyCut` only touches chunks that already exist. Rebuilding
+   * from scratch is the only way to guarantee a loaded world looks like the world
+   * that was saved rather than the world the seed generates.
+   */
+  reset(): void {
+    for (const chunk of this.chunks.values()) {
+      chunk.sprite.destroy();
+      chunk.texture.destroy(true);
+    }
+    this.chunks.clear();
+    this.queue.length = 0;
+    this.container.removeChildren();
+  }
+
   get chunkCount(): number {
     return this.chunks.size;
   }

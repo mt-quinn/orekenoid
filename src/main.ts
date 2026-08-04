@@ -4,9 +4,14 @@ import { runRenderDiagnostics } from "./renderDiagnostics";
 async function boot(): Promise<void> {
   const host = document.querySelector<HTMLElement>("#gameHost");
   if (!host) throw new Error("Missing #gameHost");
-  const game = new OrekenoidGame();
+  const query = new URLSearchParams(window.location.search);
+  // Geology is a pure function of the seed, so restoring a save from a different
+  // world means generating that world first. `?seed=` is how a save's seed reaches
+  // the generator, and it doubles as a way to hand someone a specific mine.
+  const seed = query.get("seed");
+  const game = seed ? new OrekenoidGame(seed) : new OrekenoidGame();
   await game.init(host);
-  if (new URLSearchParams(window.location.search).has("render-diagnostics")) {
+  if (query.has("render-diagnostics")) {
     await runRenderDiagnostics(game);
   }
 }

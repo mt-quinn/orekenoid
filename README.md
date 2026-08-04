@@ -35,12 +35,27 @@ npm run test:browser
 - Hold `Q` / `E`: rotate the drone and survey projection continuously
 - `F` or `Enter`: commit the currently projected claim
 - `C`: open the forge, at the Refit Bay or any cornerstone anchor
+- `M`: open the Atlas, from anywhere including mid-arena
 
 Cargo is deposited automatically on reaching the **bank** beside the lander. Only banked material can be spent at the forge, and only cargo is lost if the drone dies — banked material, crafted capacity and earned verbs all survive, and you respawn at the Landing at full health.
 
 There is no separate roaming or framing mode. The equipped paddle's fixed survey footprint is always active, moves with the drone, and displays anonymous returns over buried resources. Each chassis permanently owns its frame dimensions, paddle width, movement profile, armor value, and maximum integrity; the frame cannot be resized manually.
 
 Before deployment, the FTUE teaches survey, commitment, and unresolved-load damage, then requires one starting-paddle choice: the balanced Surveyor, fast narrow Needle, or broad resilient Bastion. That chassis is locked for the deployment; there is no mid-run hot swapping.
+
+### The Atlas
+
+Press `M`. The whole mine fits one screen: 240 × 144 cells at 5 px each, so there is nothing to pan.
+
+The Atlas draws **only what the drone has actually seen**. Undiscovered ground is left as void rather than dimmed, so the shape of an expedition is legible in the negative space. Province colour, ecotone brightness, depth bands, excavation, structure, anchors and the Landing are all shown; buried resources never are. Cornerstones appear once the player has been near them.
+
+Markers are entirely the player's. Pick one of eight icons, click surveyed ground, and optionally attach a short note; click a marker to edit its icon or text, or delete it. Nothing auto-fills and nothing interprets a discovery for the player. Unsurveyed ground refuses a marker.
+
+### Expedition persistence
+
+Orekenoid uses a **forgiving expedition model**: one persistent world per seed. Progress autosaves whenever something consequential happens — banking, a claim resolving, a craft, a verb, a death, a marker — plus every 20 seconds and on leaving the page. The deployment screen offers `CONTINUE`, `IMPORT SAVE`, and `NEW EXPEDITION`.
+
+Geology is a pure function of the seed and is therefore never stored. A save holds the seed plus an ordered log of every world mutation, and loading regenerates the world and replays the log. A full expedition's save is a few tens of kilobytes of readable JSON, which is what makes `EXPORT SAVE` / `IMPORT SAVE` in the Atlas footer practical: the file can be moved between machines, kept as a backup, or handed to someone else. An imported save is validated before anything is applied — a truncated or hand-mangled file is refused with a reason rather than half-loaded. Importing a save from a different seed reloads the game with `?seed=`, which also works as a way to hand someone a specific mine.
 
 Claims can be committed at any angle. Terrain is coverage-sampled into a clean paddle-local brick lattice, so every generated brick faces flat toward the paddle while preserving the framed world's material and silhouette as closely as the brick grid permits. The camera uses the shortest comfortable rotation into paddle-down play and returns to world orientation when the arena ends.
 
@@ -78,6 +93,9 @@ The HUD is mode-driven. Surveying shows what you need to read the world — regi
 - **Seeded world generator (`src/worldgen/`):** province affinity fields with domain warp, ecotones as overlap, three-scale cave carving over a spanning tube graph, depth-banded material and resource assignment, authored Landing and cornerstone stamps, and a verification pass that repairs connectivity and reports contract violations.
 - **Chunked terrain:** the world is far too large to rasterize into one canvas, so terrain is built in 24-cell chunks near the camera, amortized one chunk per frame, with cuts composited directly into the chunks they touch.
 - **Material table (`src/materials.ts`):** one authority on hit points, liability, rebound behaviour, regrowth and cascades. The solver consults the table rather than branching on province.
+- **World mutation log (`src/world.ts`):** every cut and every regrowth is appended to an ordered log, and replaying that log over a freshly generated world of the same seed reproduces its exact state — solidity, exhaustion and reveal flags included. This is what makes a save small, and what makes diagonal excavation survive a reload that a cell-grid snapshot would round off.
+- **Persistence (`src/persistence.ts`):** versioned save schema, a bit-packed discovery mask, validation of untrusted imports before anything is applied, and file export/import. Nothing is partially applied: a bad save is refused with a reason.
+- **The Atlas (`src/atlas.ts`):** the whole world on one 2D canvas at 5 px per cell, drawn from discovered cells only, with player-placed annotations. Deliberately not a second WebGL context competing with the game's.
 - **Economy (`src/economy.ts`):** three crafting tiers gated by geology. Crafting produces capacity; cornerstones produce verbs; crafting may sharpen a verb but never grant one.
 - **Custom fixed-step solver:** swept circle-versus-rounded-rectangle contacts, exact corner normals, simultaneous seam hits, paddle English, and deterministic arcade reflection.
 - **Continuous-angle claim remesher:** the fixed chassis polygon is sampled in paddle-local space; generated rounded bricks retain exact oriented world footprints for persistent diagonal excavation and exhaustion.
@@ -91,6 +109,10 @@ The HUD is mode-driven. Surveying shows what you need to read the world — regi
 - **Direct paddle authority:** gameplay input sets paddle velocity exactly each fixed step. Chassis differ in top speed, never in input latency or acceleration lag.
 - **Authored territory:** The Landing's seven guaranteed teaching features, the Echo Observatory, the Twin Engine split across the Bright Fault, and the Root Choir.
 - **Rapier 2D compatibility:** installed for later moving machinery, creatures, and general world dynamics; it deliberately does not control Breakout rebounds.
+- **Module boundaries:** `game.ts` is orchestration only — state, input, the arena lifecycle, the fixed-step loop, and save/restore. It touches no DOM at all. Presentation lives in `hud.ts` (every HUD node, driven by an explicit model it is handed), `view/` (display factories: `brick`, `actors`, `board`, `survey`), `atlas.ts`/`atlasView.ts`, `forgeView.ts`, `expeditionView.ts` and `deploymentPreviews.ts`. Behaviour lives in `camera.ts`, `effects.ts`, `audio.ts`, `objectives.ts` and `maths.ts`.
+- **Room pipeline (`rooms/`, `tools/`, `src/worldgen/rooms.ts`):** authored PNG room chunks stamped into procedural terrain, the fourth generator scale. One pixel is one cell; colour maps to material, and reserved colours are markers that place contents. Painted by hand or drawn on a coordinate canvas in `rooms/src/`, then compiled to TypeScript by `npm run rooms` so generation stays synchronous and testable in Node. Three tiers following Terraria's own ladder — feature (~1/6 screen), chamber (~1/2), hall (~1) — placed by density with `structureMap.ts` reserving ground so features never collide. See `rooms/README.md` to author one, and `WORLD_DETAIL_BRIEF.md` for why.
+- **World features (`src/view/features.ts`):** the ~120 features the generator places per world, drawn so they can be seen. Two brief rules govern the art: *direction is discoverable, contents are a wager* — a buried seam shows as mineral staining carrying the ore's colour but no shape that identifies it, and a buried cache as a machined spoil cairn saying only that somebody was here; and *nothing auto-interprets discoveries*, so nothing here writes to the Atlas. The player sees a thing, travels to it, and marks it themselves. Anomalies are the most conspicuous thing short of a cornerstone and carry the only motion in the world outside an arena, which is what makes them read as significant.
+- **Honest drone hull:** `WorldModel.isHullOpen` tests an oriented box measured off the drone's own silhouette rather than a fixed square. Heading is therefore a traversal tool — a drone turned broadside needs nearly four cells, edge-on needs half of one — and it is the same key that aims the survey frame, so threading a gap and choosing where to claim are one act.
 - **Vite + TypeScript:** strict modules and production bundling.
 - **Vitest + Playwright:** deterministic collision regression and full browser progression/render validation.
 
@@ -100,4 +122,6 @@ The old `game.js`, `styles.css`, and `smoke-test.mjs` files are retained as hist
 
 This proves the production renderer, seeded generation at province/ecotone/cornerstone scale, the three province rules in play, continuous-angle claims, chassis variation, liability damage, the resource map, and the crafting chain.
 
-Cornerstones are currently completed by striking each of their mechanisms with the ball, which grants the real verb and establishes an anchor. Their full authored puzzles — triangulation at the Observatory, the paired circuits of the Twin Engine, the Choir's voice ordering — are not yet built. Also outstanding: save data, four-player co-op, LDtk import, general Rapier bodies, the four remaining provinces, Reach II and III, and production asset libraries.
+Cornerstones are currently completed by striking each of their mechanisms with the ball, which grants the real verb and establishes an anchor. Their full authored puzzles — triangulation at the Observatory, the paired circuits of the Twin Engine, the Choir's voice ordering — are **not yet built**, and neither are the four knowledge procedures (survey triangle, reserve ball, tempering pocket, cartographer's exchange). The whole discovery layer is therefore still outstanding, and it is the next thing that matters.
+
+Also outstanding: four-player co-op, LDtk import, general Rapier bodies (Rapier is installed and idle — nothing moves in the world outside an arena), the four remaining provinces, Reach II and III, music and a real SFX bank, and production asset libraries.
