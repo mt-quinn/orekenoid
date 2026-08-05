@@ -41,6 +41,7 @@ import { buildFeatureMarks, updateFeatureMarks, type FeatureMark } from "./view/
 import { gradeOf, Hud, REGION_RULES, type HudModel } from "./hud";
 import { objectiveFor } from "./objectives";
 import { Gantry, type GantryModel } from "./view/gantry";
+import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
@@ -119,6 +120,7 @@ export class OrekenoidGame {
   readonly hud = new Hud();
   readonly gantry = new Gantry();
   readonly salvage = new SalvageDrone();
+  readonly pauseView = new PauseView();
   /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
   private forgeSelection: StationId | null = null;
   readonly atlasView = new AtlasView(this);
@@ -376,15 +378,18 @@ export class OrekenoidGame {
         if (event.code === "KeyM" || event.code === "Escape") this.toggleAtlas();
         return;
       }
-      if (event.repeat || this.cameraTransition) return;
-      // Pause is never gated: whatever else is happening, the player can always stop. Handled
-      // before the atlas and forge branches only for Escape when neither of those is open.
+      if (event.repeat) return;
+      // Pause is never gated -- not by the tutorial, and not by a camera transition either. It sat
+      // below the `cameraTransition` guard at first, which meant the seconds spent flying into a
+      // claim were seconds the player could not stop the game, and that is exactly when somebody
+      // reaches for Escape.
       if (event.code === "Escape" && !this.atlasOpen && !this.craftingOpen) { this.togglePause(); return; }
       if (this.paused) {
         // While paused the only key that does anything is the one that unpauses.
-        if (event.code === "Escape" || event.code === "KeyP") this.togglePause();
+        if (event.code === "KeyP") this.togglePause();
         return;
       }
+      if (this.cameraTransition) return;
       if (!event.repeat && event.code === "KeyM") {
         if (!this.can("atlas")) { this.refuseControl(); return; }
         this.toggleAtlas();
@@ -543,15 +548,47 @@ export class OrekenoidGame {
   togglePause(): void {
     if (!this.started) return;
     if (this.paused) {
+      // Backing out of the end-claim confirmation is not the same as resuming: the player asked a
+      // question and is entitled to the menu back rather than the ball.
+      if (this.pauseView.cancelConfirm()) return;
       this.paused = false;
+      this.pauseView.setOpen(false);
       // Only a live claim needs the countdown. Out in the mine there is nothing to be caught by.
       this.resumeCountdown = this.arena && !this.arena.resolving ? 3 : 0;
       this.audio.play(SOUNDS.atlasClose);
     } else {
       this.paused = true;
       this.resumeCountdown = 0;
+      this.pauseView.setOpen(true, this.pauseModel());
       this.audio.play(SOUNDS.atlasOpen);
     }
+    this.updateUI();
+  }
+
+  /** What the pause menu needs to know. Ending a claim is only offered when there is one. */
+  private pauseModel() {
+    const remaining = this.arena?.bricks.filter((brick) => brick.alive && brick.liable).length ?? 0;
+    return {
+      inClaim: Boolean(this.arena && !this.arena.resolving),
+      endCost: calculateClaimDamage(remaining, this.soakCapacity),
+      integrity: this.integrity,
+      maxIntegrity: this.maxIntegrity,
+    };
+  }
+
+  /**
+   * End the claim where it stands.
+   *
+   * Resolved exactly as a loss is, through the same path, so the material still standing loads the
+   * hull and the frame is exhausted -- walking away early is a decision with the ordinary price,
+   * not an escape from it. The menu has already shown the player that price.
+   */
+  private endClaimNow(): void {
+    if (!this.arena || this.arena.resolving) return;
+    this.paused = false;
+    this.resumeCountdown = 0;
+    this.pauseView.setOpen(false);
+    this.finishArena("lost");
     this.updateUI();
   }
 
@@ -1206,6 +1243,10 @@ export class OrekenoidGame {
       return;
     }
 
+    // Kept in step with the economy every frame rather than only at the claim's start, so the
+    // grinder's rate can never disagree with the station actually fitted -- a disagreement that
+    // silently handed the player a drone which caught everything and taxed nothing.
+    this.salvage.configure(this.salvageTax);
     if (this.hasSalvageDrone) this.salvage.update(dt, arena, arena.paddle.u);
     for (let index = arena.drops.length - 1; index >= 0; index--) {
       const drop = arena.drops[index];
@@ -1327,6 +1368,7 @@ export class OrekenoidGame {
       if (this.started && !this.arena) this.showArrival(reading);
       this.updateUI();
     }
+    this.pauseView.showCountdown(this.resumeCountdown);
     this.advanceTutorial(step);
     if (this.tutorialNudge > 0) {
       this.tutorialNudge = Math.max(0, this.tutorialNudge - step);
@@ -1757,6 +1799,13 @@ export class OrekenoidGame {
 
   private bindInterfaceUI(): void {
     this.atlasView.bind();
+    this.pauseView.bind({
+      onResume: () => this.togglePause(),
+      onSaveNow: () => { this.saveNow(); },
+      onExport: () => this.exportExpedition(),
+      onImport: () => void this.importExpedition(),
+      onEndClaim: () => this.endClaimNow(),
+    });
     this.expeditionView.bind({
       onContinue: () => this.continueExpedition(),
       onImport: () => void this.importExpedition(),

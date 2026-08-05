@@ -544,6 +544,71 @@ button { color: inherit; font: inherit; }
    game, describing a machine that was nowhere on screen.
    -------------------------------------------------------------------------- */
 
+/* --- Pause -----------------------------------------------------------------
+   DOM rather than drawn in the world, the opposite call from the refit bay: the bay's subject is
+   a machine with parts on it, and this one's is the session. A picture here would be decoration
+   between the player and a save button.
+   -------------------------------------------------------------------------- */
+.pause {
+  position: absolute; z-index: 11; inset: 0;
+  display: none; align-items: center; justify-content: center;
+  background: rgb(5 8 10 / .88);
+}
+.pause.open { display: flex; }
+.pause-frame {
+  width: min(92%, 900px); max-height: 88%; overflow-y: auto;
+  background: linear-gradient(rgb(13 15 13 / .98), rgb(9 11 10 / .99));
+  border: 1px solid var(--case); border-top: 3px solid var(--brass);
+  padding: clamp(18px, 2.2cqw, 32px);
+}
+.pause-frame > header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 18px; }
+.pause-frame > header b {
+  color: var(--ink); font-size: clamp(20px, 2cqw, 32px); font-weight: 900; letter-spacing: .2em;
+}
+.pause-frame > header small { color: var(--faint); font-size: clamp(11px, .9cqw, 14px); letter-spacing: .12em; }
+.pause-body { display: grid; gap: clamp(16px, 2cqw, 28px); }
+.pause-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: clamp(14px, 1.6cqw, 24px); }
+.pause-group h3 {
+  color: var(--brass); font-size: clamp(10px, .84cqw, 13px); font-weight: 900;
+  letter-spacing: .18em; margin: 0 0 8px;
+}
+.pause-group dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+.pause-group dt {
+  color: var(--ink); font-size: clamp(11px, .92cqw, 14px); font-weight: 800; letter-spacing: .06em;
+  white-space: nowrap;
+}
+.pause-group dd { color: var(--dim); font-size: clamp(11px, .92cqw, 14px); margin: 0; }
+.pause-actions { display: grid; gap: 10px; border-top: 1px solid var(--case); padding-top: 16px; }
+.pause-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.pause-row button {
+  flex: 1; min-width: 140px;
+  background: #161d20; color: var(--ink); border: 1px solid var(--case);
+  padding: 11px 14px; font: inherit; font-weight: 800; letter-spacing: .1em;
+  cursor: pointer;
+}
+.pause-row button:hover { border-color: var(--brass); }
+.pause-row button.primary { background: #1d2a31; border-color: #2f4550; }
+.pause-row button.danger { border-color: #6b3a32; color: #e8a08c; }
+.pause-row button.danger:hover { border-color: #c07a63; }
+.pause-confirm { border: 1px solid #6b3a32; padding: 14px; display: grid; gap: 10px; }
+.pause-confirm b { color: #e8a08c; font-size: clamp(13px, 1.1cqw, 17px); letter-spacing: .12em; }
+.pause-confirm p { color: var(--dim); margin: 0; font-size: clamp(12px, 1cqw, 15px); line-height: 1.5; }
+.pause-confirm p b { color: var(--ink); font-size: 1em; letter-spacing: 0; }
+
+/* The 3-2-1. Never drop a player straight back onto a live ball. */
+.countdown {
+  position: absolute; z-index: 12; inset: 0; pointer-events: none;
+  display: grid; place-items: center;
+  color: var(--ink); font-size: clamp(70px, 12cqw, 200px); font-weight: 900;
+  opacity: 0;
+}
+.countdown.show { animation: countdown-pop .95s ease-out; }
+@keyframes countdown-pop {
+  0% { opacity: 0; transform: scale(1.5); }
+  18% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(.92); }
+}
+
 /* --- Forge compass --------------------------------------------------------
    Pressing the forge key out of range answers "where is it" rather than only
    "not here": an arrow pinned to the screen edge, pointing home, for a moment.

@@ -19,15 +19,21 @@ export class Grinder {
   private seen = 0;
   private eaten = 0;
 
-  /** Set the share kept, 0..1. Zero means no drone. Always starts the count fresh. */
+  /**
+   * Set the share kept, 0..1. Zero means no drone.
+   *
+   * Idempotent when the rate has not changed, so it is safe to call every frame -- which is how
+   * the caller keeps the grinder in step with the economy. It used to reset unconditionally, which
+   * made calling it repeatedly zero the count and eat nothing at all; and calling it only once per
+   * claim meant a drone fitted between claims could catch everything while still taxing at the
+   * previous rate. Cheap and always-correct beats clever and once.
+   */
   configure(tax: number): void {
-    this.tax = Math.max(0, Math.min(1, tax));
+    const next = Math.max(0, Math.min(1, tax));
+    if (next === this.tax) return;
+    this.tax = next;
     this.seen = 0;
     this.eaten = 0;
-  }
-
-  get tax_(): number {
-    return this.tax;
   }
 
   /** One rescued piece. True means the grinder keeps it. */

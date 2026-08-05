@@ -52,10 +52,11 @@ export class SalvageDrone {
 
   /** Fitted grade changed, or a claim began. Zero tax means no drone at all. */
   configure(tax: number): void {
+    const changed = tax !== this.tax;
     this.tax = tax;
     this.container.visible = tax > 0;
     this.grinder.configure(tax);
-    if (tax <= 0) this.grinds = [];
+    if (changed && tax <= 0) this.grinds = [];
   }
 
   /** Park under the paddle at the start of a claim. */
