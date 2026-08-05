@@ -149,6 +149,8 @@ export interface Arena extends FrameGeometry {
   container: Container;
   board: Container;
   actors: Container;
+  /** The rail glow, brightened as the claim's pace ramps up. */
+  railLight?: Graphics;
   resolving: boolean;
   visualAge: number;
 }

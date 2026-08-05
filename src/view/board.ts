@@ -94,6 +94,7 @@ export function buildArenaDisplay(arena: Arena, toWorld: ToWorld, grades: Statio
     anchors.circle(x, y, 8).fill(0x111718).stroke({ width: 2.5, color: accent });
     anchors.circle(x, y, 2.5).fill(accent);
   }
+  arena.railLight = railLight;
   arena.actors.addChild(rails, railLight, anchors);
 
   arena.trajectoryDisplay = new Graphics();

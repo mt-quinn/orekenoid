@@ -74,6 +74,11 @@ export const SOUNDS = {
   membraneHit: { frequency: 500, duration: 0.05, volume: 0.022, end: 320 },
   brickChip: { frequency: 170, duration: 0.04, volume: 0.025, end: 220 },
   brickBreak: { frequency: 260, duration: 0.08, volume: 0.025, end: 110 },
+  // The low end of a break, layered under `brickBreak`. "Add more bass to your sound effects" is
+  // the talk's cheapest trick and the one its own anecdote turns on -- a gun nobody liked became a
+  // favourite on twelve decibels of bass and nothing else. Written, never heard.
+  brickBreakBody: { frequency: 96, duration: 0.17, volume: 0.055, end: 44 },
+  brickBreakHeavy: { frequency: 62, duration: 0.26, volume: 0.075, end: 30 },
   // Striking structure rings upward rather than breaking: the sound says
   // "this is a mechanism", not "you failed to break it".
   structureStruck: { frequency: 280, duration: 0.12, volume: 0.03, end: 520 },

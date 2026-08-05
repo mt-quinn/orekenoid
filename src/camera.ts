@@ -27,6 +27,9 @@ export class Camera {
   rotation = 0;
   transition: CameraTransition | null = null;
 
+  private kickX = 0;
+  private kickY = 0;
+
   constructor(focus: Vec2) {
     this.focus = { ...focus };
   }
@@ -69,6 +72,7 @@ export class Camera {
    * decision with the caller, where the arena lifecycle already lives.
    */
   update(dt: number, chase: Vec2 | null): CameraTransition | null {
+    this.settleKick(dt);
     if (this.transition) {
       const transition = this.transition;
       transition.elapsed += dt;
@@ -93,9 +97,32 @@ export class Camera {
   }
 
   /** Write the camera onto the world container. */
+  /**
+   * A directed kick, away from an impact.
+   *
+   * Directed rather than random, which is the refinement the screenshake talk arrives at last:
+   * random shake says "something happened", a kick away from the contact says "something hit you
+   * *there*". The camera moves opposite the blow, the way a recoiling gun pushes the view back.
+   */
+  kick(dirX: number, dirY: number, magnitude: number): void {
+    const length = Math.hypot(dirX, dirY) || 1;
+    this.kickX -= dirX / length * magnitude;
+    this.kickY -= dirY / length * magnitude;
+  }
+
+  /** Decay the kick. Real seconds, so it feels the same at any frame rate. */
+  private settleKick(dt: number): void {
+    // Critically-damped-ish: fast enough to be a snap rather than a wobble.
+    const decay = Math.pow(0.0009, dt);
+    this.kickX *= decay;
+    this.kickY *= decay;
+    if (Math.abs(this.kickX) < 0.01) this.kickX = 0;
+    if (Math.abs(this.kickY) < 0.01) this.kickY = 0;
+  }
+
   applyTo(worldRoot: Container): void {
     worldRoot.pivot.set(this.focus.x, this.focus.y);
-    worldRoot.position.set(VIEW_WIDTH / 2, VIEW_HEIGHT / 2);
+    worldRoot.position.set(VIEW_WIDTH / 2 + this.kickX, VIEW_HEIGHT / 2 + this.kickY);
     worldRoot.rotation = this.rotation;
   }
 }

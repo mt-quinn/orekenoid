@@ -42,6 +42,7 @@ import { objectiveFor } from "./objectives";
 import { Gantry, type GantryModel } from "./view/gantry";
 import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
+import { LoadStrike } from "./view/loadStrike";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
@@ -119,6 +120,7 @@ export class OrekenoidGame {
   readonly hud = new Hud();
   readonly gantry = new Gantry();
   readonly salvage = new SalvageDrone();
+  readonly loadStrike = new LoadStrike();
   readonly pauseView = new PauseView();
   /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
   private forgeSelection: StationId | null = null;
@@ -199,6 +201,14 @@ export class OrekenoidGame {
    * Resuming runs a countdown rather than dropping the player straight back onto a live ball,
    * because the ball does not wait for them to find the paddle again.
    */
+  /**
+   * Frozen frames after an impact, in seconds.
+   *
+   * Vlambeer's `sleep`: a few tens of milliseconds of stopped time at the moment of contact, which
+   * nobody notices and everybody feels -- the brain uses the extra time to register what happened.
+   * Scaled by how hard the material was, so chalk is a tap and runite is a thud.
+   */
+  private hitPause = 0;
   paused = false;
   /** Seconds left of the 3-2-1. Zero means the claim is live. */
   resumeCountdown = 0;
@@ -828,6 +838,10 @@ export class OrekenoidGame {
     this.framePreview.visible = false;
     buildArenaDisplay(arena, (u, v) => this.world.localToWorld(u, v, arena), this.economy.stationGrades(this.chassis.id));
     this.armSalvage(arena);
+    // Sweep the previous claim's settled debris. Permanence is per claim: the record of work done
+    // belongs to the board it was done on.
+    this.effects.clearSettled();
+    this.loadStrike.clear();
     const center = this.world.localToWorld(0, arena.depth / 2, arena);
     this.camera.begin({ x: center.x * CELL, y: center.y * CELL }, -arena.angle, false);
     this.showToast(`${arena.initialLiability} LIABLE · ${resources} RETURNS · CLAIM COMMITTED`);
@@ -907,6 +921,21 @@ export class OrekenoidGame {
     for (const brick of events.bricks) this.hitBrick(brick, ball);
   }
 
+  /**
+   * How far through the claim the player is, 0..1.
+   *
+   * Drives both the ball's speed and the loudness of every impact, so a claim escalates as one
+   * thing: the same brick breaking at ninety per cent cleared hits harder than the first one did. A
+   * flat feedback curve across a whole claim is what makes a board feel the same all the way down.
+   */
+  private get claimHeat(): number {
+    const arena = this.arena;
+    if (!arena) return 0;
+    const total = Math.max(1, arena.initialLiability);
+    const standing = arena.bricks.filter((brick) => brick.alive && brick.liable).length;
+    return clamp(1 - standing / total, 0, 1);
+  }
+
   private hitBrick(brick: Brick, ball: Ball): void {
     const arena = this.arena;
     if (!arena || !brick.alive) return;
@@ -926,12 +955,27 @@ export class OrekenoidGame {
     brick.hp--;
     brick.hitFlash = 0.12;
     arena.combo++;
-    this.shardsAtBrick(brick, definition.edge, 10);
+    const heat = 0.75 + this.claimHeat * 0.75;
+    // Hardness is the whole scale of an impact: a one-hit chalk chip and a four-hit runite plate
+    // should not land the same way.
+    const hardness = Math.min(1, definition.hp / 4);
+    this.shardsAtBrick(brick, definition.edge, Math.round(8 * heat), heat, false);
     this.audio.play(brick.hp <= 0 ? SOUNDS.brickBreak : SOUNDS.brickChip);
+    // Bass layered under the break rather than replacing it: the click says "contact" and the body
+    // says "that was heavy". Four-hit stone gets the heavier of the two.
+    if (brick.hp <= 0) this.audio.play(hardness >= 0.75 ? SOUNDS.brickBreakHeavy : SOUNDS.brickBreakBody);
+    // A chip pauses briefly, a break pauses properly.
+    this.hitPause = Math.max(this.hitPause, (brick.hp <= 0 ? 0.05 : 0.018) * (0.6 + hardness));
+    this.kickFrom(brick, (brick.hp <= 0 ? 9 : 3.5) * (0.5 + hardness) * heat);
     if (brick.hp > 0) return;
 
     brick.alive = false;
     brick.display?.destroy({ children: true });
+    // Permanence: the pieces settle and the mark stays, so a cleared stretch of board shows the
+    // work that was done on it rather than reading as empty space.
+    this.shardsAtBrick(brick, definition.edge, Math.round(7 * heat), heat * 1.25, true);
+    this.dustAtBrick(brick, definition.base, Math.round(5 * heat), heat);
+    this.scorchAtBrick(brick, definition.base);
     this.world.removeFootprint(brick.footprint, false, brick.persistent);
     if (brick.resource) spawnDrop(arena, brick.u, brick.v, brick.resource);
     if (definition.spawnsMembrane) {
@@ -963,11 +1007,39 @@ export class OrekenoidGame {
   }
 
   /** Shards at a brick. Arena-local `u,v` is the only thing Effects cannot know. */
-  private shardsAtBrick(brick: Brick, colour: number, count: number): void {
+  private shardsAtBrick(brick: Brick, colour: number, count: number, force = 1, settles = false): void {
     const arena = this.arena;
     if (!arena) return;
     const point = this.world.localToWorld(brick.u, brick.v, arena);
-    this.effects.spawnShards(point.x * CELL, point.y * CELL, colour, count);
+    this.effects.spawnShards(point.x * CELL, point.y * CELL, colour, count, force, settles);
+  }
+
+  private dustAtBrick(brick: Brick, colour: number, count: number, force = 1): void {
+    const arena = this.arena;
+    if (!arena) return;
+    const point = this.world.localToWorld(brick.u, brick.v, arena);
+    this.effects.spawnDust(point.x * CELL, point.y * CELL, colour, count, force);
+  }
+
+  private scorchAtBrick(brick: Brick, colour: number): void {
+    const arena = this.arena;
+    if (!arena) return;
+    const point = this.world.localToWorld(brick.u, brick.v, arena);
+    this.effects.scorch(point.x * CELL, point.y * CELL, colour, CELL * 0.62);
+  }
+
+  /**
+   * Kick the camera away from a brick.
+   *
+   * Directed rather than random: the view recoils from where the blow landed instead of jittering
+   * in place, which is the difference between "something happened" and "something hit you there".
+   */
+  private kickFrom(brick: Brick, magnitude: number): void {
+    const arena = this.arena;
+    if (!arena) return;
+    const point = this.world.localToWorld(brick.u, brick.v, arena);
+    const centre = this.world.localToWorld(0, arena.depth / 2, arena);
+    this.camera.kick((point.x - centre.x) * CELL, (point.y - centre.y) * CELL, magnitude);
   }
 
   private ringAtBrick(brick: Brick, colour: number, strength: number): void {
@@ -1018,6 +1090,15 @@ export class OrekenoidGame {
     this.integrity = Math.max(0, this.integrity - arena.damageTaken);
     this.dying = this.integrity <= 0;
     for (const brick of remaining) brick.hitFlash = 0.34;
+    // Throw the load at the machine. The figure was already right; it was just a number that
+    // appeared, and a number is the one thing a player cannot feel. Now they watch the plating stop
+    // what it can and watch the rest get through.
+    arena.actors.addChild(this.loadStrike.container);
+    this.loadStrike.begin(
+      arena,
+      remaining.map((brick) => ({ u: brick.u, v: brick.v, colour: materialOf(brick.kind).edge })),
+      this.soakCapacity,
+    );
     this.world.exhaustFrame(arena);
     if (reason === "clear") {
       this.showToast(`CLAIM CLEARED · ${arena.collected} SECURED`);
@@ -1036,7 +1117,10 @@ export class OrekenoidGame {
     const focus = this.dying
       ? { x: this.world.start.x * CELL, y: this.world.start.y * CELL }
       : { x: this.player.x, y: this.player.y };
-    window.setTimeout(() => this.camera.begin(focus, 0, true), arena.damageTaken > 0 ? 680 : 360);
+    // The volley needs time to land before the camera pulls out, or the most dramatic beat of a
+    // claim plays off screen.
+    const volley = remaining.length ? 1050 : 0;
+    window.setTimeout(() => this.camera.begin(focus, 0, true), Math.max(volley, arena.damageTaken > 0 ? 680 : 360));
   }
 
   private completeArenaExit(): void {
@@ -1088,6 +1172,37 @@ export class OrekenoidGame {
     }
     this.camera.applyTo(this.worldRoot);
     this.updateDisplays(dt);
+    this.showClaimHeat();
+    this.updateLoadStrike(dt);
+  }
+
+  /**
+   * Animate the load volley and answer each impact.
+   *
+   * Deflections spark off the plating and kick lightly; the ones that get through hit hard, pause
+   * the frame and shake, so "armour held" and "armour breached" are two visibly different events
+   * rather than two different toasts.
+   */
+  private updateLoadStrike(dt: number): void {
+    const arena = this.arena;
+    if (!arena || this.loadStrike.finished) return;
+    this.loadStrike.update(dt, arena, (u, v) => this.world.localToWorld(u, v, arena));
+    for (const impact of this.loadStrike.drainLanded()) {
+      const point = this.world.localToWorld(impact.u, impact.v, arena);
+      const at = { x: point.x * CELL, y: point.y * CELL };
+      if (impact.deflected) {
+        this.effects.spawnShards(at.x, at.y, PALETTE.rail, 5, 0.9, false);
+        this.effects.spawnRing(at.x, at.y, PALETTE.rail, 0.35);
+        this.audio.play(SOUNDS.railHit);
+      } else {
+        this.effects.spawnShards(at.x, at.y, PALETTE.danger, 9, 1.5, false);
+        this.effects.spawnDust(at.x, at.y, PALETTE.danger, 4, 1.2);
+        this.audio.play(SOUNDS.armorBreached);
+        this.hitPause = Math.max(this.hitPause, 0.045);
+        const centre = this.world.localToWorld(0, arena.depth / 2, arena);
+        this.camera.kick((point.x - centre.x) * CELL, (point.y - centre.y) * CELL, 13);
+      }
+    }
   }
 
   private updateSurvey(dt: number): void {
@@ -1134,6 +1249,10 @@ export class OrekenoidGame {
     const arena = this.arena;
     if (!arena || arena.resolving || this.cameraTransition) return;
     if (this.paused) return;
+    // Held frames. The countdown itself lives in the frame update, not here: `updatePlay` returns
+    // early while a claim is resolving, so a pause set by the load volley would never decay and
+    // would freeze the *opening* of the next claim.
+    if (this.hitPause > 0) return;
     if (this.resumeCountdown > 0) {
       this.resumeCountdown = Math.max(0, this.resumeCountdown - dt);
       // Nothing steps during the count. The accumulator is dropped rather than banked, so the
@@ -1201,7 +1320,10 @@ export class OrekenoidGame {
       stepBall(ball, arena, dt, (events) => this.handleBallEvents(ball, events));
       const point = this.world.localToWorld(ball.u, ball.v, arena);
       ball.trail.unshift({ x: point.x * CELL, y: point.y * CELL });
-      if (ball.trail.length > 13) ball.trail.pop();
+      // The trail lengthens with the claim's pace, which is how the speed ramp becomes something
+      // the player sees rather than only something they cope with.
+      const trailLength = Math.round(13 + this.claimHeat * 13);
+      while (ball.trail.length > trailLength) ball.trail.pop();
     }
 
     // Bounded province rules.
@@ -1289,6 +1411,24 @@ export class OrekenoidGame {
     if (this.hasSalvageDrone) arena.actors.addChild(this.salvage.container);
   }
 
+  /**
+   * Make the speed ramp visible.
+   *
+   * The ball runs up to 45% faster as a claim clears, and a player should be able to see that
+   * coming rather than only discover it by missing. The ball burns brighter, its trail runs longer,
+   * and the rails glow hotter -- three cues on the same number.
+   */
+  private showClaimHeat(): void {
+    const arena = this.arena;
+    if (!arena) return;
+    const heat = this.claimHeat;
+    for (const ball of arena.balls) {
+      if (ball.display) ball.display.scale.set(1 + heat * 0.22);
+    }
+    arena.actors.alpha = 1;
+    if (arena.railLight) arena.railLight.alpha = 0.55 + heat * 0.45;
+  }
+
   private updateDisplays(dt: number): void {
     this.drone.position.set(this.player.x, this.player.y);
     this.drone.rotation = this.player.heading;
@@ -1370,6 +1510,9 @@ export class OrekenoidGame {
       if (this.started && !this.arena) this.showArrival(reading);
       this.updateUI();
     }
+    // Divided by the rate: at x8 the player asked for speed, and stacking full-length freezes on
+    // top of that turns a fast-forward into a stutter.
+    if (this.hitPause > 0) this.hitPause = Math.max(0, this.hitPause - step * this.simulationRate);
     this.pauseView.showCountdown(this.resumeCountdown);
     this.advanceTutorial(step);
     if (this.tutorialNudge > 0) {
