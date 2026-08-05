@@ -5,7 +5,6 @@ import {
   Graphics,
 } from "pixi.js";
 import {
-  BALL_SPEED,
   BASE_ARENA_BALLS,
   BRICK_HALF,
   CELL,
@@ -27,7 +26,7 @@ import { calculateClaimDamage } from "./claims";
 import { collectCascade, initialRegrowthBudget, spawnMembrane, stepMembranes, stepRegrowth } from "./arenaRules";
 import { BLAST_CHARGE_BRICKS, Economy, FABRICATIONS, STATIONS_BY_ID, STATION_IDS, type StationId, type VerbId } from "./economy";
 import { materialOf } from "./materials";
-import { createBall, stepBall, type BallStepEvents } from "./physics";
+import { ballSpeed, createBall, stepBall, type BallStepEvents } from "./physics";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Camera, type CameraTransition } from "./camera";
@@ -840,8 +839,11 @@ export class OrekenoidGame {
     const arena = this.arena;
     if (!arena || arena.balls.some((ball) => ball.served) || this.cameraTransition) return;
     const ball = arena.balls[0];
-    ball.vu = arena.serveAim * BALL_SPEED;
-    ball.vv = Math.sqrt(BALL_SPEED ** 2 - ball.vu ** 2);
+    // Served at the claim's current pace, so a re-serve after losing a ball is not slower than the
+    // rally it is replacing.
+    const speed = ballSpeed(arena);
+    ball.vu = arena.serveAim * speed;
+    ball.vv = Math.sqrt(Math.max(speed ** 2 - ball.vu ** 2, 1e-6));
     ball.served = true;
     this.hasServed = true;
     this.markTutorial("serve");

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Container } from "pixi.js";
 import { BALL_SPEED } from "../src/config";
 import { calculateClaimDamage } from "../src/claims";
-import { createBall, predictPath, stepBall, sweepRoundedRect } from "../src/physics";
+import { ballSpeed, createBall, predictPath, stepBall, sweepRoundedRect } from "../src/physics";
 import type { Arena, Brick } from "../src/types";
 import type { MaterialKind } from "../src/config";
 import { materialOf } from "../src/materials";
@@ -52,9 +52,126 @@ describe("rounded brick collision", () => {
     let contacts: Brick[] = [];
     stepBall(ball, arena, 0.12, (events) => { contacts = events.bricks; });
     expect(contacts).toHaveLength(2);
-    expect(ball.vu).toBeCloseTo(0, 6);
     expect(ball.vv).toBeLessThan(0);
+    // Not perfectly vertical, deliberately. A dead-vertical rally is a state the player cannot
+    // break out of by playing well, so every non-facet reflection is clamped off both axes -- the
+    // heading here is the minimum 12 degrees off vertical rather than the 0 physics would give.
+    expect(Math.abs(ball.vu)).toBeCloseTo(BALL_SPEED * Math.sin(12 * Math.PI / 180), 4);
     expect(Math.hypot(ball.vu, ball.vv)).toBeCloseTo(BALL_SPEED, 6);
+  });
+});
+
+describe("ball feel", () => {
+  /**
+   * The rules that separate a solver which is physically correct from one that plays well. Mirror
+   * and renormalise permits two states the genre has refused since the arcade cabinets: a rally
+   * skimming near-horizontally between the rails forever, and a dead-vertical column no amount of
+   * skill breaks out of. Both were reachable here, and the vertical one was *guaranteed* -- catching
+   * the ball dead centre produced exactly zero horizontal velocity.
+   */
+  const heading = (ball: { vu: number; vv: number }) =>
+    Math.abs(Math.atan2(Math.abs(ball.vv), Math.abs(ball.vu))) * 180 / Math.PI;
+
+  it("never lets a reflection travel near-horizontally", () => {
+    const arena = arenaWith([brick(0, 3)]);
+    // Aimed almost flat at a side rail, which is how a stalled rally starts.
+    for (const flat of [0.5, 0.1, 0.02, 0]) {
+      const ball = createBall(2.5, 3);
+      ball.served = true;
+      ball.vu = BALL_SPEED * Math.cos(flat * 0.02);
+      ball.vv = BALL_SPEED * Math.sin(flat * 0.02);
+      stepBall(ball, arena, 0.2, () => {});
+      expect(heading(ball), `heading ${heading(ball).toFixed(1)} deg off horizontal`)
+        .toBeGreaterThanOrEqual(22 - 1e-6);
+    }
+  });
+
+  it("never lets the paddle return a perfectly vertical ball", () => {
+    // Dead centre. This is the case that used to give vu exactly 0.
+    const arena = arenaWith([]);
+    const ball = createBall(0, 0.9);
+    ball.served = true;
+    ball.vu = 0;
+    ball.vv = -BALL_SPEED;
+    stepBall(ball, arena, 0.2, () => {});
+    expect(ball.vv).toBeGreaterThan(0);
+    expect(heading(ball)).toBeLessThanOrEqual(90 - 12 + 1e-6);
+    expect(Math.abs(ball.vu)).toBeGreaterThan(0.1);
+  });
+
+  it("keeps speed exactly through every rebound", () => {
+    const arena = arenaWith([brick(0, 3), brick(1, 3), brick(-1, 3)]);
+    const ball = createBall(0.2, 2);
+    ball.served = true;
+    ball.vu = BALL_SPEED * 0.4;
+    ball.vv = Math.sqrt(BALL_SPEED ** 2 - (BALL_SPEED * 0.4) ** 2);
+    for (let step = 0; step < 40; step++) {
+      stepBall(ball, arena, 1 / 120, () => {});
+      const speed = Math.hypot(ball.vu, ball.vv);
+      // The claim's ramp raises speed as bricks clear, so the bound is the ramped ceiling.
+      expect(speed).toBeGreaterThan(BALL_SPEED * 0.99);
+      expect(speed).toBeLessThan(BALL_SPEED * 1.46);
+    }
+  });
+
+  it("speeds the ball up as the claim clears, and not before", () => {
+    const bricks = [brick(0, 3), brick(1, 3), brick(-1, 3), brick(2, 3)];
+    const arena = arenaWith(bricks);
+    expect(ballSpeed(arena)).toBeCloseTo(BALL_SPEED, 6);
+    for (const dead of bricks.slice(0, 2)) dead.alive = false;
+    expect(ballSpeed(arena)).toBeGreaterThan(BALL_SPEED);
+    for (const dead of bricks) dead.alive = false;
+    expect(ballSpeed(arena)).toBeCloseTo(BALL_SPEED * 1.45, 6);
+  });
+
+  it("gives the paddle a curve, so the middle is forgiving and the edges bite", () => {
+    // A linear face responds identically everywhere, which reads as mushy. The curve means a small
+    // offset near the centre barely turns the ball while the same offset near the edge turns it a
+    // lot -- which is what makes the paddle feel like an instrument.
+    const outgoing = (offset: number) => {
+      const arena = arenaWith([]);
+      const ball = createBall(offset, 0.9);
+      ball.served = true;
+      ball.vu = 0;
+      ball.vv = -BALL_SPEED;
+      stepBall(ball, arena, 0.2, () => {});
+      return Math.abs(ball.vu);
+    };
+    const width = 3.1 / 2;
+    const nearCentre = outgoing(width * 0.25) - outgoing(0);
+    const nearEdge = outgoing(width * 1.0) - outgoing(width * 0.75);
+    expect(nearEdge).toBeGreaterThan(nearCentre * 2);
+  });
+
+  it("presents a row of bricks as one wall, not a line of lumps", () => {
+    // Each brick is an independent rounded rect, so without seam handling a ball skimming along a
+    // wall catches on the little arcs *between* bricks and scatters off interior corners that are
+    // not surfaces. Grazing along the underside of a row must come off the flat face.
+    const arena = arenaWith([brick(-1, 3), brick(0, 3), brick(1, 3), brick(2, 3)]);
+    const ball = createBall(-1.5, 3 - 0.42 - 0.26);
+    ball.served = true;
+    ball.vu = BALL_SPEED * 0.985;
+    ball.vv = BALL_SPEED * 0.17;
+    const normals: Array<{ nx: number; ny: number }> = [];
+    for (let step = 0; step < 60; step++) {
+      const before = { vu: ball.vu, vv: ball.vv };
+      stepBall(ball, arena, 1 / 240, () => {});
+      if (before.vu !== ball.vu || before.vv !== ball.vv) normals.push({ nx: ball.vu, ny: ball.vv });
+    }
+    // It may bounce off the flat underside, but it must never be thrown backwards by a seam.
+    for (const after of normals) {
+      expect(after.nx, "a seam reversed the ball along the wall").toBeGreaterThan(0);
+    }
+  });
+
+  it("pushes an overlapping ball out sideways rather than reversing it", () => {
+    // The embedded case used to return the negated velocity as its normal, which reversed the ball
+    // on the spot and read as a phantom bounce out of nowhere.
+    const hit = sweepRoundedRect(0.3, 3, 0.1, 0, 0, 3, 0.42, 0.42, 0.14, 0.255);
+    expect(hit).not.toBeNull();
+    expect(hit!.t).toBe(0);
+    expect(Math.abs(hit!.nx)).toBe(1);
+    expect(hit!.ny).toBe(0);
   });
 });
 
