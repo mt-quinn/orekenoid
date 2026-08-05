@@ -16,6 +16,7 @@ import {
   PALETTE,
   PHYSICS_STEP,
   PROVINCE_PALETTE,
+  RESOURCES,
   VIEW_HEIGHT,
   VIEW_WIDTH,
   type MaterialKind,
@@ -24,7 +25,7 @@ import {
 } from "./config";
 import { calculateClaimDamage } from "./claims";
 import { collectCascade, initialRegrowthBudget, spawnMembrane, stepMembranes, stepRegrowth } from "./arenaRules";
-import { BLAST_CHARGE_BRICKS, Economy, type VerbId } from "./economy";
+import { BLAST_CHARGE_BRICKS, Economy, FABRICATIONS, STATIONS_BY_ID, STATION_IDS, type StationId, type VerbId } from "./economy";
 import { materialOf } from "./materials";
 import { createBall, stepBall, type BallStepEvents } from "./physics";
 import { ChunkedTerrain } from "./terrain";
@@ -39,7 +40,7 @@ import { buildFarGeology, buildLandmarks, drawFramePreview } from "./view/survey
 import { buildFeatureMarks, updateFeatureMarks, type FeatureMark } from "./view/features";
 import { gradeOf, Hud, REGION_RULES, type HudModel } from "./hud";
 import { objectiveFor } from "./objectives";
-import { ForgeView, forgeRecipes } from "./forgeView";
+import { Gantry, type GantryModel } from "./view/gantry";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
@@ -115,7 +116,9 @@ export class OrekenoidGame {
   readonly keys = new Set<string>();
   readonly audio = new GameAudio();
   readonly hud = new Hud();
-  readonly forgeView = new ForgeView();
+  readonly gantry = new Gantry();
+  /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
+  private forgeSelection: StationId | null = null;
   readonly atlasView = new AtlasView(this);
   readonly expeditionView = new ExpeditionView();
   /**
@@ -199,7 +202,7 @@ export class OrekenoidGame {
     this.anchors.push({ id: "refitBay", x: this.world.start.x, y: this.world.start.y, name: "REFIT BAY" });
     this.effects = new Effects(this.effectLayer);
     this.deploymentPreviews = new DeploymentPreviews(this.world, this.terrain);
-    this.drone = createDrone(this.paddleWidth);
+    this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.framePreview.addChild(this.frameWash, this.frameGrid, this.frameScan, this.frameReturns);
     this.frameScan.filters = [new BlurFilter({ strength: 5, quality: 2 })];
   }
@@ -252,7 +255,7 @@ export class OrekenoidGame {
     this.app.canvas.style.width = "100%";
     this.app.canvas.style.height = "100%";
     this.app.canvas.setAttribute("aria-label", "Orekenoid");
-    this.app.stage.addChild(this.worldRoot);
+    this.app.stage.addChild(this.worldRoot, this.gantry.container);
     this.worldRoot.addChild(this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer, this.actorLayer, this.framePreview);
     this.terrainLayer.addChild(this.terrain.container);
     buildFarGeology(this.farLayer);
@@ -302,8 +305,13 @@ export class OrekenoidGame {
       if (!event.repeat && event.code === "KeyM") { this.toggleAtlas(); return; }
       if (!event.repeat && event.code === "KeyC" && this.mode === "survey") { this.toggleCrafting(); return; }
       if (this.craftingOpen) {
+        // Any key lands a running fit rather than queueing behind it.
+        if (this.gantry.fitting) {
+          this.gantry.skipFit();
+          return;
+        }
         const digit = Number(event.code.replace("Digit", ""));
-        if (event.code.startsWith("Digit") && digit >= 1 && digit <= 9) this.craftByIndex(digit - 1);
+        if (event.code.startsWith("Digit") && digit >= 1 && digit <= 9) this.pressForgeKey(digit - 1);
         if (event.code === "Escape") this.toggleCrafting();
         return;
       }
@@ -342,7 +350,7 @@ export class OrekenoidGame {
     this.chassisIndex = index;
     this.selectedChassisIndex = index;
     this.drone.destroy({ children: true });
-    this.drone = createDrone(this.paddleWidth);
+    this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.actorLayer.addChild(this.drone);
     this.renderFramePreview();
     this.expeditionView.showChassisSelected(index);
@@ -424,6 +432,9 @@ export class OrekenoidGame {
     return best;
   }
 
+  /** Latched while the drone is parked at the bank, so the bay opens once per arrival. */
+  private arrivedAtBank = false;
+
   private atAnchor(): boolean {
     const nearest = this.nearestAnchor();
     return !!nearest && nearest.distance <= 9;
@@ -438,63 +449,181 @@ export class OrekenoidGame {
       return;
     }
     this.craftingOpen = !this.craftingOpen;
-    this.forgeView.setOpen(this.craftingOpen);
+    // Docking selects the least-built station, so the bay always opens pointing at something
+    // rather than at nothing. The player is asking "what now"; answering with a blank screen is
+    // the failure the old panel made every time it opened.
+    this.forgeSelection = this.craftingOpen ? this.leastBuiltStation() : null;
+    this.gantry.setOpen(this.craftingOpen);
     this.renderCrafting();
     this.updateUI();
   }
 
-  /** Redraw the forge, which is always rendered against live economy state. */
+  /** The station with the most room left to grow, as a sensible default selection. */
+  private leastBuiltStation(): StationId {
+    let best = STATION_IDS[0];
+    let bestRemaining = -1;
+    for (const station of STATION_IDS) {
+      const remaining = STATIONS_BY_ID.get(station)!.grades.length - this.economy.gradeOf(this.chassis.id, station);
+      if (remaining > bestRemaining) {
+        bestRemaining = remaining;
+        best = station;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * The bay, as a model. The view is handed everything it needs and reads no game state, which
+   * is the same contract the HUD works to.
+   */
+  private gantryModel(): GantryModel {
+    const chassisId = this.chassis.id;
+    const priced = (cost: Partial<Record<ResourceId, number>>) =>
+      (Object.entries(cost) as Array<[ResourceId, number]>)
+        .map(([resource, need]) => ({ resource, need, have: this.economy.amount(resource) }));
+    return {
+      chassisName: this.chassis.name,
+      paddleWidth: this.paddleWidth,
+      grades: this.economy.stationGrades(chassisId),
+      armor: this.soakCapacity,
+      integrity: this.integrity,
+      maxIntegrity: this.maxIntegrity,
+      selected: this.forgeSelection,
+      stations: STATION_IDS.map((station) => {
+        const definition = STATIONS_BY_ID.get(station)!;
+        const next = this.economy.nextGrade(chassisId, station);
+        const check = this.economy.canUpgrade(chassisId, station);
+        return {
+          id: station,
+          name: definition.name,
+          mount: definition.mount,
+          level: this.economy.gradeOf(chassisId, station),
+          ladder: definition.grades.length,
+          fitted: this.economy.fittedGrade(chassisId, station)?.name ?? null,
+          next: next ? { name: next.name, detail: next.detail, cost: priced(next.cost) } : null,
+          // Shortfalls are already said by the cost chips, so only structural refusals get text.
+          blocked: !check.ok && check.reason !== "INSUFFICIENT MATERIAL" && next ? check.reason ?? null : null,
+          affordable: check.ok,
+        };
+      }),
+      hulls: FABRICATIONS.map((hull) => ({
+        chassisId: hull.chassisId,
+        name: hull.name,
+        detail: hull.detail,
+        built: this.economy.fabricated.has(hull.chassisId),
+        affordable: this.economy.canFabricate(hull.chassisId).ok,
+        cost: priced(hull.cost),
+      })),
+      bank: [...this.economy.banked.entries()]
+        .filter(([, count]) => count > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([resource, count]) => ({ resource, count })),
+    };
+  }
+
+  /** Redraw the bay, which is always rendered against live economy state. */
   private renderCrafting(): void {
-    this.forgeView.render(
-      {
-        economy: this.economy,
-        chassis: this.chassis,
-        soakCapacity: this.soakCapacity,
-        integrity: this.integrity,
-        maxIntegrity: this.maxIntegrity,
+    if (!this.craftingOpen) return;
+    this.gantry.render(this.gantryModel(), {
+      onSelect: (station) => {
+        if (station === this.forgeSelection) return;
+        this.forgeSelection = station;
+        this.renderCrafting();
       },
-      (recipeId) => this.craftById(recipeId),
-    );
+      onFit: (station) => this.upgradeStation(station),
+      onFabricate: (chassisId) => this.fabricateHull(chassisId),
+    });
   }
 
-  private craftById(recipeId: string): void {
-    const index = forgeRecipes().findIndex((recipe) => recipe.id === recipeId);
-    if (index >= 0) this.craftByIndex(index);
+  /**
+   * Digits run across the panel: the six stations first, then the berth.
+   *
+   * One flat index rather than per-section numbering, so the digit printed on a card is always
+   * the digit that presses it.
+   */
+  private pressForgeKey(index: number): void {
+    if (index < STATION_IDS.length) {
+      const station = STATION_IDS[index];
+      this.forgeSelection = station;
+      this.upgradeStation(station);
+      return;
+    }
+    const hull = FABRICATIONS[index - STATION_IDS.length];
+    if (hull) this.fabricateHull(hull.chassisId);
   }
 
-  private craftByIndex(index: number): void {
-    const recipe = forgeRecipes()[index];
-    if (!recipe) return;
-    const result = this.economy.craft(this.chassis.id, recipe.id);
+  /**
+   * Raise one station a grade, and show it happening.
+   *
+   * State changes first and the animation reads it afterwards, never the reverse: the sequence
+   * is skippable and interruptible, so it must not be the thing that owns whether the part is
+   * fitted. `beginFit` is handed the grades as they were, and holds the old silhouette until the
+   * arm seats the part.
+   */
+  upgradeStation(station: StationId): void {
+    // One fit at a time. Pressing a second station mid-sequence lands the first rather than
+    // dropping it, which is also the fastest way through for a player who does not want the show.
+    if (this.gantry.fitting) {
+      this.gantry.skipFit();
+      return;
+    }
+    const before = this.economy.stationGrades(this.chassis.id);
+    const result = this.economy.upgrade(this.chassis.id, station);
     if (!result.ok) {
-      this.showToast(result.reason ?? "CANNOT FORGE");
+      this.showToast(result.reason ?? "CANNOT FIT");
       this.audio.play(SOUNDS.cannotForge);
       return;
     }
-    if (result.effect?.type === "repair") {
-      this.integrity = Math.min(this.maxIntegrity, this.integrity + result.effect.amount);
+    const grade = result.grade!;
+    // The part is the colour of the ore it was made from -- the same colour the plate on the
+    // drone takes, and the same chip the cost was listed in.
+    const ore = (Object.keys(grade.cost) as ResourceId[])
+      .find((resource) => resource !== "coal") ?? "copper";
+    this.audio.play(SOUNDS.fitReach);
+    this.gantry.beginFit(
+      station, RESOURCES[ore].colour, before,
+      () => {
+        // Seated: the machine now carries the part, everywhere it is drawn.
+        this.rebuildDrone();
+        this.audio.play(SOUNDS.fitSeat);
+        this.audio.play(SOUNDS.fitClick);
+      },
+      () => {
+        this.showToast(`${grade.name.toUpperCase()} FITTED`);
+        this.audio.play(SOUNDS.forged);
+        this.requestSave();
+        this.renderCrafting();
+        this.updateUI();
+      },
+    );
+    this.updateUI();
+  }
+
+  /** Build a hull at the fabrication berth. A different machine, not a better one. */
+  private fabricateHull(chassisId: string): void {
+    const result = this.economy.fabricate(chassisId);
+    if (!result.ok) {
+      this.showToast(result.reason ?? "CANNOT BUILD");
+      this.audio.play(SOUNDS.cannotForge);
+      return;
     }
-    if (result.effect?.type === "fabricate") {
-      const chassisId = result.effect.chassisId;
-      this.chassisRoster = this.economy.availableChassis(PADDLE_CHASSIS);
-      const built = this.chassisRoster.find((chassis) => chassis.id === chassisId);
-      // A fabricated chassis starts bare: modules do not transfer, so the shape is
-      // what was bought, and the modules must be earned again.
-      if (built && !this.chassisIntegrity.has(built.id)) this.chassisIntegrity.set(built.id, built.maxHealth);
-      this.showToast(`${recipe.name.toUpperCase()} · CHASSIS AVAILABLE AT REFIT`);
-    } else {
-      this.showToast(`${recipe.name.toUpperCase()} FORGED`);
-    }
-    // Paddle width changes must reach the drone silhouette immediately.
-    if (result.effect?.type === "paddleWidth") {
-      this.drone.destroy({ children: true });
-      this.drone = createDrone(this.paddleWidth);
-      this.actorLayer.addChild(this.drone);
-    }
+    this.chassisRoster = this.economy.availableChassis(PADDLE_CHASSIS);
+    const built = this.chassisRoster.find((chassis) => chassis.id === chassisId);
+    // A fabricated hull starts at grade zero on every station, so it is visibly bare beside a
+    // veteran machine. Fabrication buys a different shape of claim, not a better one.
+    if (built && !this.chassisIntegrity.has(built.id)) this.chassisIntegrity.set(built.id, built.maxHealth);
+    this.showToast(`${built?.name.toUpperCase() ?? "HULL"} · AVAILABLE AT REFIT`);
     this.audio.play(SOUNDS.forged);
     this.requestSave();
     this.renderCrafting();
     this.updateUI();
+  }
+
+  /** Rebuild the drone silhouette from the machine's current grades. */
+  rebuildDrone(): void {
+    this.drone.destroy({ children: true });
+    this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
+    this.actorLayer.addChild(this.drone);
   }
 
   // --- Claims -------------------------------------------------------------
@@ -542,7 +671,7 @@ export class OrekenoidGame {
     this.railSeedUsed = false;
     this.railSeedArmed = false;
     this.framePreview.visible = false;
-    buildArenaDisplay(arena, (u, v) => this.world.localToWorld(u, v, arena));
+    buildArenaDisplay(arena, (u, v) => this.world.localToWorld(u, v, arena), this.economy.stationGrades(this.chassis.id));
     const center = this.world.localToWorld(0, arena.depth / 2, arena);
     this.camera.begin({ x: center.x * CELL, y: center.y * CELL }, -arena.angle, false);
     this.showToast(`${arena.initialLiability} LIABLE · ${resources} RETURNS · CLAIM COMMITTED`);
@@ -766,6 +895,9 @@ export class OrekenoidGame {
   private update(dt: number): void {
     this.time += dt;
     if (this.arena) this.arena.visualAge += dt;
+    // Real seconds, not frames: the ghost pulse has to breathe at the same rate on a 30fps
+    // machine as on a 144fps one.
+    this.gantry.update(dt);
     if (!this.started) {
       // Only the selected and hovered cards run, so three WebGL contexts do not
       // compete for the frame while the player is still choosing.
@@ -1035,7 +1167,7 @@ export class OrekenoidGame {
       ? null
       : this.world.nearestCornerstone(this.player.x / CELL, this.player.y / CELL);
     const showResonance = this.economy.verbs.has("surveyResonance") && this.mode === "survey";
-    const grades = this.economy.resonanceGrades;
+    const grades = this.moduleUpgrades.resonanceGrades;
     return {
       mode: this.craftingOpen ? "forge" : this.mode,
       inArena: !!arena,
@@ -1109,10 +1241,36 @@ export class OrekenoidGame {
    * is never a reason to refuse it -- the tension is getting home, not the keypress.
    */
   private tryBank(): void {
-    if (this.economy.carriedTotal <= 0) return;
     const distance = Math.hypot(BANK.x - this.player.x / CELL, BANK.y - this.player.y / CELL);
-    if (distance > 4.5) return;
+    if (distance > 4.5) {
+      // Released once the drone is clear of the bank, which is what makes the latch below mean
+      // "once per arrival" rather than "once per session".
+      this.arrivedAtBank = false;
+      return;
+    }
+    // Coming home services the machine: the rack fills and the hull is repaired, whether or not
+    // there was anything to bank.
+    //
+    // This replaced the Hull Patch recipe, which was the only entry in the old list that was a
+    // consumable service rather than a part of the machine -- and pricing it made repair a sum
+    // the player had to do before every descent. Free on docking is also what the forgiving
+    // expedition model already implies: death costs the hold and the walk back, never capability.
+    this.economy.refillCharges(this.chassis.id);
+    const wounded = this.maxIntegrity - this.integrity;
+    if (wounded > 0) {
+      this.integrity = this.maxIntegrity;
+      this.showToast(`HULL REPAIRED · +${wounded}`);
+    }
+    if (this.economy.carriedTotal <= 0) return;
     const stored = this.economy.deposit();
+    // The bay presents itself on arrival with a haul, because that is the moment the player is
+    // asking what it bought. Opening it here rather than waiting to be asked is the difference
+    // between a menu you remember to visit and a beat in the loop. Once per arrival: `arrived`
+    // latches until the drone leaves the bank again.
+    if (!this.arrivedAtBank && !this.craftingOpen && this.mode === "survey") {
+      this.arrivedAtBank = true;
+      this.toggleCrafting();
+    }
     this.showToast(`${stored} BANKED`);
     this.audio.play(SOUNDS.banked);
     this.hud.showBankNotice(stored);
@@ -1256,7 +1414,7 @@ export class OrekenoidGame {
     this.hasServed = data.progress.hasServed;
 
     this.drone.destroy({ children: true });
-    this.drone = createDrone(this.paddleWidth);
+    this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.actorLayer.addChild(this.drone);
     this.terrain.requestAround(this.player.x, this.player.y);
     this.terrain.pump(24);
@@ -1465,6 +1623,65 @@ export class OrekenoidGame {
         const stored = game.economy.deposit();
         game.updateUI();
         return stored;
+      },
+      /** Raise a station, or every station, without paying. For inspecting the machine. */
+      fitStation(station: StationId, times = 1) {
+        for (let step = 0; step < times; step++) {
+          const grades = game.economy.stationGrades(game.chassis.id);
+          const ladder = STATIONS_BY_ID.get(station)!.grades.length;
+          if ((grades[station] ?? 0) >= ladder) break;
+          game.economy.restore({
+            ...game.economy.snapshot(),
+            grades: {
+              ...game.economy.snapshot().grades,
+              [game.chassis.id]: { ...grades, [station]: (grades[station] ?? 0) + 1 },
+            },
+          });
+        }
+        game.rebuildDrone();
+        game.updateUI();
+        return game.economy.stationGrades(game.chassis.id);
+      },
+      /** The bay as the view sees it, so a test can assert the model rather than the pixels. */
+      bayModel() {
+        return { open: game.gantry.isOpen, ...game.gantryModel() };
+      },
+      /** Run a real fit, for inspecting the sequence without grinding for material. */
+      fitNow(station: StationId) {
+        game.upgradeStation(station);
+      },
+      /**
+       * Stop the clock and pose the fit sequence at an exact time.
+       *
+       * Screenshots take longer than the sequence lasts, so sampling it against the wall clock
+       * photographs the aftermath and calls it the middle. Stepping the animation by hand is the
+       * only way to actually see frame 0.15 -- and it is the same reason the tuning constants are
+       * gathered in one block: this is a thing that has to be inspected deliberately.
+       */
+      poseFit(station: StationId, seconds: number) {
+        game.app.ticker.stop();
+        if (!game.gantry.fitting) game.upgradeStation(station);
+        const step = 1 / 240;
+        for (let elapsed = 0; elapsed < seconds; elapsed += step) game.gantry.update(step);
+        // The ticker is what drives the renderer, so stopping it also stops drawing: without this
+        // an explicitly posed frame screenshots as whatever was on screen before the clock
+        // stopped. Every posed capture was silently stale until this line existed.
+        game.app.renderer.render(game.app.stage);
+        return { at: seconds, ...game.gantry.fitDebug() };
+      },
+      resumeClock() {
+        game.app.ticker.start();
+      },
+      selectStation(station: StationId) {
+        game.forgeSelection = station;
+        game.renderCrafting();
+        return station;
+      },
+      fitEverything() {
+        for (const station of STATION_IDS) {
+          (this as { fitStation(id: StationId, times: number): unknown }).fitStation(station, 9);
+        }
+        return game.economy.stationGrades(game.chassis.id);
       },
       kill() {
         game.integrity = 0;

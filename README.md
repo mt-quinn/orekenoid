@@ -27,6 +27,16 @@ npm run build
 npm run test:browser
 ```
 
+### Looking at generated worlds
+
+```bash
+npm run worldmap
+```
+
+Opens the world inspector at `/worldmap.html`: reroll seeds, pan and zoom the whole world at
+one pixel per cell, switch base layers, and export a PNG. `R` rerolls, `F` fits, the seed is
+in the URL so a world can be linked or bookmarked.
+
 ## Controls
 
 ### Survey
@@ -113,6 +123,7 @@ The HUD is mode-driven. Surveying shows what you need to read the world — regi
 - **Room pipeline (`rooms/`, `tools/`, `src/worldgen/rooms.ts`):** authored PNG room chunks stamped into procedural terrain, the fourth generator scale. One pixel is one cell; colour maps to material, and reserved colours are markers that place contents. Painted by hand or drawn on a coordinate canvas in `rooms/src/`, then compiled to TypeScript by `npm run rooms` so generation stays synchronous and testable in Node. Three tiers following Terraria's own ladder — feature (~1/6 screen), chamber (~1/2), hall (~1) — placed by density with `structureMap.ts` reserving ground so features never collide. See `rooms/README.md` to author one, and `WORLD_DETAIL_BRIEF.md` for why.
 - **World features (`src/view/features.ts`):** the ~120 features the generator places per world, drawn so they can be seen. Two brief rules govern the art: *direction is discoverable, contents are a wager* — a buried seam shows as mineral staining carrying the ore's colour but no shape that identifies it, and a buried cache as a machined spoil cairn saying only that somebody was here; and *nothing auto-interprets discoveries*, so nothing here writes to the Atlas. The player sees a thing, travels to it, and marks it themselves. Anomalies are the most conspicuous thing short of a cornerstone and carry the only motion in the world outside an arena, which is what makes them read as significant.
 - **Honest drone hull:** `WorldModel.isHullOpen` tests an oriented box measured off the drone's own silhouette rather than a fixed square. Heading is therefore a traversal tool — a drone turned broadside needs nearly four cells, edge-on needs half of one — and it is the same key that aims the survey frame, so threading a gap and choosing where to claim are one act.
+- **World inspector (`worldmap.html`, `src/worldmap/`):** a development instrument, on its own page at `/worldmap.html` — run `npm run worldmap`. Rerolls whole worlds and draws them at one pixel per cell, pannable and zoomable, exportable as a PNG at 1–8 px per cell. Five base layers (material, region, solidity, walkable-from-Landing, connectivity), overlays for room footprints and names, feature markers, landmarks and depth bands, a hover readout naming the material, ore, room variant and substitution province under the cursor, and the generation report beside it. It imports `generateWorld` directly, so the picture cannot drift from the generator. It exists because the report can say a world is *correct* and cannot say whether it is *good* — and it earned itself immediately by showing that `report.reachableCells` describes a world that never ships (see `WORLD_DETAIL_BRIEF.md`).
 - **Vite + TypeScript:** strict modules and production bundling.
 - **Vitest + Playwright:** deterministic collision regression and full browser progression/render validation.
 

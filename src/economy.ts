@@ -1,258 +1,41 @@
-// Resource inventory and the crafting chain.
+// Resource inventory, and the machine's six stations.
 //
-// Two rules from PROGRESSION_AND_ECONOMY.md are enforced structurally here rather
-// than by convention:
-//   - Crafting produces capacity, never verbs. Nothing in this file grants Survey
-//     Resonance, sequential balls or the rail seed.
-//   - Crafting may sharpen a verb but never grant one, so a recipe may declare a
+// The drone is not a list of purchased modules. It is six places on a machine, each of which
+// has a grade, and each of which only ever goes up. Feeding a station raises its grade; the
+// part at that station gets physically bigger, and the stat it governs goes with it.
+//
+// That shape is deliberate and it replaced a flat list of twenty-one recipes. A list invites
+// the player to optimise a build: which plate, how many, in what order, and is this one
+// superseded by that one. Stations invite the player to look at their machine and point at the
+// part they want bigger. Nothing is ever a trade, nothing is ever a regret, and there is no
+// arrangement to get wrong -- which is why grades are *absolute* rather than additive below. A
+// grade is a state the machine is in, not a purchase stacked on earlier purchases.
+//
+// Two rules from PROGRESSION_AND_ECONOMY.md are still enforced structurally:
+//   - Upgrading produces capacity, never verbs. Nothing here grants Survey Resonance,
+//     sequential balls or the rail seed.
+//   - Upgrading may sharpen a verb but never grant one, so a grade may declare a
 //     `requiresVerb` prerequisite that no amount of material can substitute for.
 
 import { FABRICATED_CHASSIS, type PaddleChassis, type ResourceId } from "./config";
 
 export type VerbId = "surveyResonance" | "sequentialBall" | "railSeed";
 
-export type RecipeEffect =
-  | { type: "armor"; amount: number }
-  | { type: "maxIntegrity"; amount: number }
-  | { type: "repair"; amount: number }
-  | { type: "paddleSpeedPercent"; amount: number }
-  | { type: "paddleWidth"; amount: number }
-  | { type: "travelSpeedPercent"; amount: number }
-  | { type: "rotationPercent"; amount: number }
-  | { type: "sharpenResonance"; amount: number }
-  | { type: "blastCharges"; amount: number }
-  | { type: "vacuum"; amount: number }
-  | { type: "predictBounces"; amount: number }
-  | { type: "fabricate"; chassisId: string };
+/**
+ * The six places on the machine.
+ *
+ * Ordered as the player reads the drone: hull outward, then the working face, then the mast
+ * above, then the gear hanging off it. The forge shows them in this order.
+ */
+export type StationId = "plating" | "frame" | "emitter" | "mast" | "collector" | "rack";
 
-export interface Recipe {
-  id: string;
-  name: string;
-  tier: 1 | 2 | 3;
-  cost: Partial<Record<ResourceId, number>>;
-  effect: RecipeEffect;
-  /** Maximum times this recipe may be crafted. Undefined means unlimited. */
-  limit?: number;
-  /** Each repeat multiplies the cost by this factor. */
-  costGrowth?: number;
-  /** Replaces another module rather than stacking with it. */
-  replaces?: string;
-  /** A verb that must already be earned. Material cannot substitute for it. */
-  requiresVerb?: VerbId;
-  detail: string;
-}
+export const STATION_IDS: readonly StationId[] = ["plating", "frame", "emitter", "mast", "collector", "rack"];
 
-export const RECIPES: readonly Recipe[] = [
-  // --- Tier 1: Field Forge ----------------------------------------------
-  {
-    id: "copperPlate",
-    name: "Copper Plate",
-    tier: 1,
-    cost: { copper: 10, coal: 4 },
-    effect: { type: "armor", amount: 3 },
-    limit: 3,
-    costGrowth: 1.5,
-    detail: "+3 armor",
-  },
-  {
-    id: "ironPlate",
-    name: "Iron Plate",
-    tier: 1,
-    cost: { iron: 12, coal: 6 },
-    effect: { type: "armor", amount: 5 },
-    limit: 3,
-    costGrowth: 1.5,
-    detail: "+5 armor",
-  },
-  {
-    id: "hullPatch",
-    name: "Hull Patch",
-    tier: 1,
-    cost: { copper: 6, coal: 2 },
-    effect: { type: "repair", amount: 10 },
-    detail: "restore 10 health",
-  },
-  {
-    id: "hullExtension",
-    name: "Hull Extension",
-    tier: 1,
-    cost: { iron: 14, coal: 6 },
-    effect: { type: "maxIntegrity", amount: 6 },
-    limit: 3,
-    costGrowth: 1.4,
-    detail: "+6 max health",
-  },
-
-  {
-    id: "collectorCoil",
-    name: "Collector Coil",
-    tier: 1,
-    cost: { copper: 12, coal: 5 },
-    effect: { type: "vacuum", amount: 1.1 },
-    limit: 2,
-    costGrowth: 1.6,
-    detail: "wider ore pull",
-  },
-
-  // --- Tier 2: Machined Modules ------------------------------------------
-  {
-    id: "emitterCoil",
-    name: "Emitter Coil",
-    tier: 2,
-    cost: { cobalt: 10, sapphire: 4, coal: 4 },
-    effect: { type: "paddleSpeedPercent", amount: 12 },
-    limit: 1,
-    detail: "+12% paddle speed",
-  },
-  {
-    id: "driveTune",
-    name: "Drive Tune",
-    tier: 2,
-    cost: { cobalt: 8, sapphire: 3, coal: 4 },
-    effect: { type: "travelSpeedPercent", amount: 15 },
-    limit: 1,
-    detail: "+15% travel speed",
-  },
-  {
-    id: "broadEmitter",
-    name: "Broad Emitter",
-    tier: 2,
-    cost: { cobalt: 12, coal: 6 },
-    effect: { type: "paddleWidth", amount: 0.4 },
-    limit: 1,
-    detail: "+0.4 paddle width",
-  },
-  {
-    id: "gimbal",
-    name: "Gimbal",
-    tier: 2,
-    cost: { cobalt: 8, emerald: 4, coal: 3 },
-    effect: { type: "rotationPercent", amount: 25 },
-    limit: 1,
-    detail: "+25% survey rotation",
-  },
-  {
-    id: "rubyEmitter",
-    name: "Ruby Emitter",
-    tier: 2,
-    cost: { cobalt: 14, ruby: 6, coal: 8 },
-    effect: { type: "paddleSpeedPercent", amount: 20 },
-    limit: 1,
-    replaces: "emitterCoil",
-    detail: "+20% paddle speed, replaces Emitter Coil",
-  },
-  {
-    id: "resonantLens",
-    name: "Resonant Lens",
-    tier: 2,
-    cost: { cobalt: 10, diamond: 5, coal: 6 },
-    effect: { type: "sharpenResonance", amount: 1 },
-    limit: 1,
-    requiresVerb: "surveyResonance",
-    detail: "one extra grade of survey precision",
-  },
-  {
-    id: "trajectoryOptics",
-    name: "Trajectory Optics",
-    tier: 2,
-    cost: { cobalt: 10, emerald: 5, coal: 5 },
-    effect: { type: "predictBounces", amount: 1 },
-    limit: 1,
-    detail: "trajectory line predicts 1 rebound",
-  },
-  {
-    id: "deepOptics",
-    name: "Deep Optics",
-    tier: 2,
-    cost: { cobalt: 14, ruby: 7, coal: 9 },
-    effect: { type: "predictBounces", amount: 3 },
-    limit: 1,
-    replaces: "trajectoryOptics",
-    detail: "predicts 3 rebounds, replaces Trajectory Optics",
-  },
-  {
-    id: "fieldCollector",
-    name: "Field Collector",
-    tier: 2,
-    cost: { cobalt: 12, emerald: 4, coal: 6 },
-    effect: { type: "vacuum", amount: 2.1 },
-    limit: 1,
-    detail: "much wider ore pull",
-  },
-  {
-    id: "cobaltPlate",
-    name: "Cobalt Plate",
-    tier: 2,
-    cost: { cobalt: 16, coal: 8 },
-    effect: { type: "armor", amount: 8 },
-    limit: 2,
-    costGrowth: 1.4,
-    detail: "+8 armor",
-  },
-  {
-    id: "mithrilPlate",
-    name: "Mithril Plate",
-    tier: 2,
-    cost: { mithril: 14, coal: 10 },
-    effect: { type: "armor", amount: 12 },
-    limit: 2,
-    costGrowth: 1.4,
-    detail: "+12 armor",
-  },
-  {
-    id: "blastCharge",
-    name: "Blast Charge",
-    tier: 2,
-    cost: { saltpeter: 6, sulfur: 6, coal: 4 },
-    effect: { type: "blastCharges", amount: 3 },
-    detail: "3 charges: detonate surviving bricks",
-  },
-
-  // --- Tier 3: Chassis Fabrication ---------------------------------------
-  {
-    id: "fabricateLantern",
-    name: "Fabricate Lantern",
-    tier: 3,
-    cost: { adamantite: 18, diamond: 10, coal: 12 },
-    effect: { type: "fabricate", chassisId: "lantern" },
-    limit: 1,
-    detail: "9x19 deep shaft frame",
-  },
-  {
-    id: "fabricateWeir",
-    name: "Fabricate Weir",
-    tier: 3,
-    cost: { adamantite: 18, saltpeter: 10, coal: 12 },
-    effect: { type: "fabricate", chassisId: "weir" },
-    limit: 1,
-    detail: "19x9 cavern-wall frame",
-  },
-  {
-    id: "fabricatePrismatic",
-    name: "Fabricate Prismatic",
-    tier: 3,
-    cost: { runite: 22, vitriol: 12, coal: 16 },
-    effect: { type: "fabricate", chassisId: "prismatic" },
-    limit: 1,
-    detail: "13x13 lattice-aligned frame",
-  },
-  {
-    id: "runitePlate",
-    name: "Runite Plate",
-    tier: 3,
-    cost: { runite: 16, coal: 12 },
-    effect: { type: "armor", amount: 18 },
-    limit: 1,
-    detail: "+18 armor",
-  },
-];
-
-export const RECIPES_BY_ID = new Map(RECIPES.map((recipe) => [recipe.id, recipe]));
-
-/** Blast charge detonation cap. Flagged in the doc as a tuning guess. */
-export const BLAST_CHARGE_BRICKS = 8;
-
-export interface ChassisUpgrades {
+/**
+ * What the machine is capable of. Every field is derived by summing the current grade of each
+ * station, so this object is a view of the machine rather than a running total of purchases.
+ */
+export interface ChassisStats {
   armor: number;
   maxIntegrity: number;
   paddleSpeedPercent: number;
@@ -263,9 +46,16 @@ export interface ChassisUpgrades {
   vacuum: number;
   /** How many rebounds the trajectory line predicts. Zero means the current leg only. */
   predictBounces: number;
+  /** Blast charges carried per expedition. Refilled at the bay, never bought by the unit. */
+  blastCapacity: number;
+  /** Extra grades of survey precision. Only reachable once Survey Resonance is earned. */
+  resonanceGrades: number;
 }
 
-const emptyUpgrades = (): ChassisUpgrades => ({
+/** Kept as an alias because the rest of the game asks the machine what it can do, not how. */
+export type ChassisUpgrades = ChassisStats;
+
+export const emptyStats = (): ChassisStats => ({
   armor: 0,
   maxIntegrity: 0,
   paddleSpeedPercent: 0,
@@ -274,39 +64,307 @@ const emptyUpgrades = (): ChassisUpgrades => ({
   rotationPercent: 0,
   vacuum: 0,
   predictBounces: 0,
+  blastCapacity: 0,
+  resonanceGrades: 0,
 });
 
-export interface CraftResult {
-  ok: boolean;
-  reason?: string;
-  recipe?: Recipe;
+export interface StationGrade {
+  name: string;
+  cost: Partial<Record<ResourceId, number>>;
+  /**
+   * What the machine has *at* this grade -- absolute, not added to the grade below.
+   *
+   * This is what removes the whole supersede-versus-stack problem the old recipe list had:
+   * a Ruby Emitter no longer subtracts an Emitter Coil it replaced, it simply states what an
+   * emitter at grade three is worth.
+   */
+  confers: Partial<ChassisStats>;
+  /** A verb that must already be earned. Material cannot substitute for it. */
+  requiresVerb?: VerbId;
+  /** One line, in the player's language, about what changes. */
+  detail: string;
+}
+
+export interface Station {
+  id: StationId;
+  /** Shown as the station's heading in the bay. */
+  name: string;
+  /** Where to look on the machine. The forge points at this. */
+  mount: string;
+  /** What this part of the machine is for, in one line. */
+  purpose: string;
+  grades: readonly StationGrade[];
 }
 
 /**
- * The player's material holdings, crafted state, and per-chassis modules.
+ * The six stations.
  *
- * Modules are stored per chassis and deliberately do not transfer. A fully
- * moduled Surveyor therefore stays competitive well past the point a Lantern is
- * fabricable: fabrication buys a different shape of claim, not a better one.
+ * The grade ladders are the old recipe list re-expressed, near enough one for one: the five
+ * armour plates were always one station at five grades, and `rubyEmitter.replaces =
+ * "emitterCoil"` was always grade three of the emitter. Material laddering follows the depth
+ * bands, so a station's next grade is also a reason to go deeper.
+ */
+export const STATIONS: readonly Station[] = [
+  {
+    id: "plating",
+    name: "HULL PLATING",
+    mount: "flanks",
+    purpose: "Soaks the load a claim leaves standing.",
+    grades: [
+      {
+        name: "Copper Plate",
+        cost: { copper: 18, coal: 6 },
+        confers: { armor: 8 },
+        detail: "Thin ceramic over copper. Enough for Band I.",
+      },
+      {
+        name: "Iron Plate",
+        cost: { iron: 24, coal: 10 },
+        confers: { armor: 20 },
+        detail: "Doubled plate. Band II load stops biting.",
+      },
+      {
+        name: "Cobalt Plate",
+        cost: { cobalt: 26, coal: 14 },
+        confers: { armor: 36 },
+        detail: "Layered cobalt. Deep claims survivable.",
+      },
+      {
+        name: "Mithril Plate",
+        cost: { mithril: 28, coal: 18 },
+        confers: { armor: 56 },
+        detail: "Full flank coverage.",
+      },
+      {
+        name: "Runite Plate",
+        cost: { runite: 24, coal: 22 },
+        confers: { armor: 80 },
+        detail: "Nothing in the mine loads through this.",
+      },
+    ],
+  },
+  {
+    id: "frame",
+    name: "FRAME",
+    mount: "spine and thrusters",
+    // Drive Tune folded in here rather than standing as a station of its own: one recipe is
+    // not a ladder, and a stronger spine carrying bigger thrusters is one idea, not two.
+    purpose: "How much the hull takes before it fails, and how fast it travels.",
+    grades: [
+      {
+        name: "Reinforced Spine",
+        cost: { iron: 14, coal: 6 },
+        confers: { maxIntegrity: 6, travelSpeedPercent: 6 },
+        detail: "+6 max health, +6% travel",
+      },
+      {
+        name: "Braced Spine",
+        cost: { cobalt: 18, coal: 10 },
+        confers: { maxIntegrity: 14, travelSpeedPercent: 15 },
+        detail: "+14 max health, +15% travel",
+      },
+      {
+        name: "Truss Spine",
+        cost: { mithril: 20, coal: 14 },
+        confers: { maxIntegrity: 24, travelSpeedPercent: 25 },
+        detail: "+24 max health, +25% travel",
+      },
+    ],
+  },
+  {
+    id: "emitter",
+    name: "EMITTER",
+    mount: "working face",
+    purpose: "The face that strikes the ball. Wider and faster.",
+    grades: [
+      {
+        name: "Emitter Coil",
+        cost: { cobalt: 10, sapphire: 4, coal: 4 },
+        confers: { paddleSpeedPercent: 12 },
+        detail: "+12% paddle speed",
+      },
+      {
+        name: "Broad Emitter",
+        cost: { cobalt: 14, coal: 6 },
+        confers: { paddleSpeedPercent: 14, paddleWidth: 0.25 },
+        detail: "+14% speed, a wider face",
+      },
+      {
+        name: "Ruby Emitter",
+        cost: { cobalt: 16, ruby: 6, coal: 8 },
+        confers: { paddleSpeedPercent: 22, paddleWidth: 0.45 },
+        detail: "+22% speed, widest face",
+      },
+    ],
+  },
+  {
+    id: "mast",
+    name: "SURVEY MAST",
+    mount: "above the hull",
+    purpose: "How well the machine reads a claim before committing to it.",
+    grades: [
+      {
+        name: "Gimbal",
+        cost: { cobalt: 8, emerald: 4, coal: 3 },
+        confers: { rotationPercent: 25 },
+        detail: "+25% survey rotation",
+      },
+      {
+        name: "Trajectory Optics",
+        cost: { cobalt: 10, emerald: 5, coal: 5 },
+        confers: { rotationPercent: 25, predictBounces: 1 },
+        detail: "the line predicts one rebound",
+      },
+      {
+        name: "Deep Optics",
+        cost: { cobalt: 14, ruby: 7, coal: 9 },
+        confers: { rotationPercent: 30, predictBounces: 3 },
+        detail: "the line predicts three rebounds",
+      },
+      {
+        // The one grade material cannot reach. Fitting a lens to a machine that cannot
+        // resonate would be fitting a lens to a blind eye.
+        name: "Resonant Lens",
+        cost: { cobalt: 12, diamond: 5, coal: 6 },
+        confers: { rotationPercent: 30, predictBounces: 3, resonanceGrades: 1 },
+        requiresVerb: "surveyResonance",
+        detail: "one extra grade of survey precision",
+      },
+    ],
+  },
+  {
+    id: "collector",
+    name: "COLLECTOR RING",
+    mount: "underside",
+    purpose: "How far the machine pulls loose ore toward itself.",
+    grades: [
+      {
+        name: "Collector Coil",
+        cost: { copper: 12, coal: 5 },
+        confers: { vacuum: 1.2 },
+        detail: "a wider pull",
+      },
+      {
+        name: "Twin Coil",
+        cost: { copper: 20, emerald: 3, coal: 8 },
+        confers: { vacuum: 2.4 },
+        detail: "much wider pull",
+      },
+      {
+        name: "Field Collector",
+        cost: { cobalt: 12, emerald: 5, coal: 10 },
+        confers: { vacuum: 4 },
+        detail: "sweeps the whole claim",
+      },
+    ],
+  },
+  {
+    id: "rack",
+    name: "CHARGE RACK",
+    mount: "hull rail",
+    // Capacity rather than ammunition on purpose. Buying charges by the unit made the bay a
+    // shop you restocked at, which is the kind of bookkeeping this game does not want. The
+    // rack is a part of the machine; it refills itself when you come home.
+    purpose: "Charges carried, to detonate what a claim left standing. Refills at the bay.",
+    grades: [
+      {
+        name: "Charge Rack",
+        cost: { saltpeter: 6, sulfur: 6, coal: 4 },
+        confers: { blastCapacity: 2 },
+        detail: "carry 2 charges",
+      },
+      {
+        name: "Twin Rack",
+        cost: { saltpeter: 10, sulfur: 10, coal: 7 },
+        confers: { blastCapacity: 4 },
+        detail: "carry 4 charges",
+      },
+      {
+        name: "Bandolier",
+        cost: { saltpeter: 14, sulfur: 14, coal: 11 },
+        confers: { blastCapacity: 6 },
+        detail: "carry 6 charges",
+      },
+    ],
+  },
+];
+
+export const STATIONS_BY_ID = new Map(STATIONS.map((station) => [station.id, station]));
+
+/**
+ * Hulls the fabrication berth can build.
+ *
+ * Not a station: this does not improve the machine you are standing next to, it builds a
+ * different one. Each is gated on the reagent of a single ecotone, so a new hull is a journey
+ * rather than a purchase.
+ */
+export interface Fabrication {
+  chassisId: string;
+  name: string;
+  cost: Partial<Record<ResourceId, number>>;
+  detail: string;
+}
+
+export const FABRICATIONS: readonly Fabrication[] = [
+  {
+    chassisId: "lantern",
+    name: "Lantern",
+    cost: { adamantite: 18, diamond: 10, coal: 12 },
+    detail: "9x19 deep shaft frame",
+  },
+  {
+    chassisId: "weir",
+    name: "Weir",
+    cost: { adamantite: 18, saltpeter: 10, coal: 12 },
+    detail: "19x9 cavern-wall frame",
+  },
+  {
+    chassisId: "prismatic",
+    name: "Prismatic",
+    cost: { runite: 22, vitriol: 12, coal: 16 },
+    detail: "13x13 lattice-aligned frame",
+  },
+];
+
+/** Blast charge detonation cap. Flagged in the doc as a tuning guess. */
+export const BLAST_CHARGE_BRICKS = 8;
+
+export interface UpgradeResult {
+  ok: boolean;
+  reason?: string;
+  station?: Station;
+  grade?: StationGrade;
+  /** The grade number reached, one-based. */
+  level?: number;
+}
+
+/** A chassis's grade per station. Absent means grade zero: nothing fitted there yet. */
+export type StationGrades = Partial<Record<StationId, number>>;
+
+/**
+ * The player's material holdings and the state of every machine they own.
+ *
+ * Grades are stored per chassis and deliberately do not transfer. A fully built Surveyor
+ * therefore stays competitive well past the point a Lantern is fabricable, and because a fresh
+ * hull starts at grade zero everywhere, that fact is something the player can *see* -- the new
+ * machine is visibly bare next to the veteran one.
  */
 export class Economy {
   /**
    * Carried material is at risk: it is lost on death.
-   * Banked material is safe, and is the only pool crafting may draw from.
+   * Banked material is safe, and is the only pool upgrades may draw from.
    * That split is the entire reason returning to the Landing has weight.
    */
   readonly resources = new Map<ResourceId, number>();
   readonly banked = new Map<ResourceId, number>();
-  /** Craft counts keyed by `${chassisId}:${recipeId}` for per-chassis modules. */
-  private readonly crafted = new Map<string, number>();
-  private readonly upgradesByChassis = new Map<string, ChassisUpgrades>();
+  private readonly gradesByChassis = new Map<string, StationGrades>();
   readonly verbs = new Set<VerbId>();
   readonly fabricated = new Set<string>();
-  resonanceGrades = 0;
+  /** Charges remaining this expedition. Refilled to the rack's capacity at the bay. */
   blastCharges = 0;
   totalSecured = 0;
 
-  /** Banked holdings. Recipes are priced against this, never against cargo. */
+  /** Banked holdings. Upgrades are priced against this, never against cargo. */
   amount(resource: ResourceId): number {
     return this.banked.get(resource) ?? 0;
   }
@@ -339,126 +397,123 @@ export class Economy {
     return moved;
   }
 
-  /** Death empties cargo. Banked material and crafted capacity both survive. */
+  /** Death empties cargo. Banked material and fitted grades both survive. */
   loseCarried(): number {
     const lost = this.carriedTotal;
     this.resources.clear();
     return lost;
   }
 
-  upgrades(chassisId: string): ChassisUpgrades {
-    let existing = this.upgradesByChassis.get(chassisId);
-    if (!existing) {
-      existing = emptyUpgrades();
-      this.upgradesByChassis.set(chassisId, existing);
+  // --- stations --------------------------------------------------------------
+
+  private gradesFor(chassisId: string): StationGrades {
+    let held = this.gradesByChassis.get(chassisId);
+    if (!held) {
+      held = {};
+      this.gradesByChassis.set(chassisId, held);
     }
-    return existing;
+    return held;
   }
 
-  craftCount(chassisId: string, recipeId: string): number {
-    const recipe = RECIPES_BY_ID.get(recipeId);
-    // Fabrication is global; modules and plate are per chassis.
-    const key = recipe?.tier === 3 ? `*:${recipeId}` : `${chassisId}:${recipeId}`;
-    return this.crafted.get(key) ?? 0;
+  /** How many grades this station has been raised. Zero means nothing is fitted there. */
+  gradeOf(chassisId: string, station: StationId): number {
+    return this.gradesFor(chassisId)[station] ?? 0;
   }
 
-  /** Cost of the next craft, including repeat growth. */
-  costOf(chassisId: string, recipe: Recipe): Partial<Record<ResourceId, number>> {
-    const repeats = this.craftCount(chassisId, recipe.id);
-    const growth = recipe.costGrowth ?? 1;
-    const multiplier = Math.pow(growth, repeats);
-    const scaled: Partial<Record<ResourceId, number>> = {};
-    for (const [resource, count] of Object.entries(recipe.cost) as Array<[ResourceId, number]>) {
-      scaled[resource] = Math.ceil(count * multiplier);
-    }
-    return scaled;
+  /** What is currently fitted at this station, or null at grade zero. */
+  fittedGrade(chassisId: string, station: StationId): StationGrade | null {
+    const level = this.gradeOf(chassisId, station);
+    return level > 0 ? STATIONS_BY_ID.get(station)!.grades[level - 1] : null;
   }
 
-  canCraft(chassisId: string, recipeId: string): CraftResult {
-    const recipe = RECIPES_BY_ID.get(recipeId);
-    if (!recipe) return { ok: false, reason: "UNKNOWN RECIPE" };
-    if (recipe.requiresVerb && !this.verbs.has(recipe.requiresVerb)) {
-      return { ok: false, reason: "REQUIRES A CAPABILITY NO MATERIAL CAN BUY", recipe };
-    }
-    if (recipe.limit !== undefined && this.craftCount(chassisId, recipeId) >= recipe.limit) {
-      return { ok: false, reason: "AT LIMIT", recipe };
-    }
-    if (recipe.replaces && this.craftCount(chassisId, recipe.replaces) === 0) {
-      return { ok: false, reason: `REQUIRES ${RECIPES_BY_ID.get(recipe.replaces)?.name ?? recipe.replaces}`, recipe };
-    }
-    const cost = this.costOf(chassisId, recipe);
-    for (const [resource, count] of Object.entries(cost) as Array<[ResourceId, number]>) {
-      if (this.amount(resource) < count) return { ok: false, reason: "INSUFFICIENT MATERIAL", recipe };
-    }
-    return { ok: true, recipe };
+  /** What this station becomes next, or null when it is already at its top grade. */
+  nextGrade(chassisId: string, station: StationId): StationGrade | null {
+    const definition = STATIONS_BY_ID.get(station)!;
+    return definition.grades[this.gradeOf(chassisId, station)] ?? null;
   }
 
   /**
-   * Apply a recipe. Returns the effect for the caller to reflect in live state
-   * (repair touches current integrity, which the economy does not own).
+   * The machine, as a set of numbers, summed across its stations.
+   *
+   * Recomputed rather than accumulated, which is the whole reason grades are absolute: there
+   * is no running total to get out of step with the parts actually fitted.
    */
-  craft(chassisId: string, recipeId: string): CraftResult & { effect?: RecipeEffect } {
-    const check = this.canCraft(chassisId, recipeId);
-    if (!check.ok || !check.recipe) return check;
-    const recipe = check.recipe;
-    const cost = this.costOf(chassisId, recipe);
-    // Spent from the bank, which is the same pool the recipe was priced against.
-    for (const [resource, count] of Object.entries(cost) as Array<[ResourceId, number]>) {
+  upgrades(chassisId: string): ChassisStats {
+    const stats = emptyStats();
+    for (const station of STATION_IDS) {
+      const grade = this.fittedGrade(chassisId, station);
+      if (!grade) continue;
+      for (const [key, value] of Object.entries(grade.confers) as Array<[keyof ChassisStats, number]>) {
+        stats[key] += value;
+      }
+    }
+    return stats;
+  }
+
+  /** Grades fitted on this machine, for the view layer to draw. */
+  stationGrades(chassisId: string): StationGrades {
+    return { ...this.gradesFor(chassisId) };
+  }
+
+  canUpgrade(chassisId: string, station: StationId): UpgradeResult {
+    const definition = STATIONS_BY_ID.get(station);
+    if (!definition) return { ok: false, reason: "UNKNOWN STATION" };
+    const grade = this.nextGrade(chassisId, station);
+    if (!grade) return { ok: false, reason: "FULLY BUILT", station: definition };
+    if (grade.requiresVerb && !this.verbs.has(grade.requiresVerb)) {
+      return { ok: false, reason: "REQUIRES A CAPABILITY NO MATERIAL CAN BUY", station: definition, grade };
+    }
+    for (const [resource, count] of Object.entries(grade.cost) as Array<[ResourceId, number]>) {
+      if (this.amount(resource) < count) {
+        return { ok: false, reason: "INSUFFICIENT MATERIAL", station: definition, grade };
+      }
+    }
+    return { ok: true, station: definition, grade, level: this.gradeOf(chassisId, station) + 1 };
+  }
+
+  /** Raise one station by one grade. */
+  upgrade(chassisId: string, station: StationId): UpgradeResult {
+    const check = this.canUpgrade(chassisId, station);
+    if (!check.ok || !check.grade) return check;
+    // Spent from the bank, which is the same pool the grade was priced against.
+    for (const [resource, count] of Object.entries(check.grade.cost) as Array<[ResourceId, number]>) {
       this.banked.set(resource, this.amount(resource) - count);
     }
-    const key = recipe.tier === 3 ? `*:${recipeId}` : `${chassisId}:${recipeId}`;
-    this.crafted.set(key, (this.crafted.get(key) ?? 0) + 1);
+    const grades = this.gradesFor(chassisId);
+    grades[station] = (grades[station] ?? 0) + 1;
+    // A bigger rack arrives full, so fitting one is immediately worth something.
+    if (station === "rack") this.refillCharges(chassisId);
+    return check;
+  }
 
-    const upgrades = this.upgrades(chassisId);
-    const effect = recipe.effect;
-    switch (effect.type) {
-      case "armor":
-        upgrades.armor += effect.amount;
-        break;
-      case "maxIntegrity":
-        upgrades.maxIntegrity += effect.amount;
-        break;
-      case "paddleSpeedPercent":
-        // A replacement module supersedes rather than stacks.
-        if (recipe.replaces) {
-          const replaced = RECIPES_BY_ID.get(recipe.replaces);
-          if (replaced?.effect.type === "paddleSpeedPercent") upgrades.paddleSpeedPercent -= replaced.effect.amount;
-        }
-        upgrades.paddleSpeedPercent += effect.amount;
-        break;
-      case "paddleWidth":
-        upgrades.paddleWidth += effect.amount;
-        break;
-      case "travelSpeedPercent":
-        upgrades.travelSpeedPercent += effect.amount;
-        break;
-      case "rotationPercent":
-        upgrades.rotationPercent += effect.amount;
-        break;
-      case "vacuum":
-        upgrades.vacuum += effect.amount;
-        break;
-      case "predictBounces":
-        // Optics supersede rather than stack: the better lens replaces the lesser.
-        if (recipe.replaces) {
-          const replaced = RECIPES_BY_ID.get(recipe.replaces);
-          if (replaced?.effect.type === "predictBounces") upgrades.predictBounces -= replaced.effect.amount;
-        }
-        upgrades.predictBounces += effect.amount;
-        break;
-      case "sharpenResonance":
-        this.resonanceGrades += effect.amount;
-        break;
-      case "blastCharges":
-        this.blastCharges += effect.amount;
-        break;
-      case "fabricate":
-        this.fabricated.add(effect.chassisId);
-        break;
-      case "repair":
-        break;
+  // --- fabrication -----------------------------------------------------------
+
+  canFabricate(chassisId: string): UpgradeResult {
+    const entry = FABRICATIONS.find((candidate) => candidate.chassisId === chassisId);
+    if (!entry) return { ok: false, reason: "UNKNOWN HULL" };
+    if (this.fabricated.has(chassisId)) return { ok: false, reason: "ALREADY BUILT" };
+    for (const [resource, count] of Object.entries(entry.cost) as Array<[ResourceId, number]>) {
+      if (this.amount(resource) < count) return { ok: false, reason: "INSUFFICIENT MATERIAL" };
     }
-    return { ok: true, recipe, effect };
+    return { ok: true };
+  }
+
+  fabricate(chassisId: string): UpgradeResult {
+    const check = this.canFabricate(chassisId);
+    if (!check.ok) return check;
+    const entry = FABRICATIONS.find((candidate) => candidate.chassisId === chassisId)!;
+    for (const [resource, count] of Object.entries(entry.cost) as Array<[ResourceId, number]>) {
+      this.banked.set(resource, this.amount(resource) - count);
+    }
+    this.fabricated.add(chassisId);
+    return { ok: true };
+  }
+
+  // --- expedition state ------------------------------------------------------
+
+  /** Charges come home full. There is nothing to buy and nothing to forget to buy. */
+  refillCharges(chassisId: string): void {
+    this.blastCharges = this.upgrades(chassisId).blastCapacity;
   }
 
   grantVerb(verb: VerbId): boolean {
@@ -471,29 +526,21 @@ export class Economy {
     return [...starters, ...FABRICATED_CHASSIS.filter((chassis) => this.fabricated.has(chassis.id))];
   }
 
-  /** Recipes worth showing: unlocked tier, and not already exhausted. */
-  visibleRecipes(chassisId: string): Recipe[] {
-    return RECIPES.filter((recipe) => {
-      if (recipe.limit !== undefined && this.craftCount(chassisId, recipe.id) >= recipe.limit) return false;
-      return true;
-    });
-  }
-
   /**
-   * Everything a save needs. Crafted upgrades are stored as *both* the craft
-   * counts and the resulting module totals, deliberately: replaying `craft()` to
-   * rebuild the totals would charge the player for their own modules a second
-   * time, and craft counts alone are what repeat-cost growth is priced against.
+   * Everything a save needs.
+   *
+   * Grades alone are enough, which is the other quiet win of the station model: the old
+   * snapshot had to store craft counts *and* the resulting module totals, because replaying
+   * the crafts to rebuild the totals would have charged the player for their own modules a
+   * second time. A grade is a state, so there is nothing to replay.
    */
   snapshot(): EconomySnapshot {
     return {
       resources: Object.fromEntries(this.resources) as Partial<Record<ResourceId, number>>,
       banked: Object.fromEntries(this.banked) as Partial<Record<ResourceId, number>>,
-      crafted: Object.fromEntries(this.crafted),
-      upgrades: Object.fromEntries([...this.upgradesByChassis].map(([id, value]) => [id, { ...value }])),
+      grades: Object.fromEntries([...this.gradesByChassis].map(([id, value]) => [id, { ...value }])),
       verbs: [...this.verbs],
       fabricated: [...this.fabricated],
-      resonanceGrades: this.resonanceGrades,
       blastCharges: this.blastCharges,
       totalSecured: this.totalSecured,
     };
@@ -502,8 +549,7 @@ export class Economy {
   restore(snapshot: EconomySnapshot): void {
     this.resources.clear();
     this.banked.clear();
-    this.crafted.clear();
-    this.upgradesByChassis.clear();
+    this.gradesByChassis.clear();
     this.verbs.clear();
     this.fabricated.clear();
     for (const [resource, count] of Object.entries(snapshot.resources ?? {})) {
@@ -512,15 +558,19 @@ export class Economy {
     for (const [resource, count] of Object.entries(snapshot.banked ?? {})) {
       if (typeof count === "number") this.banked.set(resource as ResourceId, count);
     }
-    for (const [key, count] of Object.entries(snapshot.crafted ?? {})) {
-      if (typeof count === "number") this.crafted.set(key, count);
-    }
-    for (const [chassisId, upgrades] of Object.entries(snapshot.upgrades ?? {})) {
-      this.upgradesByChassis.set(chassisId, { ...emptyUpgrades(), ...upgrades });
+    for (const [chassisId, grades] of Object.entries(snapshot.grades ?? {})) {
+      const clamped: StationGrades = {};
+      for (const station of STATION_IDS) {
+        const level = grades[station];
+        if (typeof level !== "number" || level <= 0) continue;
+        // Clamped to the ladder that exists, so a save written against a longer ladder
+        // degrades to the top grade rather than indexing off the end of it.
+        clamped[station] = Math.min(Math.floor(level), STATIONS_BY_ID.get(station)!.grades.length);
+      }
+      this.gradesByChassis.set(chassisId, clamped);
     }
     for (const verb of snapshot.verbs ?? []) this.verbs.add(verb);
     for (const chassisId of snapshot.fabricated ?? []) this.fabricated.add(chassisId);
-    this.resonanceGrades = snapshot.resonanceGrades ?? 0;
     this.blastCharges = snapshot.blastCharges ?? 0;
     this.totalSecured = snapshot.totalSecured ?? 0;
   }
@@ -529,11 +579,9 @@ export class Economy {
 export interface EconomySnapshot {
   resources: Partial<Record<ResourceId, number>>;
   banked: Partial<Record<ResourceId, number>>;
-  crafted: Record<string, number>;
-  upgrades: Record<string, ChassisUpgrades>;
+  grades: Record<string, StationGrades>;
   verbs: VerbId[];
   fabricated: string[];
-  resonanceGrades: number;
   blastCharges: number;
   totalSecured: number;
 }

@@ -8,7 +8,7 @@ import { WORLD_COLS, WORLD_ROWS, type Band, type EcotoneId, type ProvinceId } fr
 import { materialOf } from "../materials";
 import type { Cell } from "../types";
 import { facetAxisAt, materialFor, resourceFor } from "./assign";
-import { carveCaves, carveCorridor, openComponents, reachableFrom, type CaveField } from "./caves";
+import { carveCaves, carveCorridor, openComponents, type CaveField, type OpenComponent } from "./caves";
 import { CORNERSTONES, LANDING, LANDING_FEATURES, REQUIRED_NODES, stampCornerstones, stampLanding } from "./landmarks";
 import { bandAt, sampleRegion, type RegionSample } from "./regions";
 import { hashString, Rng } from "./rng";
@@ -31,7 +31,19 @@ export interface GeneratedWorld {
 
 export interface GenerationReport {
   openCells: number;
-  reachableCells: number;
+  /** The largest connected body of open space: the mine proper. */
+  networkCells: number;
+  /**
+   * Open cells the Landing can walk to without breaking anything.
+   *
+   * Small on purpose -- the start is sealed by its five teaching faces. Reported separately so
+   * that seal can never again be mistaken for a connectivity failure.
+   */
+  startPocketCells: number;
+  /** Open cells in neither: caves the player can see and never enter. */
+  strandedCells: number;
+  /** Breakable solid cells touching the start pocket -- the ways out of the Landing. */
+  landingExits: number;
   unreachableRequiredNodes: string[];
   repairedCorridors: number;
   missingLandingFeatures: string[];
@@ -138,7 +150,7 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
     }
   }
 
-  resolveIsolatedPockets(cells, caves, protectedCells);
+  resolveIsolatedPockets(cells, caves, protectedCells, seed);
 
   // Re-assert authored territory, *before* verification.
   //
@@ -170,6 +182,19 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
 
   enforceInvariants(cells);
 
+  // Mirror the final re-stamp into the openness grid, so the world that ships has `cells` and
+  // `caves.open` agreeing. Without this they differed by ninety cells.
+  syncOpenFromCells(cells, caves.open);
+
+  // Connectivity is measured *last*, on the world that ships.
+  //
+  // Taking it inside `verify` is what let the report claim 20,474 of 20,490 cells reachable
+  // while the shipped world had 262: verification's own repair carved an escape route out of
+  // the Landing, the re-stamp immediately after put the teaching faces back, and the number
+  // described the moment in between. The same mistake as `missingLandingFeatures`, which had
+  // already been fixed once by moving verification earlier -- and left standing here.
+  measureConnectivity(cells, report);
+
   report.roomsPlaced = rooms.placed.length;
   report.featuresPlaced = rooms.features.length;
 
@@ -184,6 +209,49 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
     report,
     rooms,
   };
+}
+
+/**
+ * Connectivity, taken from `cells` on the finished world.
+ *
+ * From `cells` rather than `caves.open` deliberately: solidity is what the drone's hull tests
+ * and therefore what the player actually meets, so it is the only honest source for a claim
+ * about where they can go.
+ */
+function measureConnectivity(cells: Cell[][], report: GenerationReport): void {
+  const open = new Uint8Array(WORLD_COLS * WORLD_ROWS);
+  let openCells = 0;
+  for (let y = 0; y < WORLD_ROWS; y++) {
+    for (let x = 0; x < WORLD_COLS; x++) {
+      if (cells[y][x].solid) continue;
+      open[cellIndex(x, y)] = 1;
+      openCells++;
+    }
+  }
+  const { network, startPocket } = surveyOpenSpace(open);
+  const networkCells = network?.cells.length ?? 0;
+  const startPocketCells = startPocket === network ? 0 : startPocket?.cells.length ?? 0;
+
+  // The ways out of the Landing. A start pocket walled entirely in persistent material would
+  // make an expedition unwinnable from the first frame, and nothing else would notice.
+  let landingExits = 0;
+  for (const index of startPocket === network ? [] : startPocket?.cells ?? []) {
+    const x = index % WORLD_COLS;
+    const y = (index - x) / WORLD_COLS;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= WORLD_COLS || ny >= WORLD_ROWS) continue;
+      const neighbour = cells[ny][nx];
+      if (neighbour.solid && !neighbour.persistent) landingExits++;
+    }
+  }
+
+  report.openCells = openCells;
+  report.networkCells = networkCells;
+  report.startPocketCells = startPocketCells;
+  report.strandedCells = openCells - networkCells - startPocketCells;
+  report.landingExits = landingExits;
 }
 
 /**
@@ -246,33 +314,29 @@ function syncCellsFromOpen(cells: Cell[][], open: Uint8Array, protectedCells: Re
  * gets a corridor; a few eroded cells get filled back in. Leaving them would mean
  * caves the player can see and never enter, which is worse than either fix.
  */
-function resolveIsolatedPockets(cells: Cell[][], caves: CaveField, protectedCells: ReadonlySet<number>): void {
+function resolveIsolatedPockets(
+  cells: Cell[][], caves: CaveField, protectedCells: ReadonlySet<number>, seed: number,
+): void {
   const MIN_CHAMBER = 14;
   for (let pass = 0; pass < 4; pass++) {
-    const reachable = reachableFrom(caves.open, LANDING.x, LANDING.y);
-    const components = openComponents(caves.open);
+    const { components, network, startPocket, networkMask } = surveyOpenSpace(caves.open);
+    if (!network) break;
     let changed = false;
     for (const component of components) {
-      if (reachable[component.cells[0]] === 1) continue;
+      if (component === network) continue;
+      // The Landing's pocket is sealed on purpose. Connecting it would carve away the tutorial
+      // and, because it sits in one corner, would do it with a corridor spanning the world.
+      if (component === startPocket) continue;
       changed = true;
       if (component.cells.length >= MIN_CHAMBER) {
-        // A genuine chamber: connect it to the nearest reachable open cell.
-        let bestIndex = -1;
-        let bestDistance = Infinity;
-        for (let index = 0; index < reachable.length; index++) {
-          if (reachable[index] !== 1) continue;
-          const x = index % WORLD_COLS;
-          const y = (index - x) / WORLD_COLS;
-          const distance = Math.hypot(x - component.centroidX, y - component.centroidY);
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            bestIndex = index;
-          }
-        }
-        if (bestIndex >= 0) {
-          const tx = bestIndex % WORLD_COLS;
-          const ty = (bestIndex - tx) / WORLD_COLS;
-          carveCorridor(caves.open, component.centroidX, component.centroidY, tx, ty, 1.9);
+        // A genuine chamber: joined to the *network*, at its nearest point, so the corridor is
+        // as short as the geometry allows instead of being aimed at a fixed address.
+        const target = nearestInMask(networkMask, component.centroidX, component.centroidY);
+        if (target) {
+          carveCorridor(
+            caves.open, component.centroidX, component.centroidY, target.x, target.y, 1.9,
+            seed + pass * 131 + component.cells[0],
+          );
         }
       } else {
         for (const index of component.cells) caves.open[index] = 0;
@@ -281,6 +345,57 @@ function resolveIsolatedPockets(cells: Cell[][], caves: CaveField, protectedCell
     if (!changed) break;
     syncCellsFromOpen(cells, caves.open, protectedCells);
   }
+}
+
+/**
+ * The bodies of open space, with the two that matter named.
+ *
+ * `network` is the mine proper: the largest connected body. `startPocket` is whatever the
+ * Landing can walk to without breaking anything, which is deliberately sealed by the five
+ * teaching faces -- the first lesson *is* to break the Chalk Face.
+ *
+ * Both repair passes used to measure against `reachableFrom(LANDING)` instead, and on any seed
+ * where that seal held it was a catastrophe rather than a nuisance: with the Landing sealed,
+ * the entire 16,000-cell cave network read as an isolated pocket, so the repair carved a
+ * 113-cell corridor from the middle of the world to the front door -- and did the same for
+ * every other component, producing a fan of twenty ruler-straight hallways converging on one
+ * corner of the map. That is what made worlds look pre-mined, and why it only showed on the
+ * seeds where erosion happened not to breach the Landing.
+ */
+function surveyOpenSpace(open: Uint8Array): {
+  components: OpenComponent[];
+  network: OpenComponent | null;
+  startPocket: OpenComponent | null;
+  networkMask: Uint8Array;
+} {
+  const components = openComponents(open);
+  const landingAt = cellIndex(LANDING.x, LANDING.y);
+  let network: OpenComponent | null = null;
+  let startPocket: OpenComponent | null = null;
+  for (const component of components) {
+    if (!network || component.cells.length > network.cells.length) network = component;
+    if (!startPocket && component.cells.includes(landingAt)) startPocket = component;
+  }
+  const networkMask = new Uint8Array(WORLD_COLS * WORLD_ROWS);
+  for (const index of network?.cells ?? []) networkMask[index] = 1;
+  return { components, network, startPocket, networkMask };
+}
+
+/** The masked cell closest to a point, for routing a repair from somewhere sensible. */
+function nearestInMask(mask: Uint8Array, fromX: number, fromY: number): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  let bestDistance = Infinity;
+  for (let index = 0; index < mask.length; index++) {
+    if (mask[index] !== 1) continue;
+    const x = index % WORLD_COLS;
+    const y = (index - x) / WORLD_COLS;
+    const distance = Math.hypot(x - fromX, y - fromY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { x, y };
+    }
+  }
+  return best;
 }
 
 /**
@@ -314,19 +429,28 @@ function verify(
   protectedCells: ReadonlySet<number>,
   bandDensity: Record<Band, number>,
 ): GenerationReport {
-  // Contract 1 & 2: the Landing and every required node must be mutually reachable.
+  // Contract 1 & 2: every required node must be somewhere the player can get to -- either in
+  // the cave network, or inside the Landing's own sealed pocket, which they start in.
+  //
+  // Measured against those two bodies rather than against `reachableFrom(LANDING)`. The old
+  // test called every required node stranded on any seed whose Landing seal held, and then
+  // carved a corridor to each one *from the Landing*, all on pass 0, before anything had
+  // actually gone wrong. Five straight lines radiating from one corner of the map.
   let repairedCorridors = 0;
   const unreachableRequiredNodes: string[] = [];
   for (let pass = 0; pass < 6; pass++) {
-    const reachable = reachableFrom(caves.open, LANDING.x, LANDING.y);
+    const { startPocket, networkMask } = surveyOpenSpace(caves.open);
+    const inStartPocket = new Uint8Array(WORLD_COLS * WORLD_ROWS);
+    for (const index of startPocket?.cells ?? []) inStartPocket[index] = 1;
     const stranded = REQUIRED_NODES.filter((node) => {
-      const x = Math.round(node.x);
-      const y = Math.round(node.y);
-      return reachable[cellIndex(x, y)] !== 1;
+      const at = cellIndex(Math.round(node.x), Math.round(node.y));
+      return networkMask[at] !== 1 && inStartPocket[at] !== 1;
     });
     if (!stranded.length) break;
     for (const node of stranded) {
-      carveCorridor(caves.open, LANDING.x, LANDING.y, node.x, node.y, 2.05);
+      // From the nearest point on the network, not from the Landing.
+      const from = nearestInMask(networkMask, node.x, node.y) ?? { x: LANDING.x, y: LANDING.y };
+      carveCorridor(caves.open, from.x, from.y, node.x, node.y, 2.05, seed + pass * 977 + repairedCorridors);
       repairedCorridors++;
       for (let y = 0; y < WORLD_ROWS; y++) {
         for (let x = 0; x < WORLD_COLS; x++) {
@@ -341,9 +465,7 @@ function verify(
     if (pass === 5) unreachableRequiredNodes.push(...stranded.map((node) => node.label ?? "unlabelled"));
   }
 
-  const reachable = reachableFrom(caves.open, LANDING.x, LANDING.y);
   let openCells = 0;
-  let reachableCells = 0;
   const provinceCells: Record<ProvinceId, number> = { karst: 0, mirrorreef: 0, rootwarren: 0 };
   const ecotoneReagents: Record<EcotoneId, number> = { brightFault: 0, chalkWarren: 0, bloomShelf: 0 };
   const bandI = { copper: 0, coal: 0 };
@@ -353,7 +475,6 @@ function verify(
       const cell = cells[y][x];
       provinceCells[cell.province]++;
       if (caves.open[cellIndex(x, y)] === 1) openCells++;
-      if (reachable[cellIndex(x, y)] === 1) reachableCells++;
       // Contract 4: every ecotone must carry a claimable seam of its rare reagent.
       if (cell.solid && cell.ecotone) {
         if (cell.resource === "diamond" && cell.ecotone === "brightFault") ecotoneReagents.brightFault++;
@@ -393,8 +514,14 @@ function verify(
   void samples;
 
   return {
+    // The connectivity numbers are placeholders here and are overwritten by
+    // `measureConnectivity` after the final re-stamp. Measuring them in this function is what
+    // made the old report describe a world that never shipped.
     openCells,
-    reachableCells,
+    networkCells: 0,
+    startPocketCells: 0,
+    strandedCells: 0,
+    landingExits: 0,
     unreachableRequiredNodes,
     repairedCorridors,
     missingLandingFeatures,

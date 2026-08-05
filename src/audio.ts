@@ -92,6 +92,13 @@ export const SOUNDS = {
   // --- Progress. These rise, without exception. ------------------------------
   banked: { frequency: 300, duration: 0.22, volume: 0.04, end: 780 },
   forged: { frequency: 320, duration: 0.16, volume: 0.035, end: 620 },
+  // The bolt-on, layered: a low falling thump for weight and a metallic click on top of it so
+  // the contact is legible. Two tones because this vocabulary has no noise source, and a single
+  // sine has no body -- the Vlambeer talk's "+12dB of bass fixed the gun" is the whole idea.
+  // Written but never heard: unverifiable from a screenshot, and due a hand pass with the rest.
+  fitSeat: { frequency: 150, duration: 0.22, volume: 0.075, end: 48 },
+  fitClick: { frequency: 940, duration: 0.05, volume: 0.02, end: 1500 },
+  fitReach: { frequency: 90, duration: 0.3, volume: 0.018, end: 155 },
   verbAcquired: { frequency: 180, duration: 0.5, volume: 0.06, end: 900 },
   tutorialStep: { frequency: 520, duration: 0.08, volume: 0.022, end: 720 },
   arrival: { frequency: 210, duration: 0.3, volume: 0.028, end: 320 },

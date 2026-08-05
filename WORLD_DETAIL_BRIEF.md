@@ -345,6 +345,49 @@ to lower the threshold. Rooms now take their ore from `resourceFor`, the same fu
 field pass uses, so a room's rock carries ore at the rate its surroundings do. Band I
 copper went from 29–37 to 32–55. A stamped room had no reason to be barren.
 
+### Open finding — `report.reachableCells` describes a world that never ships
+
+Found by the world inspector's connectivity layer within minutes of it existing, and it needs
+a decision before Phase 2 touches the world frame.
+
+Probing `caves.open` through the tail of `generateWorld` on `bounceworld-01`:
+
+```
+before verify:            open=20285  reach=262     <- already sealed
+after verify:             open=20490  reach=20474   <- repair carved an exit
+after restamp:            open=20464  reach=264     <- the re-stamp walls it up again
+after enforceInvariants:  open=20464  reach=264
+```
+
+The Landing starts enclosed by its five teaching faces, which is almost certainly deliberate —
+the first lesson *is* to break the Chalk Face. Verification's corridor repair then treats that
+enclosure as a fault and carves an escape route through the authored faces; `verify` measures
+reachability at that moment and reports 20,474 of 20,490; and the re-stamp immediately after
+restores the faces, so the shipped world has **262**. The contract test
+`report.reachableCells / report.openCells > 0.99` therefore passes on a number that describes
+an intermediate state no player ever sees. It is the same class of error as the
+`missingLandingFeatures` bug — verification must run on the world that ships — fixed in one
+direction and left in the other.
+
+Measured directly on the shipped world instead: the cave network **is** one connected body,
+98.5% of open cells, and the only cut-off region is the Landing's own 262-cell pocket. Beyond
+that pocket just 44 cells are genuinely stranded. So the generator is fine; the *measurement*
+is wrong.
+
+The recommended fix, which is a design decision rather than a bug fix:
+
+1. Replace the reachability contract with a **largest-connected-component** one — no start
+   point, so the Landing's seal cannot flatter it and an orphaned pocket shows up wherever it
+   is. `openComponents` in `caves.ts` already computes this.
+2. Add the property that actually matters and that nothing currently checks: the Landing's
+   seal must be **breakable**. A persistent wall anywhere around the start pocket would make
+   an expedition unwinnable from the first frame.
+3. Stop verification's repair from carving through authored territory at all, rather than
+   carving and then stamping over it. The repair should treat reserved ground as impassable.
+
+Items 1 and 2 are now asserted in `tests/worldmap.test.ts` against the shipped world, so the
+property is covered while the report itself is still misleading. Item 3 is the real fix.
+
 ### Phase 2 — the world frame, before bulk authoring
 
 Rooms must not be authored against dimensions and rules that are about to change.

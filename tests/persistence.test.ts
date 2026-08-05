@@ -164,7 +164,6 @@ describe("economy snapshot", () => {
     economy.add("iron", 3);
     economy.grantVerb("railSeed");
     economy.blastCharges = 2;
-    economy.resonanceGrades = 1;
     const before = economy.snapshot();
     const upgradesBefore = { ...economy.upgrades("bx04-surveyor") };
 
@@ -179,21 +178,31 @@ describe("economy snapshot", () => {
     expect(restored.upgrades("bx04-surveyor")).toEqual(upgradesBefore);
   });
 
-  it("preserves crafted counts, so repeat cost growth is not reset by a reload", () => {
+  it("preserves fitted grades, so a reload cannot cost the player their machine", () => {
     const economy = new Economy();
     economy.add("copper", 400);
     economy.add("coal", 400);
     economy.add("iron", 400);
     economy.deposit();
-    const recipe = economy.visibleRecipes("bx04-surveyor").find((entry) => entry.tier === 1);
-    expect(recipe).toBeDefined();
-    const crafted = economy.craft("bx04-surveyor", recipe!.id);
-    expect(crafted.ok).toBe(true);
+    expect(economy.upgrade("bx04-surveyor", "plating").ok).toBe(true);
+    expect(economy.upgrade("bx04-surveyor", "plating").ok).toBe(true);
 
     const restored = new Economy();
     restored.restore(economy.snapshot());
-    expect(restored.craftCount("bx04-surveyor", recipe!.id)).toBe(economy.craftCount("bx04-surveyor", recipe!.id));
-    expect(restored.costOf("bx04-surveyor", recipe!)).toEqual(economy.costOf("bx04-surveyor", recipe!));
+    expect(restored.gradeOf("bx04-surveyor", "plating")).toBe(2);
+    expect(restored.upgrades("bx04-surveyor")).toEqual(economy.upgrades("bx04-surveyor"));
+  });
+
+  it("clamps a grade beyond the ladder rather than indexing off the end of it", () => {
+    // A save written against a longer ladder -- or hand-edited -- must degrade to the top
+    // grade, not produce an undefined part.
+    const economy = new Economy();
+    economy.restore({
+      resources: {}, banked: {}, grades: { "bx04-surveyor": { plating: 99 } },
+      verbs: [], fabricated: [], blastCharges: 0, totalSecured: 0,
+    });
+    expect(economy.gradeOf("bx04-surveyor", "plating")).toBe(5);
+    expect(economy.fittedGrade("bx04-surveyor", "plating")?.name).toBe("Runite Plate");
   });
 
   it("replaces rather than merges, so loading cannot inherit the previous state", () => {

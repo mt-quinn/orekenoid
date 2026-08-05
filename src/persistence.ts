@@ -13,8 +13,30 @@ import { WORLD_COLS, WORLD_ROWS } from "./config";
 import type { EconomySnapshot } from "./economy";
 import type { WorldEdit } from "./world";
 
-export const SAVE_VERSION = 1;
+/**
+ * Save schema version.
+ *
+ * v1 -> v2: the economy stopped storing craft counts keyed by recipe id and started storing a
+ * grade per station per chassis, when twenty-one flat recipes became six upgradeable stations.
+ *
+ * v1 saves are *refused*, not migrated, and that is a decision with an expiry date: it is only
+ * acceptable because every v1 save in existence is a development save on this machine. Once
+ * builds go out to playtesters, a refused save is somebody's lost expedition -- so from that
+ * point on, every schema change needs a real migration in `migrate` below rather than a version
+ * bump. The seam is here and empty on purpose.
+ */
+export const SAVE_VERSION = 2;
 export const SAVE_KEY = "orekenoid.expedition.v1";
+
+/**
+ * Bring an older save forward, or return null if it cannot be brought forward.
+ *
+ * Empty today. When it stops being empty, each step should be a named function from one
+ * version to the next so the chain is readable and individually testable.
+ */
+function migrate(data: Partial<SaveData>): Partial<SaveData> | null {
+  return data.version === SAVE_VERSION ? data : null;
+}
 
 export interface MapAnnotation {
   id: string;
@@ -124,9 +146,17 @@ export interface LoadResult {
  */
 export function validateSave(value: unknown): LoadResult {
   if (typeof value !== "object" || value === null) return { ok: false, reason: "Not a save file." };
-  const data = value as Partial<SaveData>;
-  if (data.version !== SAVE_VERSION) {
-    return { ok: false, reason: `Save version ${String(data.version)} is not supported (expected ${SAVE_VERSION}).` };
+  const raw = value as Partial<SaveData>;
+  const data = migrate(raw);
+  if (!data) {
+    // Named in the message rather than hidden behind a version number, because the player did
+    // not choose a schema and cannot act on one.
+    return {
+      ok: false,
+      reason: raw.version === 1
+        ? "This expedition predates the refit bay rebuild and cannot be loaded. Start a new one."
+        : `Save version ${String(raw.version)} is not supported (expected ${SAVE_VERSION}).`,
+    };
   }
   if (typeof data.seedLabel !== "string" || !data.seedLabel) return { ok: false, reason: "Save has no world seed." };
   if (!data.world || typeof data.world.discovered !== "string" || !Array.isArray(data.world.history)) {

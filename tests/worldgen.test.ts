@@ -24,11 +24,40 @@ describe("generator contract", () => {
     expect(a.report.openCells).not.toBe(b.report.openCells);
   });
 
-  it.each(SEEDS)("connects every required node to the Landing [%s]", (seed) => {
+  it.each(SEEDS)("leaves the cave network in one body, with nothing stranded [%s]", (seed) => {
     const world = generateWorld(seed);
     expect(world.report.unreachableRequiredNodes).toEqual([]);
-    // Contract 1: essentially all open space is one connected system.
-    expect(world.report.reachableCells / world.report.openCells).toBeGreaterThan(0.9);
+    // Contract 1, stated so it cannot be satisfied by accident. The old version divided
+    // `reachableCells` by `openCells`, both measured inside `verify` -- after its own repair
+    // had carved an escape route out of the Landing and before the re-stamp put the teaching
+    // faces back. It therefore passed at 0.999 on worlds that shipped at 0.013, and the repair
+    // it was blessing was carving a fan of straight corridors across the map. Measured on the
+    // finished world, the network and the Landing's deliberate pocket account for everything.
+    // Note what this deliberately does *not* assert: that nothing is stranded. Every seed
+    // strands one chamber of 25-110 cells plus a dozen single-cell holes, and that is fine --
+    // the player carries a digging tool, so a pocket with no walk-in route is a pocket you
+    // mine into, not content you can never reach. What matters is that the network is the
+    // overwhelming bulk of open space, so the mine is one place rather than an archipelago.
+    const { openCells, networkCells, startPocketCells, strandedCells } = world.report;
+    expect(networkCells / openCells, `${seed}: the network is not the bulk of open space`)
+      .toBeGreaterThan(0.95);
+    expect(networkCells + startPocketCells + strandedCells).toBe(openCells);
+  });
+
+  it.each(SEEDS)("always leaves the Landing with a way out [%s]", (seed) => {
+    // The start is often enclosed by its five teaching faces -- the first lesson is to break
+    // the Chalk Face -- but not always: on some seeds erosion breaches them and the Landing
+    // opens straight into the mine. Both are fine. What must never happen is the third case,
+    // a pocket walled entirely in *persistent* material, which would make the expedition
+    // unwinnable from the first frame and which nothing else in the suite would notice.
+    //
+    // Stated as a disjunction for exactly that reason: asserting the Landing is always sealed
+    // fails on the seeds where it is not, and asserting it is never sealed would be false too.
+    const { startPocketCells, landingExits } = generateWorld(seed).report;
+    const inTheNetwork = startPocketCells === 0;
+    expect(inTheNetwork || landingExits > 10,
+      `${seed}: Landing pocket of ${startPocketCells} cells with only ${landingExits} breakable exits`,
+    ).toBe(true);
   });
 
   it.each(SEEDS)("places every guaranteed Landing feature [%s]", (seed) => {

@@ -10,6 +10,7 @@ import { Graphics } from "pixi.js";
 import { BALL_SPEED, CELL, PALETTE, PROVINCE_PALETTE } from "../config";
 import { calculateClaimDamage } from "../claims";
 import { flatPoints } from "../maths";
+import type { StationGrades } from "../economy";
 import { predictPath } from "../physics";
 import type { Arena, Ball, Vec2 } from "../types";
 import { attachBall, createPaddle } from "./actors";
@@ -25,7 +26,7 @@ export type ToWorld = (u: number, v: number) => Vec2;
  * `board` beneath the bricks; rails, gauges, paddle and balls go on `actors` above
  * them, so a ball never disappears behind the geometry it is bouncing off.
  */
-export function buildArenaDisplay(arena: Arena, toWorld: ToWorld): void {
+export function buildArenaDisplay(arena: Arena, toWorld: ToWorld, grades: StationGrades = {}): void {
   const half = arena.width / 2;
   const accent = PROVINCE_PALETTE[arena.province].accent;
   const corners = [[-half, -0.15], [half, -0.15], [half, arena.depth + 0.55], [-half, arena.depth + 0.55]]
@@ -99,7 +100,7 @@ export function buildArenaDisplay(arena: Arena, toWorld: ToWorld): void {
   arena.actors.addChild(arena.trajectoryDisplay);
   arena.liabilityDisplay = new Graphics();
   arena.actors.addChild(arena.liabilityDisplay);
-  arena.paddle.display = createPaddle(arena);
+  arena.paddle.display = createPaddle(arena, grades);
   arena.actors.addChild(arena.paddle.display);
   for (const ball of arena.balls) attachBall(ball, arena);
 }

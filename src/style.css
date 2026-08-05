@@ -241,11 +241,19 @@ button { color: inherit; font: inherit; }
 .viewport[data-mode="survey"] .stat.damage,
 .viewport[data-mode="survey"] .stat.balls { display: none; }
 /* At the forge, everything except the forge recedes. */
+/* The bay is drawn inside the canvas now, not as a DOM overlay, so the HUD no longer sits
+   underneath it -- it sits on top. Everything the HUD owns therefore has to get out of the way
+   while the bay is open, which is also correct on its own terms: the bay is a place you are
+   standing in, not a window over the cockpit. */
+.viewport[data-mode="forge"] .hud-top,
+.viewport[data-mode="forge"] .hud-bottom,
+.viewport[data-mode="forge"] .tutorial,
 .viewport[data-mode="forge"] .objective,
 .viewport[data-mode="forge"] .place,
 .viewport[data-mode="forge"] .telemetry,
-.viewport[data-mode="forge"] .stat.load,
-.viewport[data-mode="forge"] .stat.damage { opacity: 0; }
+.viewport[data-mode="forge"] .resonance,
+.viewport[data-mode="forge"] .toast,
+.viewport[data-mode="forge"] .forge-compass { opacity: 0; visibility: hidden; }
 
 .deployment {
   position: absolute;
@@ -515,116 +523,11 @@ button { color: inherit; font: inherit; }
 }
 
 /* --- Refit Bay ------------------------------------------------------------
-   An upgrades screen, not a spreadsheet. Each card leads with the payoff, then
-   the name, then costs as chips that call out the exact material you lack.
+   Nothing here: the bay is drawn in the world, not in the DOM. It is a picture of the
+   drone with six labelled places on it, and it lives in `src/view/gantry.ts`. The panel
+   that used to occupy this space was a grid of recipe cards -- a spreadsheet laid over a
+   game, describing a machine that was nowhere on screen.
    -------------------------------------------------------------------------- */
-.crafting {
-  position: absolute; z-index: 9; inset: clamp(18px, 2.4cqw, 34px);
-  display: none; flex-direction: column;
-  background: linear-gradient(rgb(13 15 13 / .97), rgb(9 11 10 / .98));
-  border: 1px solid var(--case); border-top: 3px solid var(--brass);
-  box-shadow: 0 40px 120px rgb(0 0 0 / .75);
-}
-.crafting.open { display: flex; }
-
-.forge-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 30px; flex-wrap: wrap;
-  padding: clamp(16px, 1.8cqw, 26px) clamp(20px, 2.4cqw, 34px) clamp(12px, 1.3cqw, 18px);
-  border-bottom: 1px solid var(--case);
-}
-.forge-title { display: flex; align-items: baseline; gap: 18px; }
-.forge-title b {
-  color: var(--paper); font-family: "Helvetica Neue Condensed Black", "DIN Condensed", "Arial Narrow", sans-serif;
-  font-size: clamp(24px, 2.4cqw, 40px); font-weight: 900; letter-spacing: .06em;
-}
-.forge-title small { color: var(--dim); font-size: clamp(12px, 1cqw, 16px); letter-spacing: .06em; }
-.forge-stats { display: flex; gap: clamp(20px, 2.4cqw, 40px); }
-.forge-stats span { display: grid; gap: 3px; }
-.forge-stats i { color: var(--faint); font-size: clamp(10px, .84cqw, 13px); font-style: normal; font-weight: 800; letter-spacing: .16em; }
-.forge-stats b {
-  color: var(--ink); font-size: clamp(22px, 2.1cqw, 34px); font-weight: 900;
-  line-height: .9; letter-spacing: -.03em; font-variant-numeric: tabular-nums;
-}
-.forge-stats b.chassis { font-size: clamp(15px, 1.4cqw, 22px); letter-spacing: .04em; color: var(--brass); }
-.forge-stats u { color: var(--faint); font-size: .55em; text-decoration: none; }
-
-.forge-bank {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px clamp(14px, 1.6cqw, 26px);
-  padding: clamp(10px, 1.1cqw, 15px) clamp(20px, 2.4cqw, 34px);
-  background: rgb(255 255 255 / .035); border-bottom: 1px solid var(--case);
-}
-.forge-bank > b { color: var(--brass); font-size: clamp(11px, .92cqw, 14px); font-weight: 900; letter-spacing: .2em; }
-.bank-item { display: flex; align-items: center; gap: 7px; color: var(--dim); font-size: clamp(12px, 1.02cqw, 16px); font-weight: 700; letter-spacing: .04em; }
-.bank-item i { width: 10px; height: 10px; border: 1px solid rgb(0 0 0 / .6); }
-.bank-item b { color: var(--ink); font-size: clamp(15px, 1.35cqw, 21px); font-variant-numeric: tabular-nums; }
-.bank-empty { color: var(--faint); font-size: clamp(12px, 1cqw, 15px); font-weight: 700; letter-spacing: .14em; }
-
-/* The tree is longer than the panel; fade the cut so the scroll is discoverable. */
-.forge-body {
-  flex: 1; overflow-y: auto; position: relative;
-  padding: clamp(14px, 1.8cqw, 26px) clamp(20px, 2.4cqw, 34px) clamp(20px, 2.4cqw, 32px);
-  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 46px), transparent 100%);
-}
-.forge-body::-webkit-scrollbar { width: 10px; }
-.forge-body::-webkit-scrollbar-track { background: rgb(255 255 255 / .03); }
-.forge-body::-webkit-scrollbar-thumb { background: rgb(185 154 97 / .35); }
-.forge-body::-webkit-scrollbar-thumb:hover { background: rgb(185 154 97 / .55); }
-.forge-empty { color: var(--dim); font-size: clamp(14px, 1.2cqw, 19px); }
-
-.forge-tier + .forge-tier { margin-top: clamp(18px, 2cqw, 30px); }
-.forge-tier h3 {
-  display: flex; align-items: baseline; gap: 14px; margin: 0 0 clamp(10px, 1.1cqw, 15px);
-  color: var(--brass); font-size: clamp(13px, 1.14cqw, 18px); font-weight: 900; letter-spacing: .2em;
-}
-.forge-tier h3::after { content: ""; flex: 1; height: 1px; background: var(--case); }
-.forge-tier h3 span { color: var(--faint); font-size: clamp(11px, .88cqw, 14px); font-weight: 600; letter-spacing: .06em; }
-
-.craft-grid {
-  display: grid; gap: clamp(10px, 1.1cqw, 16px);
-  grid-template-columns: repeat(auto-fill, minmax(clamp(210px, 20cqw, 280px), 1fr));
-}
-.craft-card {
-  position: relative; display: grid; gap: 6px; align-content: start;
-  padding: clamp(13px, 1.4cqw, 19px) clamp(14px, 1.5cqw, 20px) clamp(12px, 1.3cqw, 17px);
-  background: rgb(255 255 255 / .035); border: 1px solid rgb(255 255 255 / .09);
-  border-left: 3px solid var(--faint);
-  text-align: left; cursor: default; transition: background .16s ease, border-color .16s ease, transform .16s ease;
-}
-.craft-card.affordable { background: rgb(185 154 97 / .1); border-color: rgb(185 154 97 / .4); border-left-color: var(--brass); cursor: pointer; }
-.craft-card.affordable:hover { background: rgb(185 154 97 / .18); transform: translateY(-2px); }
-.craft-card.affordable:active { transform: none; }
-.craft-card.blocked { opacity: .55; }
-
-.craft-key {
-  position: absolute; top: 10px; right: 12px;
-  color: var(--faint); font-size: clamp(13px, 1.1cqw, 17px); font-style: normal; font-weight: 900;
-}
-.craft-card.affordable .craft-key { color: var(--brass); }
-
-/* The payoff: the largest thing on the card. */
-.craft-gain { display: flex; align-items: baseline; gap: 8px; }
-.craft-gain b {
-  color: var(--ink); font-size: clamp(28px, 2.7cqw, 44px); font-weight: 900;
-  line-height: .85; letter-spacing: -.04em; font-variant-numeric: tabular-nums;
-}
-.craft-card.affordable .craft-gain b { color: var(--paper); }
-.craft-gain i {
-  color: var(--dim); font-size: clamp(11px, .95cqw, 15px); font-style: normal;
-  font-weight: 800; letter-spacing: .13em;
-}
-.craft-name { color: #b8ab92; font-size: clamp(14px, 1.2cqw, 19px); font-weight: 800; letter-spacing: .05em; }
-.craft-card.affordable .craft-name { color: var(--ink); }
-.craft-note { color: var(--faint); font-size: clamp(11px, .9cqw, 14px); font-weight: 700; letter-spacing: .08em; }
-
-.craft-cost { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 3px; }
-.chip { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: clamp(12px, 1cqw, 15px); font-weight: 700; letter-spacing: .03em; }
-.chip i { width: 9px; height: 9px; border: 1px solid rgb(0 0 0 / .6); flex: none; }
-/* A short material names the shortfall rather than just dimming the row. */
-.chip.short { color: #c07a63; }
-.chip.short u { color: #8a5f4f; text-decoration: none; font-size: .88em; }
-.chip.short u::before { content: "have "; }
-
-.craft-block { color: #c07a63; font-size: clamp(11px, .9cqw, 14px); font-weight: 800; letter-spacing: .1em; }
 
 /* --- Forge compass --------------------------------------------------------
    Pressing the forge key out of range answers "where is it" rather than only

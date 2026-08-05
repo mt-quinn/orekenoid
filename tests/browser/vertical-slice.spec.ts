@@ -97,7 +97,7 @@ test("deployment previews, generated world, province rules, and the crafting cha
   expect(report.missingLandingFeatures).toEqual([]);
   expect(report.unreachableRequiredNodes).toEqual([]);
   // Contract 1: essentially all open space is one connected system.
-  expect(report.reachableCells / report.openCells).toBeGreaterThan(0.9);
+  expect(report.networkCells / report.openCells).toBeGreaterThan(0.95);
   expect(report.ecotoneReagents.brightFault).toBeGreaterThan(0);
   expect(report.ecotoneReagents.chalkWarren).toBeGreaterThan(0);
   expect(report.ecotoneReagents.bloomShelf).toBeGreaterThan(0);
@@ -348,57 +348,77 @@ test("deployment previews, generated world, province rules, and the crafting cha
   expect(banked.copper).toBe(40);
   await expect(page.locator("#cargo")).not.toHaveClass(/at-risk/);
 
-  await page.keyboard.press("KeyC");
-  await expect(page.locator("#crafting")).toHaveClass(/open/);
+  // Arriving at the bank with a haul opens the bay by itself. That is the moment the player is
+  // asking what the haul bought, and answering it unprompted is the difference between a menu you
+  // have to remember to visit and a beat in the loop.
   await expect(page.locator(".viewport")).toHaveAttribute("data-mode", "forge");
-  const forge = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll("#craftingList .craft-card")];
-    return {
-      cards: cards.length,
-      affordable: cards.filter((card) => card.classList.contains("affordable")).length,
-      tiers: document.querySelectorAll("#craftingList .forge-tier").length,
-      // Every card must lead with its payoff and list its cost.
-      allHaveGain: cards.every((card) => !!card.querySelector(".craft-gain b")?.textContent?.trim()),
-      allHaveCost: cards.every((card) => card.querySelectorAll(".craft-cost .chip").length > 0),
-      bankShown: !!document.querySelector("#forgeBank .bank-item"),
-      statsShown: document.querySelectorAll("#forgeStats span").length,
-      shortfallMarked: document.querySelectorAll("#craftingList .chip.short").length,
+  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.bayModel().open)).toBe(true);
+
+  // --- The Refit Bay -------------------------------------------------------
+  // The bay is drawn inside the canvas as a picture of the drone, not as a DOM panel, so this
+  // asserts the model the view is handed plus the fact that the HUD gets out of the way.
+  const bay = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.bayModel());
+  expect(bay.open).toBe(true);
+  // Six places on the machine and three hulls in the berth. Not a catalogue of recipes.
+  expect(bay.stations).toHaveLength(6);
+  expect(bay.hulls).toHaveLength(3);
+  // Opening always points at something: a bay that opens on nothing is the failure the old
+  // panel committed every time.
+  expect(bay.selected).not.toBeNull();
+  for (const station of bay.stations) {
+    expect(station.name, "a station with no name").toBeTruthy();
+    // Every station says where to look on the machine, which is what the leader line draws to.
+    expect(station.mount, `${station.id} has no mount`).toBeTruthy();
+    expect(station.ladder, `${station.id} has no ladder`).toBeGreaterThan(0);
+    if (station.next) {
+      expect(station.next.cost.length, `${station.id} costs nothing`).toBeGreaterThan(0);
+      // Costs carry both sides, so a shortfall can be a number rather than a colour.
+      for (const cost of station.next.cost) expect(typeof cost.have).toBe("number");
+    }
+  }
+  expect(bay.stations.filter((station: any) => station.affordable).length).toBeGreaterThan(0);
+  expect(bay.bank.length).toBeGreaterThan(0);
+
+  // Selecting a station previews its next grade on the machine.
+  const previewed = await page.evaluate(() => {
+    const api = (window as unknown as Win).__OREKENOID__;
+    api.selectStation("plating");
+    return api.bayModel().selected;
+  });
+  expect(previewed).toBe("plating");
+
+  // The HUD must not sit on top of the bay now that the bay lives in the canvas.
+  const hudHidden = await page.evaluate(() => {
+    const hidden = (selector: string) => {
+      const element = document.querySelector(selector);
+      if (!element) return true;
+      const style = getComputedStyle(element);
+      return style.visibility === "hidden" || Number(style.opacity) === 0;
     };
+    return { top: hidden(".hud-top"), bottom: hidden(".hud-bottom"), tutorial: hidden(".tutorial") };
   });
-  // The whole tree is visible, not just what the current bank can afford.
-  expect(forge.cards).toBeGreaterThanOrEqual(18);
-  expect(forge.affordable).toBeGreaterThan(0);
-  expect(forge.tiers).toBeGreaterThan(1);
-  expect(forge.allHaveGain).toBe(true);
-  expect(forge.allHaveCost).toBe(true);
-  expect(forge.bankShown).toBe(true);
-  expect(forge.statsShown).toBe(3);
-  // Unaffordable cards name the material that is short, not just dim themselves.
-  expect(forge.shortfallMarked).toBeGreaterThan(0);
+  expect(hudHidden).toEqual({ top: true, bottom: true, tutorial: true });
 
-  // Every tier is present even with a thin bank.
-  expect(forge.tiers).toBe(3);
-
-  // Cards are clickable, not keyboard-only.
-  const clickCraft = await page.evaluate(() => {
-    const before = (window as unknown as Win).__OREKENOID__.state.soakCapacity;
-    const card = document.querySelector<HTMLButtonElement>("#craftingList .craft-card.affordable");
-    card?.click();
-    return { before, after: (window as unknown as Win).__OREKENOID__.state.soakCapacity };
-  });
-  expect(clickCraft.after).toBeGreaterThan(clickCraft.before);
   await page.screenshot({ path: "webgl-forge.png", fullPage: true });
 
+  // A digit fits that station. The upgrade lands in state immediately and the fitting sequence
+  // is a reading of it afterwards, so the armour is up before the arm has finished moving --
+  // which is deliberate: the animation must never be the thing that owns whether a part is on.
   const armorBefore = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.soakCapacity);
   await page.keyboard.press("Digit1");
   const armorAfter = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.soakCapacity);
   expect(armorAfter).toBeGreaterThan(armorBefore);
 
-  // Crafting may sharpen a verb but never grant one.
+  // Upgrading may sharpen a verb but never grant one.
   const verbsAfterForging = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.verbs);
   expect(verbsAfterForging).toEqual([]);
+
+  // Let the fit finish: while it runs, any key lands the sequence rather than doing its usual
+  // job, so Escape would skip rather than close.
+  await page.waitForFunction(() => !(window as unknown as Win).__OREKENOID__.game.gantry.fitting,
+    null, { timeout: 5_000 });
   await page.keyboard.press("Escape");
-  await expect(page.locator("#crafting")).not.toHaveClass(/open/);
+  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.bayModel().open)).toBe(false);
   await expect(page.locator(".viewport")).toHaveAttribute("data-mode", "survey");
 
   // --- Trajectory line, ore pull, and the forge compass --------------------
@@ -415,7 +435,7 @@ test("deployment previews, generated world, province rules, and the crafting cha
     return {
       compassShown: compass?.classList.contains("show") ?? false,
       compassText: document.querySelector("#forgeCompassRange")?.textContent ?? "",
-      forgeClosed: !document.querySelector("#crafting")?.classList.contains("open"),
+      forgeClosed: !(window as unknown as Win).__OREKENOID__.bayModel().open,
       baseVacuum: game.vacuumRadius,
       baseBounces: game.predictedBounces,
     };
@@ -436,8 +456,10 @@ test("deployment previews, generated world, province rules, and the crafting cha
     api.giveResource("coal", 60);
     api.giveResource("copper", 40);
     api.bankAll();
-    api.game.economy.craft(api.game.chassis.id, "trajectoryOptics");
-    api.game.economy.craft(api.game.chassis.id, "collectorCoil");
+    // The mast reaches optics at grade two, and the collector pulls wider at grade one.
+    api.game.economy.upgrade(api.game.chassis.id, "mast");
+    api.game.economy.upgrade(api.game.chassis.id, "mast");
+    api.game.economy.upgrade(api.game.chassis.id, "collector");
     return { before, vacuum: api.game.vacuumRadius, bounces: api.game.predictedBounces };
   });
   expect(optics.bounces).toBeGreaterThan(optics.before.bounces);

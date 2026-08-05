@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 8080",
+    "worldmap": "vite --host 127.0.0.1 --port 8080 --open /worldmap.html",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 8080",
     "test": "vitest run",

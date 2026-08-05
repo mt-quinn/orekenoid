@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orekenoid — World Inspector</title>
+    <style>
+      /* A development instrument. Deliberately its own page and its own stylesheet: the game's
+         deployment previews are load-bearing and nothing here should be able to reach them. */
+      :root {
+        --void: #070a0b;
+        --panel: #10151700;
+        --ink: #f1eadb;
+        --dim: #8a9296;
+        --rule: #232b2e;
+        --accent: #b9d2e8;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--void);
+        color: var(--ink);
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow: hidden;
+      }
+      .app { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+
+      aside {
+        border-right: 1px solid var(--rule);
+        overflow-y: auto;
+        padding: 14px 14px 40px;
+        background: #0b0f10;
+      }
+      aside h1 {
+        font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase;
+        margin: 0 0 2px; color: var(--ink);
+      }
+      aside .sub { color: var(--dim); font-size: 11px; margin: 0 0 16px; }
+      aside section { border-top: 1px solid var(--rule); padding: 12px 0; }
+      aside section:first-of-type { border-top: none; padding-top: 0; }
+      aside h2 {
+        font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+        color: var(--dim); margin: 0 0 8px; font-weight: 600;
+      }
+
+      .row { display: flex; gap: 6px; align-items: center; }
+      .row + .row { margin-top: 6px; }
+      input[type="text"] {
+        flex: 1; min-width: 0; background: #060809; color: var(--ink);
+        border: 1px solid var(--rule); padding: 6px 8px; font: inherit; border-radius: 2px;
+      }
+      input[type="text"]:focus { outline: none; border-color: var(--accent); }
+      button {
+        background: #161d20; color: var(--ink); border: 1px solid var(--rule);
+        padding: 6px 10px; font: inherit; cursor: pointer; border-radius: 2px; white-space: nowrap;
+      }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: #1d2a31; border-color: #2f4550; }
+      label.check { display: flex; gap: 7px; align-items: baseline; cursor: pointer; padding: 2px 0; }
+      label.check input { margin: 0; accent-color: var(--accent); }
+      label.check .hint { color: var(--dim); font-size: 11px; }
+      .kv { display: grid; grid-template-columns: 1fr auto; gap: 1px 10px; font-size: 12px; }
+      .kv dt { color: var(--dim); }
+      .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+      .bad { color: #ff655b; }
+      .good { color: #6fbf92; }
+      .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; }
+      .legend span { display: flex; gap: 5px; align-items: center; color: var(--dim); }
+      .swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+      main { position: relative; overflow: hidden; }
+      canvas#map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+      canvas#map.dragging { cursor: grabbing; }
+      .hud {
+        position: absolute; left: 12px; bottom: 12px; pointer-events: none;
+        background: rgba(6, 8, 9, 0.82); border: 1px solid var(--rule); border-radius: 2px;
+        padding: 8px 10px; font-size: 11px; color: var(--dim); max-width: 460px;
+      }
+      .hud b { color: var(--ink); font-weight: 600; }
+      .keys {
+        position: absolute; right: 12px; bottom: 12px; pointer-events: none;
+        font-size: 11px; color: #4d5558; text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside>
+        <h1>World Inspector</h1>
+        <p class="sub">Reroll and read a whole generated world. One pixel is one cell.</p>
+
+        <section>
+          <h2>Seed</h2>
+          <div class="row">
+            <input type="text" id="seed" spellcheck="false" autocomplete="off" />
+            <button id="apply">Go</button>
+          </div>
+          <div class="row">
+            <button class="primary" id="reroll" style="flex:1">Reroll (R)</button>
+            <button id="copy">Copy</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Base layer</h2>
+          <div id="layers"></div>
+        </section>
+
+        <section>
+          <h2>Overlays</h2>
+          <div id="overlays"></div>
+        </section>
+
+        <section>
+          <h2>Export</h2>
+          <div class="row">
+            <button data-export="1" style="flex:1">1×</button>
+            <button data-export="2" style="flex:1">2×</button>
+            <button data-export="4" style="flex:1">4×</button>
+            <button data-export="8" style="flex:1">8×</button>
+          </div>
+          <p class="sub" style="margin:8px 0 0">
+            Writes the full 240×144 world as a PNG at that many pixels per cell, with the
+            overlays exactly as shown.
+          </p>
+        </section>
+
+        <section>
+          <h2>Report</h2>
+          <dl class="kv" id="report"></dl>
+        </section>
+
+        <section>
+          <h2>Markers</h2>
+          <div class="legend" id="markerLegend"></div>
+        </section>
+
+        <section>
+          <h2>Resources</h2>
+          <div class="legend" id="resourceLegend"></div>
+        </section>
+      </aside>
+
+      <main>
+        <canvas id="map"></canvas>
+        <div class="hud" id="readout">Move over the map.</div>
+        <div class="keys">
+          <span id="zoom">—</span><br />
+          drag to pan · wheel to zoom · <b>R</b> reroll · <b>F</b> fit
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/worldmap/main.ts"></script>
+  </body>
+</html>

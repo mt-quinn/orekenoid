@@ -229,7 +229,7 @@ describe("room stamping", () => {
     // guaranteed teaching feature, which is why authored ground is stamped again last.
     for (const seed of SEEDS) {
       const { report } = generateWorld(seed);
-      expect(report.reachableCells / report.openCells, seed).toBeGreaterThan(0.99);
+      expect(report.strandedCells / report.openCells, seed).toBeLessThan(0.005);
       expect(report.missingLandingFeatures, seed).toEqual([]);
       expect(report.unreachableRequiredNodes, seed).toEqual([]);
     }

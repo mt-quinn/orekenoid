@@ -281,14 +281,60 @@ export function openComponents(open: Uint8Array): OpenComponent[] {
  * the plug pass or erosion severed, so a broken world is impossible rather than
  * merely unlikely.
  */
-export function carveCorridor(open: Uint8Array, ax: number, ay: number, bx: number, by: number, radius: number): void {
-  const minX = Math.max(1, Math.floor(Math.min(ax, bx) - radius - 1));
-  const maxX = Math.min(WORLD_COLS - 2, Math.ceil(Math.max(ax, bx) + radius + 1));
-  const minY = Math.max(1, Math.floor(Math.min(ay, by) - radius - 1));
-  const maxY = Math.min(WORLD_ROWS - 2, Math.ceil(Math.max(ay, by) + radius + 1));
+/** One straight capsule, with the same edge noise the procedural tubes get. */
+function carveCapsule(
+  open: Uint8Array, ax: number, ay: number, bx: number, by: number, radius: number, seed: number,
+): void {
+  const reach = radius * 1.25 + 1;
+  const minX = Math.max(1, Math.floor(Math.min(ax, bx) - reach));
+  const maxX = Math.min(WORLD_COLS - 2, Math.ceil(Math.max(ax, bx) + reach));
+  const minY = Math.max(1, Math.floor(Math.min(ay, by) - reach));
+  const maxY = Math.min(WORLD_ROWS - 2, Math.ceil(Math.max(ay, by) + reach));
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
-      if (distanceToSegment(x + 0.5, y + 0.5, ax, ay, bx, by) <= radius) open[index(x, y)] = 1;
+      // Clamped so the noise can roughen the corridor's edge but never pinch it shut, which
+      // would strand exactly the space it was carved to connect.
+      const edge = Math.max(1.15, radius * (1 + sfbm(seed + 6607, x * 0.19, y * 0.19, 2) * 0.2));
+      if (distanceToSegment(x + 0.5, y + 0.5, ax, ay, bx, by) <= edge) open[index(x, y)] = 1;
     }
+  }
+}
+
+/**
+ * Carve a corridor joining two points.
+ *
+ * It wanders. A single straight capsule -- which is what this was -- reads as a survey line
+ * cut through the world rather than as a cave, because it is the only thing in the generator
+ * with no noise on it at all: the procedural tubes in `carveCaves` all get `sfbm` wobble and
+ * this did not. On seeds where a repair ran long that produced perfectly straight hallways
+ * hundreds of cells long, and the world looked pre-mined.
+ *
+ * The wander is a lateral offset from noise, tapered to zero at both ends with a sine so the
+ * corridor still lands exactly on the cells it was asked to join, and it is carved as
+ * overlapping capsules so connectivity cannot be broken by the displacement.
+ */
+export function carveCorridor(
+  open: Uint8Array, ax: number, ay: number, bx: number, by: number, radius: number, seed = 0,
+): void {
+  const length = Math.hypot(bx - ax, by - ay);
+  if (length < 1e-6) {
+    carveCapsule(open, ax, ay, bx, by, radius, seed);
+    return;
+  }
+  // Perpendicular to the run, and a sway that grows with length but stops being a detour.
+  const acrossX = -(by - ay) / length;
+  const acrossY = (bx - ax) / length;
+  const sway = Math.min(7, length * 0.16);
+  const steps = Math.max(1, Math.round(length / 3.5));
+  const pointAt = (t: number): [number, number] => {
+    const offset = sfbm(seed + 5501, t * 5.5, (seed % 61) * 0.37, 3) * sway * Math.sin(Math.PI * t);
+    return [ax + (bx - ax) * t + acrossX * offset, ay + (by - ay) * t + acrossY * offset];
+  };
+  let [px, py] = pointAt(0);
+  for (let step = 1; step <= steps; step++) {
+    const [qx, qy] = pointAt(step / steps);
+    carveCapsule(open, px, py, qx, qy, radius, seed);
+    px = qx;
+    py = qy;
   }
 }

@@ -1,5 +1,177 @@
 # Progress Log
 
+## Session: 2026-08-05 — The Machine Is The Interface
+
+The forge stopped being a spreadsheet laid over a game.
+
+The diagnosis that mattered was the user's, not mine. I proposed new economy systems — cutting
+grades, cargo caps, a refining step — and was told the upgrades are already the right ones: the
+problem is that they were a contextless menu with no connection to gameplay. That was correct,
+and the evidence was one line: `createDrone(paddleWidth)`. A machine at eighty armour with a
+full mast and a bandolier was **pixel-identical** to the one that left the lander in minute one.
+Twenty-one upgrades with no visible consequence.
+
+### Six stations instead of twenty-one recipes
+
+The recipe list became six places on the machine, each with a grade ladder that only goes up:
+hull plating (Copper → Iron → Cobalt → Mithril → Runite), frame (absorbing Drive Tune), emitter,
+survey mast, collector ring, charge rack.
+
+Grades are **absolute, not additive** — plating 3 *is* 36 armour, not 8+20+36. That single
+decision deleted the whole `replaces` / `limit` / `costGrowth` apparatus: `rubyEmitter.replaces =
+"emitterCoil"` was always grade three of the emitter, written as a separate recipe because there
+was nowhere else to put it. The save now stores six small numbers per hull rather than craft
+counts *and* the derived totals it needed to avoid charging the player twice for their own
+modules.
+
+The constraint the user set is what makes it work: slots exist but are not swappable. Slots
+create opportunity cost, opportunity cost creates deliberation, deliberation creates
+spreadsheets. Fixed stations that only rise are monotonic — every fit is "this part got bigger",
+never a trade and never a regret.
+
+Two consequences: charges became rack *capacity* refilled free at the bay rather than ammunition
+bought by the unit, and Hull Patch — the only entry that was a service rather than a part — was
+replaced by a free repair on docking, which the forgiving-expedition model already implied.
+
+### The machine accretes, visibly
+
+Every grade now adds real geometry to the drone: plate layers in the ore they were made from, a
+truss spine, a wider hotter emitter, a mast gaining a gimbal then optics barrels then a lens, a
+collector ring, countable charges on a rail. Carried onto the paddle too, since the paddle *is*
+the drone's working face and that is where the player spends their time.
+
+### The bay is the drone on a gantry
+
+`forgeView.ts` deleted, the `#crafting` markup removed, ~110 lines of `.craft-*` CSS deleted. The
+bay is now `src/view/gantry.ts`, drawn in screen-space Pixi: the machine large on a service
+gantry, six callouts each on a **leader line to the actual part it governs**, grade pips as the
+entire tech tree, the bank as a rail, and the fabrication berth set apart because it builds a
+different machine.
+
+The part that makes it work is the **ghost**: selecting a station renders a second drone one
+grade further on, *behind* the solid one, tinted and pulsing, so only the geometry the upgrade
+would add shows past the machine in front of it. You see the part appear on your own drone before
+paying for it. Two failures on the way there: drawn *over* the drone it merely brightened the
+whole silhouette, and at 300px a truss rib was two pixels and invisible.
+
+Consequence worth recording: the old forge was a DOM overlay at `z-index: 9` and covered the HUD.
+The bay lives inside the canvas, so the HUD began drawing *on top of it* — the tutorial checklist
+sat across three station cards. Everything the HUD owns now hides on `data-mode="forge"`.
+
+### The fitting moment
+
+Per the Vlambeer transcript in `reference files/`: an articulated arm reaches in from its post
+carrying a machined part in the ore's colour, a real freeze on the seat frame, a flash, a
+decaying kick, and sparks that fall to the bay floor and **stay there for the visit** — come back
+after three fits and the floor shows that three things were fitted here. Every timing and
+magnitude is gathered in one `FIT` block, because none of it can be verified from a screenshot
+and tuning it should be editing one place after playing it.
+
+State changes first and the animation reads it afterwards, never the reverse: the sequence is
+skippable and any key lands it, and skipping must never cost the player the upgrade they paid
+for. There is a test for exactly that.
+
+Sound is three layered tones — a low falling thump, a metallic click, a reach — written against
+the existing `ToneSpec` vocabulary and **never heard**. Flagged in the code as such; the user
+plans a hand-applied audio pass before shipping.
+
+### Verifying an animation with slow screenshots
+
+Two of my own verification methods were wrong before they were right, and both are worth
+recording because the failure mode is silent:
+
+- **Sampling the sequence against the wall clock photographs the aftermath.** A screenshot takes
+  longer than the 0.87s sequence, so my first three "mid-sequence" frames were all of a finished
+  machine. `poseFit` now stops the ticker and steps the animation by hand.
+- **Stopping the ticker also stops the renderer**, so every posed capture was a stale frame until
+  `poseFit` began calling `renderer.render` explicitly. And gantry coordinates are in the stage's
+  1280×720 space while `page.screenshot` clips in page pixels through a letterboxed canvas — the
+  two have to be mapped or the clip lands nowhere near the thing being inspected.
+
+`tests/browser/refit.spec.ts` therefore asserts what a screenshot cannot: the arm lands **within
+2px** of the mount rather than near it, carries the part before the seat and not after, does not
+creep during the freeze, kicks during the retract and returns to exactly zero, and every spark
+settles and stays.
+
+### Verified
+
+Strict TypeScript, production build, **142 unit tests**, **4 browser tests** (two new, for the
+fitting sequence and for skipping it). Save format bumped to v2; v1 refused with a readable
+reason and an empty `migrate` seam carrying a note that once playtesters have builds, a refusal
+is somebody's lost expedition.
+
+### Not done
+
+Coal does not visibly burn during the fit — the flash stands in for the heat. And the bay is
+still keyboard-and-mouse only in the sense that station selection has no gamepad path.
+
+
+## Session: 2026-08-05 — The World Inspector, and What It Found
+
+A development instrument on its own page at `/worldmap.html` (`npm run worldmap`): reroll whole
+worlds, read them at one pixel per cell, pan and zoom, export a PNG at 1–8 px per cell. It
+imports `generateWorld` directly, so the picture cannot drift from the generator.
+
+It exists because the generation report can say a world is *correct* and cannot say whether it
+is *good* — whether the provinces sit somewhere interesting, whether the rooms are spread or
+clumped, whether a band looks like a different depth or just more of the same. Those are
+judgements about a picture.
+
+Five base layers (material with edge lighting, region, solidity, walkable-from-Landing,
+connectivity), overlays for room footprints and variant names, feature markers, landmarks and
+depth bands, a hover readout naming the material, hit points, liability, ore, room variant and
+substitution province under the cursor, and the report beside it. Seed lives in the URL.
+
+### What it found in its first ten minutes
+
+`report.reachableCells` describes a world that never ships. Probing `caves.open` through the
+tail of `generateWorld`:
+
+```
+before verify:            open=20285  reach=262     <- already sealed
+after verify:             open=20490  reach=20474   <- repair carved an exit
+after restamp:            open=20464  reach=264     <- the re-stamp walls it up again
+```
+
+The Landing starts enclosed by its five teaching faces, which is deliberate — the first lesson
+*is* to break the Chalk Face. Verification's corridor repair treats that as a fault and carves
+an escape route through the authored faces; `verify` measures reachability at that moment and
+reports 20,474 of 20,490; the re-stamp immediately after restores the faces, so the shipped
+world has **262**. So the contract test `reachableCells / openCells > 0.99` has been passing on
+a number describing an intermediate state no player ever sees. Same class of error as the
+`missingLandingFeatures` bug — verification must run on the world that ships — which I fixed in
+one direction last session and left in the other.
+
+Measured directly instead: the cave network **is** one connected body, 98.5% of open cells, and
+the only cut-off region is the Landing's own pocket. Beyond it just 44 cells are stranded. The
+generator is fine; the measurement is wrong. Recommendation and the two follow-on items are
+written up in `WORLD_DETAIL_BRIEF.md` under *Open finding* — replacing the contract is a design
+decision, so I have not made it. What I did add is the property nothing was checking: the
+Landing's seal must be **breakable**, since a persistent wall around the start pocket would
+make an expedition unwinnable from the first frame.
+
+### Three bugs in the tool, all of the same kind
+
+Worth recording because they were all "measured the wrong thing, or measured it too early":
+
+- **`fitView` ran before layout**, so `clientWidth` was 0, the scale collapsed to zero and the
+  page was black with two stray landmark diamonds in the corner.
+- **Then the ResizeObserver that fixed it was not enough.** Its callbacks are delivered with
+  the rendering steps, so a page loading in a hidden tab never receives one and sits at its
+  default scale. A timer does run there; both paths plus `visibilitychange` now cover it.
+- **Band lines drew nothing** because I recovered the row by inverting `depthMetresAt`, which
+  clamps at zero — so both samples were 0 and it divided by zero. Boundaries now come from
+  asking `bandAt` where it changes, which also survives the reshape to 576 rows.
+
+### Verified
+
+Strict TypeScript, production build (two pages), **133 unit tests** (6 new, covering the
+rasteriser and the connectivity measures — `rasterizeWorld` returns a plain RGBA buffer rather
+than an `ImageData` so it is testable in Node, same principle as compiling the room library to
+TypeScript). Both browser flows. Live page checked by hand across every layer, reroll, hover,
+zoom and export, with no console errors.
+
+
 ## Session: 2026-08-04 — The Multipliers
 
 Phase 1 of `WORLD_DETAIL_BRIEF.md`, complete. **42 authored rooms now expand to 94 variants**,
