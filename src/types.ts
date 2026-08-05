@@ -27,6 +27,18 @@ export interface Cell {
   baseSolid: boolean;
   hidden: boolean;
   exhausted: boolean;
+  /**
+   * Broken at least once, whatever put it back.
+   *
+   * Regrowth restores the rock but not the debt: a cell that has already been paid for does not
+   * count as load a second time, and reads desaturated so the player can see it is free to leave.
+   * Without this, the Rootwarren's whole rule punished you for standing still -- growth crept back
+   * into a claim you had already cleared and charged you for it again.
+   *
+   * Never stored in a save. It is derived from the mutation log on load, because a cell that has
+   * a `grow` edit was necessarily cut before it.
+   */
+  worked: boolean;
   kind: MaterialKind;
   /** What this cell drops when broken, if anything. */
   resource: ResourceId | null;
@@ -55,6 +67,8 @@ export interface OrientedFootprint {
 }
 
 export interface Brick {
+  /** Broken once already: not load, and drawn desaturated to say so. */
+  worked: boolean;
   u: number;
   v: number;
   x: number;

@@ -28,7 +28,7 @@ function brick(u: number, v: number, kind: MaterialKind = "chalk", facetAxis: 1 
   return {
     u, v, x: 0, y: 0, hp: definition.hp, maxHp: definition.hp, kind,
     resource: null, facetAxis,
-    alive: true, persistent: false, liable: definition.liable,
+    alive: true, persistent: false, worked: false, liable: definition.liable,
     footprint: { center: { x: u, y: v }, halfWidth: 0.5, halfHeight: 0.5, angle: 0 }, sourceCells: [], hitFlash: 0,
   };
 }

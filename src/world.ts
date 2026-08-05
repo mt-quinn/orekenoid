@@ -415,6 +415,9 @@ export class WorldModel {
         if (includePersistent && cell.persistent && this.pointInFootprint(cell.x + 0.5, cell.y + 0.5, footprint)) cell.persistent = false;
         if (this.pointInFootprint(cell.x + 0.5, cell.y + 0.5, footprint)) {
           cell.hidden = false;
+          // Paid for once. Regrowth can put the rock back but never the liability, and this is
+          // what the brick display desaturates on.
+          cell.worked = true;
           if (exhausted && cell.resource) cell.exhausted = true;
         }
       }
@@ -422,10 +425,22 @@ export class WorldModel {
     for (const listener of this.cutListeners) listener(footprint);
   }
 
-  /** Restore a cell to solid. Used by bounded Rootwarren regrowth. */
+  /**
+   * Restore a cell to solid. Used by bounded Rootwarren regrowth.
+   *
+   * The guard used to read `cell.solid`, which is never false during play: solidity is *derived*
+   * from the cut footprints in `cutsByCell`, and `removeFootprint` deliberately leaves the field
+   * alone. So this refused every call, regrowth never reached the world model, and no `grow` edit
+   * was ever recorded -- regrowth was cosmetic and a reload silently forgot it. The right question
+   * is whether the cell has cuts to undo.
+   */
   restoreCell(x: number, y: number, kind: MaterialKind): boolean {
     const cell = this.cells[y]?.[x];
-    if (!cell || cell.solid || cell.exhausted) return false;
+    if (!cell || cell.exhausted) return false;
+    // The one question that matters: is this cell open right now? That covers both cases regrowth
+    // has to serve -- space the generator left hollow, and space the player cut -- where the old
+    // `cell.solid` guard covered only the first and silently refused the second.
+    if (this.solidAt(x + 0.5, y + 0.5)) return false;
     const definition = materialOf(kind);
     cell.solid = true;
     cell.kind = kind;

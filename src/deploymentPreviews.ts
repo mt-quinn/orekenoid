@@ -96,7 +96,8 @@ export class DeploymentPreviews {
         .map(({ cell, sourceCells, u, v, footprint, persistent }) => ({
           u, v, x: cell.x, y: cell.y, hp: cell.hp, maxHp: cell.maxHp, kind: cell.kind,
           resource: cell.resource, facetAxis: cell.facetAxis,
-          alive: true, persistent, liable: !persistent && materialOf(cell.kind).liable,
+          alive: true, persistent, worked: cell.worked,
+          liable: !persistent && materialOf(cell.kind).liable && !cell.worked,
           footprint, sourceCells, hitFlash: 0,
         }));
 

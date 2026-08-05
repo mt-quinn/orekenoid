@@ -757,7 +757,11 @@ export class OrekenoidGame {
       bricks.push({
         u, v, x: cell.x, y: cell.y, hp: cell.hp, maxHp: cell.maxHp, kind: cell.kind,
         resource: cell.resource, facetAxis: cell.facetAxis,
-        alive: true, persistent, liable: !persistent && definition.liable,
+        // Worked rock is never load again. Regrowth restores the rock, not the debt -- otherwise
+        // the Rootwarren's rule charged the player twice for the same cell and punished them for
+        // taking their time in a claim they had already cleared.
+        alive: true, persistent, worked: cell.worked,
+        liable: !persistent && definition.liable && !cell.worked,
         footprint, sourceCells, hitFlash: 0,
       });
     }

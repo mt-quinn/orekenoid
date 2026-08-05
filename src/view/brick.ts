@@ -108,5 +108,19 @@ export function createBrickDisplay(brick: Brick): BrickDisplay {
   damage.alpha = 0;
 
   container.addChild(shadow, rim, face, material, bevel, damage);
+
+  // Worked rock: broken once already, so it is not load and the player should be able to see that
+  // at a glance rather than counting. Desaturated toward the rim colour rather than merely dimmed,
+  // because dim reads as "far away" and washed-out reads as "spent" -- and a wash keeps the
+  // material identity legible, which matters when the same claim holds both fresh and regrown
+  // cells of the same stone.
+  if (brick.worked) {
+    container.tint = 0x8e9694;
+    container.alpha = 0.72;
+    // A slash across the face, so the state survives being colour-blind or on a dim screen.
+    container.addChild(new Graphics()
+      .moveTo(-size * 0.28, size * 0.28).lineTo(size * 0.28, -size * 0.28)
+      .stroke({ width: 2, color: PALETTE.ink, alpha: 0.28 }));
+  }
   return { container, damage };
 }

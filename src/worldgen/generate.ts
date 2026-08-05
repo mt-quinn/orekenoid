@@ -86,6 +86,7 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
         baseSolid: solid,
         hidden: true,
         exhausted: false,
+        worked: false,
         kind,
         resource: solid ? resourceFor(seed, x, y, sample, kind) : null,
         hp: definition.hp,
