@@ -55,6 +55,21 @@ export function buildArenaDisplay(arena: Arena, toWorld: ToWorld, grades: Statio
   lattice.stroke({ width: 1, color: accent, alpha: 0.075 });
   arena.board.addChild(cutShadow, section, lattice);
 
+  /**
+   * The crumble mask.
+   *
+   * Everything the board draws is hidden until the wavefront has passed it, so ahead of the front
+   * the player is looking at the *actual terrain render* -- untouched, exactly as it was before the
+   * claim was framed. There is deliberately no intermediate state where a board sits waiting under
+   * a layer of grout: masking is what makes "it still looks like terrain" literally true rather
+   * than approximated.
+   */
+  const crumbleMask = new Graphics();
+  arena.container.addChild(crumbleMask);
+  arena.board.mask = crumbleMask;
+  arena.crumbleMask = crumbleMask;
+  arena.crumbleFront = 0;
+
   for (const brick of arena.bricks) {
     const { container, damage } = createBrickDisplay(brick);
     brick.display = container;
@@ -62,9 +77,10 @@ export function buildArenaDisplay(arena: Arena, toWorld: ToWorld, grades: Statio
     const position = toWorld(brick.u, brick.v);
     container.position.set(position.x * CELL, position.y * CELL);
     container.rotation = arena.angle;
-    // Bricks are revealed by the scan animation, so they start invisible and small.
-    container.alpha = 0;
-    container.scale.set(0.72);
+    // Fully drawn from the first frame. The bricks *are* the rock, so they must never fade or pop
+    // into existence -- the board is uncovered by the crumble wavefront's mask, not faded in over
+    // the terrain. A brick that materialises reads as a game board arriving; a brick that is
+    // already there and simply becomes *visible* reads as the rock coming apart.
     arena.board.addChild(container);
   }
 

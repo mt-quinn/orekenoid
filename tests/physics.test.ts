@@ -19,7 +19,7 @@ function arenaWith(bricks: Brick[]): Arena {
     splitArmed: false, splitUsed: false, serveAim: 0, initialLiability: bricks.length, damageTaken: 0,
     spareBalls: 0,
     paddle: { u: 0, velocity: 0, width: 3.1, flash: 0, impact: 0 },
-    container, board: new Container(), actors: new Container(), resolving: false, visualAge: 0,
+    container, board: new Container(), actors: new Container(), resolving: false, visualAge: 0, crumbleFront: 999,
   };
 }
 

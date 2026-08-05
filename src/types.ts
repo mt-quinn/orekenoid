@@ -149,6 +149,14 @@ export interface Arena extends FrameGeometry {
   container: Container;
   board: Container;
   actors: Container;
+  /**
+   * How far the crumble wavefront has travelled, in board rows. Masks the board behind it.
+   *
+   * Ahead of the front nothing the board draws is visible at all, so the framed region reads as
+   * the terrain it still is.
+   */
+  crumbleFront: number;
+  crumbleMask?: Graphics;
   /** The rail glow, brightened as the claim's pace ramps up. */
   railLight?: Graphics;
   resolving: boolean;

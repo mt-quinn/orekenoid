@@ -31,7 +31,7 @@ import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Camera, type CameraTransition } from "./camera";
 import { Effects } from "./effects";
-import { clamp, normalizeAngle, smooth } from "./maths";
+import { clamp, normalizeAngle } from "./maths";
 import { attachBall, attachMembrane, createDrone, spawnDrop } from "./view/actors";
 import { buildArenaDisplay, drawLiabilityGauge, drawTrajectory } from "./view/board";
 import { createBrickDisplay } from "./view/brick";
@@ -121,6 +121,8 @@ export class OrekenoidGame {
   readonly gantry = new Gantry();
   readonly salvage = new SalvageDrone();
   readonly loadStrike = new LoadStrike();
+  /** The bright line of stress travelling ahead of the crumble. */
+  private readonly crumbleEdge = new Graphics();
   readonly pauseView = new PauseView();
   /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
   private forgeSelection: StationId | null = null;
@@ -247,6 +249,7 @@ export class OrekenoidGame {
     // Anchor zero: the Refit Bay in the lander.
     this.anchors.push({ id: "refitBay", x: this.world.start.x, y: this.world.start.y, name: "REFIT BAY" });
     this.effects = new Effects(this.effectLayer);
+    this.effectLayer.addChild(this.crumbleEdge);
     this.deploymentPreviews = new DeploymentPreviews(this.world, this.terrain);
     this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.framePreview.addChild(this.frameWash, this.frameGrid, this.frameScan, this.frameReturns);
@@ -827,7 +830,7 @@ export class OrekenoidGame {
       initialLiability: bricks.filter((brick) => brick.liable).length, damageTaken: 0,
       spareBalls: Math.max(0, this.arenaBalls - 1),
       paddle: { u: 0, velocity: 0, width: this.paddleWidth, flash: 0, impact: 0 },
-      container, board, actors, resolving: false, visualAge: 0,
+      container, board, actors, resolving: false, visualAge: 0, crumbleFront: 0,
     };
     this.arena = arena;
     this.mode = "play";
@@ -1171,6 +1174,7 @@ export class OrekenoidGame {
       this.updateUI();
     }
     this.camera.applyTo(this.worldRoot);
+    this.updateCrumble(dt);
     this.updateDisplays(dt);
     this.showClaimHeat();
     this.updateLoadStrike(dt);
@@ -1429,6 +1433,90 @@ export class OrekenoidGame {
     if (arena.railLight) arena.railLight.alpha = 0.55 + heat * 0.45;
   }
 
+  /**
+   * The board coming apart out of the rock.
+   *
+   * A wavefront travels along the claim from the paddle end. Behind it the board is uncovered by a
+   * mask; ahead of it nothing the board draws is visible at all, so the framed region is still
+   * literally the terrain render. The seam between the two states is covered by the crumble itself
+   * -- chips thrown out of the gaps between cells as they open -- so the player never sees a board
+   * waiting to be uncovered, only stone breaking into squares.
+   */
+  private updateCrumble(dt: number): void {
+    const arena = this.arena;
+    if (!arena?.crumbleMask) return;
+    const reach = arena.depth + 1.2;
+    if (arena.crumbleFront >= reach) {
+      // Released once the wave is through. Leaving a mask assigned for the rest of the claim costs
+      // a clip every frame and risks trimming anything that later strays past the quad -- the load
+      // volley, for one, which flies the length of the board.
+      if (arena.board.mask) {
+        arena.board.mask = null;
+        arena.crumbleMask.destroy();
+        arena.crumbleMask = undefined;
+        this.crumbleEdge.clear();
+      }
+      return;
+    }
+
+    const previous = arena.crumbleFront;
+    // Fast: this is a flourish on the way into play, not a cutscene. The serve still waits for the
+    // player, so it can never cost them agency, but it must not feel like a wait either.
+    arena.crumbleFront = Math.min(reach, arena.crumbleFront + dt * (arena.depth + 1.2) / 0.55);
+    const front = arena.crumbleFront;
+
+    // Mask: the strip of the claim the wave has passed, in world space, because everything the
+    // board draws is positioned in world space rather than in a rotated container.
+    const half = arena.width / 2;
+    const corners = [[-half, -0.2], [half, -0.2], [half, front], [-half, front]]
+      .map(([u, v]) => this.world.localToWorld(u, v, arena));
+    arena.crumbleMask.clear()
+      .poly(corners.flatMap((point) => [point.x * CELL, point.y * CELL]))
+      .fill(0xffffff);
+
+    // Crumble every cell row the front crossed this frame. The debris is what hides the boundary.
+    for (let row = Math.ceil(previous - 0.5); row <= Math.floor(front - 0.5); row++) {
+      this.crumbleRow(arena, row);
+    }
+
+    // A line of stress at the wavefront, so there is something to follow.
+    const edgeA = this.world.localToWorld(-half, front, arena);
+    const edgeB = this.world.localToWorld(half, front, arena);
+    this.crumbleEdge.clear();
+    if (front < reach) {
+      this.crumbleEdge
+        .moveTo(edgeA.x * CELL, edgeA.y * CELL).lineTo(edgeB.x * CELL, edgeB.y * CELL)
+        .stroke({ width: 3, color: PALETTE.ink, alpha: 0.75 })
+        .moveTo(edgeA.x * CELL, edgeA.y * CELL).lineTo(edgeB.x * CELL, edgeB.y * CELL)
+        .stroke({ width: 9, color: PROVINCE_PALETTE[arena.province].accent, alpha: 0.22 });
+    }
+  }
+
+  /**
+   * Throw chips out of the seams of one row of cells.
+   *
+   * Along the gaps rather than at the cell centres: it is the material *between* the squares that
+   * is leaving, and debris that came from the middle of a brick would read as the brick breaking
+   * rather than as the board separating.
+   */
+  private crumbleRow(arena: Arena, row: number): void {
+    const live = arena.bricks.filter((brick) => brick.alive && Math.abs(brick.v - (row + 0.5)) < 0.5);
+    if (!live.length) return;
+    for (const brick of live) {
+      const definition = materialOf(brick.kind);
+      // The four seams around this cell, at the edge of the gap rather than the brick face.
+      for (const [du, dv] of [[BRICK_HALF + 0.08, 0], [-BRICK_HALF - 0.08, 0], [0, BRICK_HALF + 0.08], [0, -BRICK_HALF - 0.08]]) {
+        const point = this.world.localToWorld(brick.u + du, brick.v + dv, arena);
+        this.effects.spawnShards(point.x * CELL, point.y * CELL, definition.edge, 2, 0.55, false);
+      }
+      const centre = this.world.localToWorld(brick.u, brick.v, arena);
+      this.effects.spawnDust(centre.x * CELL, centre.y * CELL, definition.base, 2, 0.5);
+    }
+    this.audio.play(SOUNDS.brickChip);
+    // A shallow kick per row, so the whole sequence has a rolling rumble to it.
+    this.camera.kick(0, 1, 1.6);
+  }
+
   private updateDisplays(dt: number): void {
     this.drone.position.set(this.player.x, this.player.y);
     this.drone.rotation = this.player.heading;
@@ -1437,9 +1525,10 @@ export class OrekenoidGame {
     if (arena) {
       for (const brick of arena.bricks) if (brick.alive && brick.display) {
         const flash = brick.hitFlash / 0.14;
-        const reveal = smooth(clamp((arena.visualAge - 0.05 - brick.v * 0.018) / 0.32, 0, 1));
-        brick.display.alpha = reveal;
-        brick.display.scale.set((0.72 + reveal * 0.28) * (1 + flash * 0.07), (0.72 + reveal * 0.28) * (1 - flash * 0.05));
+        // No reveal ramp and no scale pop. The bricks are the rock and are drawn in full from the
+        // first frame; what changes is whether the crumble mask has uncovered them yet. Fading them
+        // in read as a board materialising over the terrain, which is the opposite of the point.
+        brick.display.scale.set(1 + flash * 0.07, 1 - flash * 0.05);
         if (brick.damageDisplay) brick.damageDisplay.alpha = brick.hp < brick.maxHp ? 0.82 : 0;
       }
       for (const membrane of arena.membranes) {
@@ -2102,6 +2191,36 @@ export class OrekenoidGame {
         // stopped. Every posed capture was silently stale until this line existed.
         game.app.renderer.render(game.app.stage);
         return { at: seconds, ...game.gantry.fitDebug() };
+      },
+      /**
+       * Stop the clock and pose the crumble at an exact wavefront position.
+       *
+       * The sequence lasts 0.55s and a screenshot takes longer than that, so sampling it against
+       * the wall clock photographs the finished board and calls it the middle.
+       */
+      poseCrumble(front: number) {
+        game.app.ticker.stop();
+        const arena = game.arena;
+        if (!arena) return { front: -1 };
+        arena.crumbleFront = 0;
+        // The live animation has almost certainly finished by the time a test can pose it, and
+        // finishing releases the mask -- so rewinding the front alone leaves `updateCrumble`
+        // returning immediately and the loop below spinning forever. Rebuild the mask first.
+        if (!arena.crumbleMask) {
+          const rebuilt = new Graphics();
+          arena.container.addChild(rebuilt);
+          arena.board.mask = rebuilt;
+          arena.crumbleMask = rebuilt;
+        }
+        const step = 1 / 240;
+        // Bounded, so a mistake in here can never hang the page.
+        for (let guard = 0; guard < 4000 && arena.crumbleFront < front; guard++) {
+          (game as unknown as { updateCrumble(dt: number): void }).updateCrumble(step);
+          game.effects.update(step);
+          if (!arena.crumbleMask) break;
+        }
+        game.app.renderer.render(game.app.stage);
+        return { front: arena.crumbleFront, effects: game.effects.count };
       },
       resumeClock() {
         game.app.ticker.start();

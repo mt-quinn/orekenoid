@@ -115,7 +115,7 @@ export class DeploymentPreviews {
         splitArmed: false, splitUsed: false, serveAim: 0, initialLiability: bricks.length, damageTaken: 0,
         spareBalls: 0,
         paddle: { u: 0, velocity: 0, width: chassis.paddleWidth, flash: 0, impact: 0 },
-        container: content, board, actors, resolving: false, visualAge: 2,
+        container: content, board, actors, resolving: false, visualAge: 2, crumbleFront: 999,
       };
       // The production board builder. Not a preview-specific path.
       buildArenaDisplay(arena, (u, v) => this.world.localToWorld(u, v, arena));
