@@ -87,10 +87,26 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 
   // --- Tutorial controls ---------------------------------------------------
-  // Large, checked off by doing, then removed from the DOM for good.
+  // One rung at a time, taught by doing, then removed from the DOM for good. It used to be a
+  // six-row checklist with every control already live; now the sequence asks for one thing and
+  // refuses everything it has not offered yet.
   await expect(page.locator("#tutorial")).toBeVisible();
-  await expect(page.locator("#tutorialList li")).toHaveCount(6);
-  await expect(page.locator("#tutorialList li.done")).toHaveCount(0);
+  await expect(page.locator("#tutorialList .ftue-now")).toHaveCount(1);
+  await expect(page.locator("#tutorialList .ftue-now")).toContainText("MOVE");
+  // Progress is a row of pips, none of them lit on the first frame.
+  await expect(page.locator("#tutorialList .ftue-pip")).toHaveCount(8);
+  await expect(page.locator("#tutorialList .ftue-pip.on")).toHaveCount(0);
+
+  // Exclusive: a control the sequence has not reached yet does nothing. Committing a claim is
+  // three rungs away, so F must not frame one.
+  const gated = await page.evaluate(async () => {
+    const api = (window as unknown as Win).__OREKENOID__;
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyF", bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return { arena: api.state.arena, mode: api.state.mode };
+  });
+  expect(gated.arena, "F framed a claim before the sequence taught it").toBeNull();
+  expect(gated.mode).toBe("survey");
 
   // --- Generated world -----------------------------------------------------
   const report = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.report);
@@ -138,8 +154,9 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await page.waitForTimeout(600);
   await page.keyboard.up("KeyS");
   await page.keyboard.up("KeyE");
-  // Moving and aiming tick their own steps off the checklist.
-  await expect(page.locator("#tutorialList li.done")).toHaveCount(2);
+  // Moving and aiming light their pips and hand the sequence on to the next rung.
+  await expect(page.locator("#tutorialList .ftue-pip.on")).toHaveCount(2);
+  await expect(page.locator("#tutorialList .ftue-now")).toContainText("COMMIT THE CLAIM");
   const surveyAfter = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.player.heading);
   expect(Math.abs(surveyAfter - surveyBefore.heading)).toBeGreaterThan(0.15);
   expect(Math.abs(surveyAfter / (Math.PI / 2) - Math.round(surveyAfter / (Math.PI / 2)))).toBeGreaterThan(0.05);
@@ -216,6 +233,23 @@ test("deployment previews, generated world, province rules, and the crafting cha
   expect(hud.arenaBalls).toBe(2);
   await page.screenshot({ path: "webgl-karst-claim.png", fullPage: true });
 
+  // Aiming the serve comes first in the sequence, because it is the only steering the player has
+  // and it stops working the instant the ball is live. Serving is refused until it is taught.
+  const aimGate = await page.evaluate(async () => {
+    const api = (window as unknown as Win).__OREKENOID__;
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return api.state.arena.balls.some((ball: any) => ball.served);
+  });
+  expect(aimGate, "served before the sequence taught aiming").toBe(false);
+
+  const aimedBefore = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.arena.serveAim);
+  await page.keyboard.down("KeyE");
+  await page.waitForTimeout(320);
+  await page.keyboard.up("KeyE");
+  const aimedAfter = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.arena.serveAim);
+  expect(Math.abs(aimedAfter - aimedBefore), "Q/E did not steer the serve").toBeGreaterThan(0.05);
+
   // Serve, then the serve hint retires itself.
   await page.keyboard.press("Space");
   await page.waitForTimeout(250);
@@ -227,6 +261,21 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await page.keyboard.down("KeyD");
   await page.waitForTimeout(400);
   await page.keyboard.up("KeyD");
+
+  // The sequence still owes two rungs before the Atlas: aiming a serve, which only happens
+  // pre-serve, and the optional speed controls, which dismiss themselves once the claim is over.
+  await page.waitForFunction(() => {
+    const done = (window as unknown as Win).__OREKENOID__.game.tutorial
+      .filter((step: any) => step.done).map((step: any) => step.id);
+    return done.includes("paddle");
+  }, null, { timeout: 10_000 });
+  // Then wait for the sequence to reach the Atlas rung. The optional speed step gets there either
+  // by being demonstrated or by dismissing itself when the claim ends.
+  await page.waitForFunction(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    return game.tutorial.find((step: any) => !step.done)?.id === "atlas";
+  }, null, { timeout: 25_000 });
+
   await page.keyboard.press("KeyM");
   await expect(page.locator("#atlas")).toHaveClass(/open/);
   await page.keyboard.press("KeyM");
@@ -436,7 +485,7 @@ test("deployment previews, generated world, province rules, and the crafting cha
       compassShown: compass?.classList.contains("show") ?? false,
       compassText: document.querySelector("#forgeCompassRange")?.textContent ?? "",
       forgeClosed: !(window as unknown as Win).__OREKENOID__.bayModel().open,
-      baseVacuum: game.vacuumRadius,
+      baseSalvageTax: game.salvageTax,
       baseBounces: game.predictedBounces,
     };
   });
@@ -445,25 +494,28 @@ test("deployment previews, generated world, province rules, and the crafting cha
   expect(gameplay.compassShown).toBe(true);
   expect(gameplay.compassText).toMatch(/\d+m/);
   // The drone always pulls a little, and predicts only the current leg by default.
-  expect(gameplay.baseVacuum).toBeGreaterThan(0);
+  // A bare machine has no salvage drone and no predicted rebounds: both are things you fit.
+  expect(gameplay.baseSalvageTax).toBe(0);
   expect(gameplay.baseBounces).toBe(0);
 
   const optics = await page.evaluate(() => {
     const api = (window as unknown as Win).__OREKENOID__;
-    const before = { vacuum: api.game.vacuumRadius, bounces: api.game.predictedBounces };
+    const before = { tax: api.game.salvageTax, bounces: api.game.predictedBounces };
     api.giveResource("cobalt", 60);
     api.giveResource("emerald", 30);
     api.giveResource("coal", 60);
     api.giveResource("copper", 40);
     api.bankAll();
-    // The mast reaches optics at grade two, and the collector pulls wider at grade one.
+    // The mast reaches optics at grade two, and the salvage drone appears at grade one.
     api.game.economy.upgrade(api.game.chassis.id, "mast");
     api.game.economy.upgrade(api.game.chassis.id, "mast");
-    api.game.economy.upgrade(api.game.chassis.id, "collector");
-    return { before, vacuum: api.game.vacuumRadius, bounces: api.game.predictedBounces };
+    api.game.economy.upgrade(api.game.chassis.id, "salvage");
+    return { before, tax: api.game.salvageTax, bounces: api.game.predictedBounces };
   });
   expect(optics.bounces).toBeGreaterThan(optics.before.bounces);
-  expect(optics.vacuum).toBeGreaterThan(optics.before.vacuum);
+  // No drone means no tax; fitting one means it takes a cut, which is the whole trade.
+  expect(optics.before.tax).toBe(0);
+  expect(optics.tax).toBeGreaterThan(0);
 
   // --- A cornerstone verb turns on Survey Resonance ------------------------
   await expect(page.locator("#resonance")).not.toHaveClass(/open/);

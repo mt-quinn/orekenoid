@@ -97,7 +97,7 @@ const ROW_Y = [96, 258, 420];
 const MOUNTS: Record<StationId, { x: (width: number) => number; y: number; side: "left" | "right"; row: number }> = {
   plating: { x: (width) => -width / 2 - 4, y: -9, side: "left", row: 0 },
   frame: { x: (width) => -width * 0.22, y: 15, side: "left", row: 1 },
-  collector: { x: () => 0, y: 9, side: "left", row: 2 },
+  salvage: { x: () => 0, y: 13, side: "left", row: 2 },
   mast: { x: () => 0, y: -36, side: "right", row: 0 },
   emitter: { x: (width) => width * 0.2, y: -3, side: "right", row: 1 },
   rack: { x: (width) => width * 0.32, y: 8, side: "right", row: 2 },
@@ -576,39 +576,42 @@ export class Gantry {
       .stroke({ width: selected ? 2 : 1, color: ready ? BRASS : 0x232b2e, alpha: selected ? 0.9 : 0.65 });
     card.addChild(plate);
 
+    // The station names the place; the leader line points at it on the machine. The mount label
+    // that used to sit under here ("FLANKS", "WORKING FACE") is gone with the rest of the prose --
+    // the line already says where, and a word saying it again is a word between the player and
+    // what the upgrade does.
     const name = text(station.name, 12, ready ? BRASS : DIM, "800", 3);
-    name.position.set(14, 12);
-    const mount = text(station.mount.toUpperCase(), 10, FAINT, "600", 2);
-    mount.position.set(14, 28);
-    card.addChild(name, mount);
+    name.position.set(14, 14);
+    card.addChild(name);
 
     // The ladder, as pips. How far this part of the machine is, and how far it can go.
     const pips = new Graphics();
     for (let at = 0; at < station.ladder; at++) {
       const px = CARD.width - 16 - (station.ladder - 1 - at) * 15;
-      if (at < station.level) pips.rect(px - 5, 14, 10, 10).fill({ color: BRASS, alpha: 0.95 });
-      else pips.rect(px - 5, 14, 10, 10).stroke({ width: 1, color: BRASS, alpha: 0.35 });
+      if (at < station.level) pips.rect(px - 5, 12, 10, 10).fill({ color: BRASS, alpha: 0.95 });
+      else pips.rect(px - 5, 12, 10, 10).stroke({ width: 1, color: BRASS, alpha: 0.35 });
     }
     card.addChild(pips);
 
     if (!station.next) {
-      const built = text(station.fitted ?? "", 20, INK, "800");
-      built.position.set(14, 58);
+      const built = text(station.fitted ?? "", 22, INK, "800");
+      built.position.set(14, 52);
       const full = text("FULLY BUILT", 12, FAINT, "800", 3);
-      full.position.set(14, 90);
+      full.position.set(14, 86);
       card.addChild(built, full);
       return card;
     }
 
-    const headline = text(station.next.name, 20, ready ? INK : DIM, "800");
-    headline.position.set(14, 52);
-    const detail = text(station.next.detail, 13, ready ? DIM : FAINT, "600");
+    // Two lines and a price: what the part is called, what it does, what it costs.
+    //
+    // There used to be a third line -- "NOW  Iron Plate" -- and it went because the effect line
+    // already carries it: "ARMOR 20 -> 36" states the current value on its left. Saying it twice
+    // was the same information competing with itself.
+    const headline = text(station.next.name, 22, ready ? INK : DIM, "800");
+    headline.position.set(14, 44);
+    const detail = text(station.next.detail, 15, ready ? INK : DIM, "800", 1);
     detail.position.set(14, 78);
     card.addChild(headline, detail);
-
-    const now = text(station.fitted ? `NOW  ${station.fitted}` : "NOTHING FITTED", 11, FAINT, "600", 2);
-    now.position.set(14, 98);
-    card.addChild(now);
 
     if (station.blocked) {
       const blocked = text(station.blocked, 11, PALETTE.danger, "800", 2);

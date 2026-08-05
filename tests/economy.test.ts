@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Economy, FABRICATIONS, STATIONS, STATION_IDS, STATIONS_BY_ID } from "../src/economy";
+import { Economy, FABRICATIONS, LOWER_IS_BETTER, STATIONS, STATION_IDS, STATIONS_BY_ID } from "../src/economy";
 import { PADDLE_CHASSIS, FABRICATED_CHASSIS } from "../src/config";
 
 const SURVEYOR = "bx04-surveyor";
@@ -74,15 +74,21 @@ describe("the machine's stations", () => {
   });
 
   it("makes every grade a strict improvement on the one below it", () => {
-    // A ladder that dipped anywhere would turn an upgrade into a trap, and the player has no
-    // way to undo it.
+    // A ladder that dipped anywhere would turn an upgrade into a trap, and because stations only
+    // ever go up the player would have no way to undo it.
+    //
+    // "Improvement" is not always "larger": the salvage tax is the share of rescued ore the
+    // grinder keeps, so 50% -> 15% is the ladder going up. `LOWER_IS_BETTER` is the authority on
+    // which way each stat points, and it lives with the stats rather than here.
     for (const station of STATIONS) {
       for (let at = 1; at < station.grades.length; at++) {
         const below = station.grades[at - 1].confers;
         const above = station.grades[at].confers;
         for (const [key, value] of Object.entries(below) as Array<[keyof typeof below, number]>) {
-          expect(above[key] ?? 0, `${station.id} grade ${at + 1} regressed ${key}`)
-            .toBeGreaterThanOrEqual(value);
+          const next = above[key] ?? 0;
+          const note = `${station.id} grade ${at + 1} regressed ${key}`;
+          if (LOWER_IS_BETTER.has(key)) expect(next, note).toBeLessThanOrEqual(value);
+          else expect(next, note).toBeGreaterThanOrEqual(value);
         }
       }
     }
@@ -126,6 +132,22 @@ describe("the machine's stations", () => {
     for (const hull of FABRICATIONS) economy.fabricate(hull.chassisId);
     // Every station maxed and every hull built, with unlimited material, and still no verbs.
     expect(economy.verbs.size).toBe(0);
+  });
+
+  it("makes the salvage drone a tax that only ever falls", () => {
+    // Grade zero means no drone at all, so nothing missed is recovered. Every grade after that
+    // recovers everything and keeps less of it.
+    const economy = new Economy();
+    stockEverything(economy);
+    expect(economy.upgrades(SURVEYOR).salvageTax).toBe(0);
+    const taxes: number[] = [];
+    for (let step = 0; step < 3; step++) {
+      economy.upgrade(SURVEYOR, "salvage");
+      taxes.push(economy.upgrades(SURVEYOR).salvageTax);
+    }
+    expect(taxes).toEqual([0.5, 0.3, 0.15]);
+    // Never free: a drone that kept nothing would delete the reason to catch ore yourself.
+    for (const tax of taxes) expect(tax).toBeGreaterThan(0);
   });
 
   it("fills the charge rack on fitting, so a bigger rack is worth something immediately", () => {

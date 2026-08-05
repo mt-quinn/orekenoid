@@ -491,6 +491,21 @@ button { color: inherit; font: inherit; }
   transition: opacity .5s ease, transform .5s cubic-bezier(.16, 1, .3, 1);
 }
 .tutorial.done { opacity: 0; transform: translateY(calc(-50% + 14px)); }
+/* One rung at a time, so the instruction is large and the progress is a row of pips. */
+.ftue-now { display: grid; gap: 4px; }
+.ftue-now b {
+  color: var(--brass); font-size: clamp(15px, 1.5cqw, 24px); font-weight: 900; letter-spacing: .12em;
+}
+.ftue-now span { color: var(--ink); font-size: clamp(13px, 1.2cqw, 19px); font-weight: 700; letter-spacing: .06em; }
+.ftue-track { display: flex; gap: 5px; margin-top: 10px; }
+.ftue-pip { width: 9px; height: 4px; background: rgb(185 154 97 / .25); }
+.ftue-pip.on { background: var(--brass); }
+/* Pressing something the sequence has not offered yet: flash rather than nag with a toast. */
+.tutorial.nudge { animation: ftue-nudge .3s ease 2; }
+@keyframes ftue-nudge {
+  0%, 100% { transform: translateY(-50%) translateX(0); }
+  50% { transform: translateY(-50%) translateX(6px); }
+}
 .viewport:has(.deployment:not(.hidden)) .tutorial { opacity: 0; visibility: hidden; }
 .tutorial > header {
   margin-bottom: 12px; color: var(--brass);

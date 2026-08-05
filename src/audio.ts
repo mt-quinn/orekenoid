@@ -99,6 +99,9 @@ export const SOUNDS = {
   fitSeat: { frequency: 150, duration: 0.22, volume: 0.075, end: 48 },
   fitClick: { frequency: 940, duration: 0.05, volume: 0.02, end: 1500 },
   fitReach: { frequency: 90, duration: 0.3, volume: 0.018, end: 155 },
+  // The grinder taking its cut. Falling and gritty, so losing half a piece sounds like a cost
+  // rather than a collection. Written but never heard, like the rest of the fit vocabulary.
+  salvageGrind: { frequency: 210, duration: 0.13, volume: 0.03, end: 70 },
   verbAcquired: { frequency: 180, duration: 0.5, volume: 0.06, end: 900 },
   tutorialStep: { frequency: 520, duration: 0.08, volume: 0.022, end: 720 },
   arrival: { frequency: 210, duration: 0.3, volume: 0.028, end: 320 },

@@ -41,10 +41,11 @@ import { buildFeatureMarks, updateFeatureMarks, type FeatureMark } from "./view/
 import { gradeOf, Hud, REGION_RULES, type HudModel } from "./hud";
 import { objectiveFor } from "./objectives";
 import { Gantry, type GantryModel } from "./view/gantry";
+import { SalvageDrone } from "./view/salvage";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
-import type { Arena, Ball, Brick, FrameGeometry, Membrane, Vec2 } from "./types";
+import type { Arena, Ball, Brick, FrameGeometry, Membrane, TutorialStep, Vec2 } from "./types";
 import { WorldModel } from "./world";
 import { BANK } from "./worldgen/landmarks";
 import type { AtlasSite } from "./atlas";
@@ -117,6 +118,7 @@ export class OrekenoidGame {
   readonly audio = new GameAudio();
   readonly hud = new Hud();
   readonly gantry = new Gantry();
+  readonly salvage = new SalvageDrone();
   /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
   private forgeSelection: StationId | null = null;
   readonly atlasView = new AtlasView(this);
@@ -160,17 +162,50 @@ export class OrekenoidGame {
    * Controls are taught by doing. Each step checks off as the player performs it,
    * and the whole panel retires permanently once every one of them is done.
    */
-  readonly tutorial = [
-    { id: "move", keys: "WASD", label: "MOVE", done: false },
-    { id: "aim", keys: "Q / E", label: "AIM FRAME", done: false },
-    { id: "commit", keys: "F", label: "COMMIT CLAIM", done: false },
-    { id: "serve", keys: "SPACE", label: "SERVE", done: false },
-    { id: "paddle", keys: "A / D", label: "MOVE PADDLE", done: false },
+  /**
+   * The opening sequence: one control at a time, and nothing else works yet.
+   *
+   * This used to be a six-row checklist shown all at once, with every control live from the first
+   * frame. A player could serve before they had framed anything, or open the Atlas over a world
+   * they had not moved through, and the panel read as a list of things to go and do rather than as
+   * being taught. Sequential and exclusive means the game only ever asks for one thing, and the
+   * only key that does anything is the one it is asking for -- plus everything already earned.
+   *
+   * `where` keeps a step from being asked for in a mode it cannot be performed in. `optional`
+   * steps are shown and then move on by themselves: the speed controls are worth knowing about
+   * and it would be silly to hold the tutorial hostage to them.
+   */
+  readonly tutorial: TutorialStep[] = [
+    { id: "move", keys: "WASD / ARROWS", label: "MOVE", where: "survey", done: false },
+    { id: "aim", keys: "Q / E", label: "AIM THE FRAME", where: "survey", done: false },
+    { id: "commit", keys: "F", label: "COMMIT THE CLAIM", where: "survey", done: false },
+    // Aiming inside a claim comes *before* the serve, because that is the only time it does
+    // anything -- the aim steers the ball off the paddle and is fixed once the ball is live.
+    // Teaching it after "SERVE" made it unreachable in that claim, which is exactly the kind of
+    // thing a sequential tutorial makes obvious and a checklist hides.
+    { id: "arenaAim", keys: "Q / E", label: "AIM THE SERVE", where: "play", done: false },
+    { id: "serve", keys: "SPACE", label: "SERVE", where: "play", done: false },
+    { id: "paddle", keys: "A / D", label: "MOVE THE PADDLE", where: "play", done: false },
+    // Shown, not demanded.
+    { id: "speed", keys: "W / S", label: "HOLD TO SPEED UP", where: "play", optional: true, done: false },
     // The Atlas is how the mine becomes navigable at all, so it is taught rather
     // than left to be found.
-    { id: "atlas", keys: "M", label: "OPEN ATLAS", done: false },
+    { id: "atlas", keys: "M", label: "OPEN THE ATLAS", where: "survey", done: false },
   ];
+  /**
+   * A real pause: the claim's simulation stops, not just the interface.
+   *
+   * Resuming runs a countdown rather than dropping the player straight back onto a live ball,
+   * because the ball does not wait for them to find the paddle again.
+   */
+  paused = false;
+  /** Seconds left of the 3-2-1. Zero means the claim is live. */
+  resumeCountdown = 0;
   tutorialComplete = false;
+  /** How long the current step has been on screen, for advancing the optional ones. */
+  private tutorialShownFor = 0;
+  /** Pulses the prompt when a key the player has not been given yet is pressed. */
+  private tutorialNudge = 0;
   private tutorialFadeTimer = 0;
   private arrivalTimer = 0;
   private compassTimer = 0;
@@ -225,13 +260,53 @@ export class OrekenoidGame {
   get hullHalfLength() { return this.paddleWidth / 2 + DRONE_NOSE_PX / CELL; }
   get hullHalfThickness() { return DRONE_HALF_THICKNESS_PX / CELL; }
 
+  /**
+   * The step the game is currently asking for, or null once the sequence is done.
+   *
+   * Skipped past any step whose mode the player is not in, so being in a claim never leaves the
+   * prompt asking for something only possible outside one.
+   */
+  private get currentStep(): TutorialStep | null {
+    if (this.tutorialComplete) return null;
+    return this.tutorial.find((step) => !step.done) ?? null;
+  }
+
+  /**
+   * Is this control available yet?
+   *
+   * Everything already taught, plus the one being taught now. Everything the sequence has not
+   * reached is refused -- which is the whole point of an exclusive tutorial, and is why the guard
+   * lives here rather than being scattered as `if (tutorialComplete)` checks.
+   */
+  private can(control: TutorialStep["id"]): boolean {
+    if (this.tutorialComplete) return true;
+    const at = this.tutorial.findIndex((step) => step.id === control);
+    if (at < 0) return true;
+    // Available if it is done, or if it is the step being asked for right now.
+    if (this.tutorial[at].done) return true;
+    return this.currentStep?.id === control;
+  }
+
+  /** A key was pressed that the sequence has not offered yet. Pulse rather than nag. */
+  private refuseControl(): void {
+    this.tutorialNudge = 0.6;
+  }
+
   /** Can the hull occupy this pose without intersecting rock? */
   private hullFits(x: number, y: number, heading: number): boolean {
     return this.world.isHullOpen(x, y, heading, this.hullHalfLength, this.hullHalfThickness);
   }
 
   /** The drone always pulls a little; modules widen it. */
-  get vacuumRadius() { return 1.15 + this.moduleUpgrades.vacuum; }
+  /**
+   * Share the salvage drone keeps of anything it rescues. Zero means there is no drone.
+   *
+   * There used to be a `vacuumRadius` here that dragged falling drops toward the paddle. It is
+   * gone, innate pull included: a pull and a drone that catches what the paddle misses are the
+   * same mechanic answering the same complaint twice. Drops fall straight now.
+   */
+  get salvageTax() { return this.moduleUpgrades.salvageTax; }
+  get hasSalvageDrone() { return this.moduleUpgrades.salvageTax > 0; }
   get predictedBounces() { return this.moduleUpgrades.predictBounces; }
   /** Total balls for a claim, including the one on the paddle. */
   get arenaBalls() { return BASE_ARENA_BALLS + (this.economy.verbs.has("sequentialBall") ? 1 : 0); }
@@ -302,7 +377,19 @@ export class OrekenoidGame {
         return;
       }
       if (event.repeat || this.cameraTransition) return;
-      if (!event.repeat && event.code === "KeyM") { this.toggleAtlas(); return; }
+      // Pause is never gated: whatever else is happening, the player can always stop. Handled
+      // before the atlas and forge branches only for Escape when neither of those is open.
+      if (event.code === "Escape" && !this.atlasOpen && !this.craftingOpen) { this.togglePause(); return; }
+      if (this.paused) {
+        // While paused the only key that does anything is the one that unpauses.
+        if (event.code === "Escape" || event.code === "KeyP") this.togglePause();
+        return;
+      }
+      if (!event.repeat && event.code === "KeyM") {
+        if (!this.can("atlas")) { this.refuseControl(); return; }
+        this.toggleAtlas();
+        return;
+      }
       if (!event.repeat && event.code === "KeyC" && this.mode === "survey") { this.toggleCrafting(); return; }
       if (this.craftingOpen) {
         // Any key lands a running fit rather than queueing behind it.
@@ -316,9 +403,15 @@ export class OrekenoidGame {
         return;
       }
       if (this.mode === "survey") {
-        if (event.code === "Enter" || event.code === "KeyF") this.establishArena();
+        if (event.code === "Enter" || event.code === "KeyF") {
+          if (!this.can("commit")) { this.refuseControl(); return; }
+          this.establishArena();
+        }
       } else if (this.arena) {
-        if (event.code === "Space") this.serve();
+        if (event.code === "Space") {
+          if (!this.can("serve")) { this.refuseControl(); return; }
+          this.serve();
+        }
         if (event.code === "KeyR" && this.economy.verbs.has("railSeed") && !this.railSeedUsed) this.placeRailSeed();
         if (event.code === "KeyB" && this.economy.blastCharges > 0) this.useBlastCharge();
       }
@@ -369,7 +462,9 @@ export class OrekenoidGame {
 
   private renderTutorial(): void {
     if (this.tutorialComplete) return;
-    this.hud.renderTutorial(this.tutorial);
+    // One rung, not the whole ladder. A list of six invites the player to go and do all six; a
+    // single line asks for one thing and is finished with it before the next appears.
+    this.hud.renderTutorial(this.currentStep, this.tutorial);
   }
 
   /**
@@ -438,6 +533,26 @@ export class OrekenoidGame {
   private atAnchor(): boolean {
     const nearest = this.nearestAnchor();
     return !!nearest && nearest.distance <= 9;
+  }
+
+  /**
+   * Pause and resume.
+   *
+   * Available at all times and never gated by the tutorial: a player must always be able to stop.
+   */
+  togglePause(): void {
+    if (!this.started) return;
+    if (this.paused) {
+      this.paused = false;
+      // Only a live claim needs the countdown. Out in the mine there is nothing to be caught by.
+      this.resumeCountdown = this.arena && !this.arena.resolving ? 3 : 0;
+      this.audio.play(SOUNDS.atlasClose);
+    } else {
+      this.paused = true;
+      this.resumeCountdown = 0;
+      this.audio.play(SOUNDS.atlasOpen);
+    }
+    this.updateUI();
   }
 
   private toggleCrafting(): void {
@@ -672,6 +787,7 @@ export class OrekenoidGame {
     this.railSeedArmed = false;
     this.framePreview.visible = false;
     buildArenaDisplay(arena, (u, v) => this.world.localToWorld(u, v, arena), this.economy.stationGrades(this.chassis.id));
+    this.armSalvage(arena);
     const center = this.world.localToWorld(0, arena.depth / 2, arena);
     this.camera.begin({ x: center.x * CELL, y: center.y * CELL }, -arena.angle, false);
     this.showToast(`${arena.initialLiability} LIABLE · ${resources} RETURNS · CLAIM COMMITTED`);
@@ -932,8 +1048,14 @@ export class OrekenoidGame {
   }
 
   private updateSurvey(dt: number): void {
-    const dx = (this.keys.has("KeyD") ? 1 : 0) - (this.keys.has("KeyA") ? 1 : 0);
-    const dy = (this.keys.has("KeyS") ? 1 : 0) - (this.keys.has("KeyW") ? 1 : 0);
+    // Arrows mirror WASD out here. Inside a claim the horizontal pair moves the paddle and the
+    // vertical pair drives the simulation speed, so the mirroring is deliberately mode-local.
+    const held = (...codes: string[]) => codes.some((code) => this.keys.has(code));
+    // Movement and aiming are gated separately rather than behind one early return: they are two
+    // steps of the sequence, and one being locked must never silently disable the other.
+    const canMove = this.can("move");
+    const dx = canMove ? (held("KeyD", "ArrowRight") ? 1 : 0) - (held("KeyA", "ArrowLeft") ? 1 : 0) : 0;
+    const dy = canMove ? (held("KeyS", "ArrowDown") ? 1 : 0) - (held("KeyW", "ArrowUp") ? 1 : 0) : 0;
     const length = Math.hypot(dx, dy) || 1;
     const movementDt = Math.min(0.033, dt);
     const vx = dx / length * this.travelSpeed * movementDt;
@@ -947,7 +1069,9 @@ export class OrekenoidGame {
     if (stuck || this.hullFits(this.player.x + vx, this.player.y, heading)) this.player.x += vx;
     if (stuck || this.hullFits(this.player.x, this.player.y + vy, heading)) this.player.y += vy;
 
-    const rotation = (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0);
+    const rotation = this.can("aim")
+      ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0)
+      : 0;
     if (rotation) {
       // Rotation is refused when it would drive the hull into rock. Always safe to
       // refuse: the pose the drone arrived in is by definition clear, so turning
@@ -966,7 +1090,19 @@ export class OrekenoidGame {
   private updatePlay(dt: number): void {
     const arena = this.arena;
     if (!arena || arena.resolving || this.cameraTransition) return;
-    this.physicsAccumulator = Math.min(PHYSICS_STEP * 5, this.physicsAccumulator + dt);
+    if (this.paused) return;
+    if (this.resumeCountdown > 0) {
+      this.resumeCountdown = Math.max(0, this.resumeCountdown - dt);
+      // Nothing steps during the count. The accumulator is dropped rather than banked, so the
+      // claim does not lurch forward by three seconds of physics the moment it unfreezes.
+      this.physicsAccumulator = 0;
+      return;
+    }
+    // Speeding the claim up runs *more fixed steps*, never larger ones: the solver's step size is
+    // load-bearing for swept contacts, so scaling dt would change the physics rather than the
+    // pace. The cap rises with the multiplier so a x8 frame is allowed to do x8 work.
+    const rate = this.simulationRate;
+    this.physicsAccumulator = Math.min(PHYSICS_STEP * 5 * rate, this.physicsAccumulator + dt * rate);
     while (this.physicsAccumulator >= PHYSICS_STEP) {
       this.stepArena(arena, PHYSICS_STEP);
       this.physicsAccumulator -= PHYSICS_STEP;
@@ -974,8 +1110,30 @@ export class OrekenoidGame {
     }
   }
 
+  /**
+   * How fast the claim runs, from the speed keys. Hold only, never latched.
+   *
+   * Hold rather than toggle so it can never be left on by accident: a claim served at x4 because
+   * the player forgot they had pressed something is a loss they did not choose. Both together is
+   * x8, which is why the individual keys have to be held too -- a latched x2 and a held x8 would
+   * be two different interactions on the same keys.
+   */
+  private get simulationRate(): number {
+    if (!this.can("speed") || this.paused) return 1;
+    const up = this.keys.has("KeyW") || this.keys.has("ArrowUp");
+    const down = this.keys.has("KeyS") || this.keys.has("ArrowDown");
+    if (up && down) return 8;
+    if (down) return 4;
+    if (up) return 2;
+    return 1;
+  }
+
   private stepArena(arena: Arena, dt: number): void {
-    const input = (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) - (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0);
+    if (this.simulationRate > 1) this.markTutorial("speed");
+    const canPaddle = this.can("paddle");
+    const input = canPaddle
+      ? (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) - (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0)
+      : 0;
     arena.paddle.velocity = input * this.paddleSpeed;
     if (input) this.markTutorial("paddle");
     arena.paddle.u += arena.paddle.velocity * dt;
@@ -987,7 +1145,10 @@ export class OrekenoidGame {
     for (const brick of arena.bricks) brick.hitFlash = Math.max(0, brick.hitFlash - dt);
 
     if (!arena.balls.some((ball) => ball.served)) {
-      const aim = (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0);
+      const aim = this.can("arenaAim")
+        ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0)
+        : 0;
+      if (aim) this.markTutorial("arenaAim");
       arena.serveAim = clamp(arena.serveAim + aim * 1.45 * dt, -0.72, 0.72);
       for (const ball of arena.balls) ball.u = arena.paddle.u;
       return;
@@ -1041,30 +1202,44 @@ export class OrekenoidGame {
       return;
     }
 
+    if (this.hasSalvageDrone) this.salvage.update(dt, arena, arena.paddle.u);
     for (let index = arena.drops.length - 1; index >= 0; index--) {
       const drop = arena.drops[index];
       drop.v += drop.vv * dt;
       drop.vv -= 1.4 * dt;
       drop.spin += dt * 5;
-      // Ore pull. Falls off with distance so a wide radius still rewards
-      // positioning rather than removing the catch entirely.
-      const reach = this.vacuumRadius;
-      const offset = arena.paddle.u - drop.u;
-      if (Math.abs(offset) < reach && drop.v < 4.5) {
-        const falloff = 1 - Math.abs(offset) / reach;
-        drop.u += Math.sign(offset) * falloff * falloff * 5.4 * dt;
-      }
       if (drop.v < 0.45) {
-        if (Math.abs(drop.u - arena.paddle.u) < arena.paddle.width / 2 + 0.35) {
+        const caught = Math.abs(drop.u - arena.paddle.u) < arena.paddle.width / 2 + 0.35;
+        if (caught) {
           arena.collected++;
           this.economy.add(drop.resource, 1);
           this.audio.play(collectSound(arena.collected));
+        } else if (this.hasSalvageDrone) {
+          // The drone gets everything the paddle missed, and takes its cut in the open where the
+          // player can watch it happen. The ore either survives the grinder whole or it does not,
+          // so the tax is a piece count rather than a fraction the inventory would have to hold.
+          const eaten = this.salvage.grindsThis();
+          this.salvage.caught(drop, eaten);
+          if (!eaten) {
+            arena.collected++;
+            this.economy.add(drop.resource, 1);
+            this.audio.play(collectSound(arena.collected));
+          } else {
+            this.audio.play(SOUNDS.salvageGrind);
+          }
         }
         drop.display.destroy();
         arena.drops.splice(index, 1);
       }
     }
     if (!arena.bricks.some((brick) => brick.alive && !brick.persistent)) this.finishArena("clear");
+  }
+
+  /** Fit the salvage drone to the claim just framed, or hide it if none is fitted. */
+  private armSalvage(arena: Arena): void {
+    this.salvage.configure(this.salvageTax);
+    this.salvage.reset(arena.paddle.u);
+    if (this.hasSalvageDrone) arena.actors.addChild(this.salvage.container);
   }
 
   private updateDisplays(dt: number): void {
@@ -1116,6 +1291,14 @@ export class OrekenoidGame {
         drop.display.position.set(position.x * CELL, position.y * CELL);
         drop.display.rotation = drop.spin;
       }
+      // The bucket rides in the claim's own frame, so it stays under the paddle at any claim
+      // angle rather than under a screen-space idea of "below".
+      if (this.hasSalvageDrone) {
+        const seat = this.salvage.position;
+        const at = this.world.localToWorld(seat.u, seat.v, arena);
+        this.salvage.container.position.set(at.x * CELL, at.y * CELL);
+        this.salvage.container.rotation = arena.angle;
+      }
     }
 
     this.tickHudTimers(dt);
@@ -1139,6 +1322,11 @@ export class OrekenoidGame {
       this.lastRegionName = reading.regionName;
       if (this.started && !this.arena) this.showArrival(reading);
       this.updateUI();
+    }
+    this.advanceTutorial(step);
+    if (this.tutorialNudge > 0) {
+      this.tutorialNudge = Math.max(0, this.tutorialNudge - step);
+      this.hud.setTutorialNudge(this.tutorialNudge > 0);
     }
     if (this.tutorialFadeTimer > 0) {
       this.tutorialFadeTimer = Math.max(0, this.tutorialFadeTimer - step);
@@ -1223,16 +1411,59 @@ export class OrekenoidGame {
   }
 
   /** Check off a control the player has just used. */
-  private markTutorial(id: string): void {
+  private markTutorial(id: TutorialStep["id"]): void {
     if (this.tutorialComplete) return;
     const step = this.tutorial.find((entry) => entry.id === id);
-    if (!step || step.done) return;
+    // Only the step being asked for can be completed. Without this an early press of a key that
+    // happens to be bound elsewhere would tick a rung the player has not been shown yet, and the
+    // sequence would skip ahead of its own teaching.
+    if (!step || step.done || this.currentStep?.id !== id) return;
     step.done = true;
+    this.tutorialShownFor = 0;
     this.renderTutorial();
     this.audio.play(SOUNDS.tutorialStep);
     if (this.tutorial.every((entry) => entry.done)) {
       this.tutorialFadeTimer = 1.4;
       this.hud.markTutorialComplete();
+    }
+  }
+
+  /**
+   * Advance the sequence's own clock.
+   *
+   * Two jobs. An optional step is shown for a few seconds and then ticked off by itself, because
+   * the speed controls are worth knowing and not worth blocking on. And a step whose mode the
+   * player is not in gets no credit for waiting -- the timer only runs while the step is
+   * actually performable, so "hold to speed up" is not quietly dismissed out in the mine.
+   */
+  private advanceTutorial(dt: number): void {
+    const step = this.currentStep;
+    if (!step) return;
+    const performable = step.where === (this.arena ? "play" : "survey");
+    if (!performable) {
+      // An optional step whose moment has passed is dismissed rather than left to block the
+      // sequence: the speed controls are only demonstrable inside a claim, and a player whose
+      // first claim ended quickly should not be stuck being offered them out in the mine.
+      if (step.optional && this.tutorialShownFor > 0) {
+        step.done = true;
+        this.tutorialShownFor = 0;
+        this.renderTutorial();
+        if (this.tutorial.every((entry) => entry.done)) {
+          this.tutorialFadeTimer = 1.4;
+          this.hud.markTutorialComplete();
+        }
+      }
+      return;
+    }
+    this.tutorialShownFor += dt;
+    if (step.optional && this.tutorialShownFor > 4.5) {
+      step.done = true;
+      this.tutorialShownFor = 0;
+      this.renderTutorial();
+      if (this.tutorial.every((entry) => entry.done)) {
+        this.tutorialFadeTimer = 1.4;
+        this.hud.markTutorialComplete();
+      }
     }
   }
 
@@ -1406,8 +1637,13 @@ export class OrekenoidGame {
     this.cameraFocus = { x: this.player.x, y: this.player.y };
     this.elapsed = data.elapsed;
     this.deaths = data.progress.deaths;
-    this.tutorialComplete = data.progress.tutorialComplete;
-    for (const step of this.tutorial) step.done = data.progress.tutorialDone.includes(step.id);
+    // A save means this player has already been taught. Restoring a half-finished sequence left
+    // the prompt asking for a control the player had used a hundred times, against a gate that
+    // refused everything the old save had not happened to record -- so loading is always
+    // "tutorial over", and every control is unlocked.
+    this.tutorialComplete = true;
+    for (const step of this.tutorial) step.done = true;
+    this.hud.removeTutorial();
     this.regionsSeen.clear();
     for (const region of data.progress.regionsSeen) this.regionsSeen.add(region);
     this.hasCommitted = data.progress.hasCommitted;

@@ -41,7 +41,7 @@ export function createDrone(paddleWidth: number, grades: StationGrades = {}): Co
   const frame = grades.frame ?? 0;
   const emitterGrade = grades.emitter ?? 0;
   const mastGrade = grades.mast ?? 0;
-  const collector = grades.collector ?? 0;
+  const salvage = grades.salvage ?? 0;
   const rack = grades.rack ?? 0;
 
   // The survey beam: very faint, very wide, and blurred. It says "this machine is
@@ -102,16 +102,28 @@ export function createDrone(paddleWidth: number, grades: StationGrades = {}): Co
     .moveTo(width * 0.36, 10).lineTo(width * 0.28, 17).lineTo(width * 0.18, 10)
     .stroke({ width: 3, color: PALETTE.machine, alpha: 0.8 });
 
-  // COLLECTOR: a ring under the hull that widens as it pulls further.
-  const collectorRing = new Graphics();
-  if (collector > 0) {
-    const radius = width * (0.34 + collector * 0.12);
-    collectorRing.ellipse(0, 6, radius, 5 + collector * 1.5)
-      .stroke({ width: 1.5 + collector * 0.5, color: RESOURCES.emerald.colour, alpha: 0.5 + collector * 0.1 });
-    for (let coil = 0; coil < collector; coil++) {
-      const at = radius * (0.55 + coil * 0.2);
-      collectorRing.circle(-at, 6, 2).fill(RESOURCES.emerald.colour)
-        .circle(at, 6, 2).fill(RESOURCES.emerald.colour);
+  // SALVAGE: the bucket drone, docked under the hull when the machine is not in a claim.
+  //
+  // Docked rather than merely indicated, because it is a separate little machine that the player
+  // will see flying on its own during a claim -- so it has to be recognisably the same object
+  // parked here. It replaced a collector ring, which drew a radius that no longer exists.
+  const salvageBay = new Graphics();
+  if (salvage > 0) {
+    const bucketWidth = 13 + salvage * 2;
+    salvageBay
+      // Cradle arms holding it against the hull.
+      .moveTo(-bucketWidth / 2, 7).lineTo(-bucketWidth / 2, 11)
+      .moveTo(bucketWidth / 2, 7).lineTo(bucketWidth / 2, 11)
+      .stroke({ width: 1.4, color: PALETTE.machine, alpha: 0.7 })
+      .roundRect(-bucketWidth / 2, 10, bucketWidth, 7, 2).fill(0x141a1b)
+      .stroke({ width: 1.4, color: PALETTE.rail, alpha: 0.85 })
+      // The hopper mouth, open upward.
+      .moveTo(-bucketWidth * 0.34, 10).lineTo(-bucketWidth * 0.24, 6)
+      .moveTo(bucketWidth * 0.34, 10).lineTo(bucketWidth * 0.24, 6)
+      .stroke({ width: 1.2, color: PALETTE.rail, alpha: 0.6 });
+    // One jaw pip per grade: a finer grinder keeps less of what it eats.
+    for (let jaw = 0; jaw < salvage; jaw++) {
+      salvageBay.circle(-4 + jaw * 4, 13.5, 1.3).fill({ color: RESOURCES.emerald.colour, alpha: 0.9 });
     }
   }
 
@@ -153,7 +165,7 @@ export function createDrone(paddleWidth: number, grades: StationGrades = {}): Co
     mast.addChild(halo);
   }
 
-  drone.addChild(beam, thrusterGlow, collectorRing, silhouette, spine, armor, emitter, hardware, chargeRack, mast);
+  drone.addChild(beam, thrusterGlow, silhouette, spine, armor, emitter, hardware, salvageBay, chargeRack, mast);
   return drone;
 }
 

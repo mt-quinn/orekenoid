@@ -27,9 +27,9 @@ export type VerbId = "surveyResonance" | "sequentialBall" | "railSeed";
  * Ordered as the player reads the drone: hull outward, then the working face, then the mast
  * above, then the gear hanging off it. The forge shows them in this order.
  */
-export type StationId = "plating" | "frame" | "emitter" | "mast" | "collector" | "rack";
+export type StationId = "plating" | "frame" | "emitter" | "mast" | "salvage" | "rack";
 
-export const STATION_IDS: readonly StationId[] = ["plating", "frame", "emitter", "mast", "collector", "rack"];
+export const STATION_IDS: readonly StationId[] = ["plating", "frame", "emitter", "mast", "salvage", "rack"];
 
 /**
  * What the machine is capable of. Every field is derived by summing the current grade of each
@@ -42,8 +42,15 @@ export interface ChassisStats {
   paddleWidth: number;
   travelSpeedPercent: number;
   rotationPercent: number;
-  /** Extra collection radius, in cells, on top of the drone's innate pull. */
-  vacuum: number;
+  /**
+   * Share of a rescued drop the salvage drone keeps for itself, 0..1. Zero means no drone.
+   *
+   * This replaced a collection *radius*, which was the same mechanic twice: a pull that dragged
+   * drops toward the paddle and a drone that catches what the paddle misses both answer "I was
+   * not in the right place". The drop-nudging is gone entirely, innate pull included, so drops
+   * now fall straight and the paddle catches by being where they land.
+   */
+  salvageTax: number;
   /** How many rebounds the trajectory line predicts. Zero means the current leg only. */
   predictBounces: number;
   /** Blast charges carried per expedition. Refilled at the bay, never bought by the unit. */
@@ -51,6 +58,18 @@ export interface ChassisStats {
   /** Extra grades of survey precision. Only reachable once Survey Resonance is earned. */
   resonanceGrades: number;
 }
+
+/**
+ * Stats where a smaller number is the better machine.
+ *
+ * The salvage tax is the first: 50% kept by the grinder is worse than 15%. Declared here rather
+ * than special-cased wherever it comes up, because "which direction is better" is a property of
+ * the stat and not of any one screen -- the grade-ladder check reads it, and so should anything
+ * that ever renders an arrow between two values.
+ *
+ * Zero is a special case in the other direction: it means the part is absent, not perfect.
+ */
+export const LOWER_IS_BETTER: ReadonlySet<keyof ChassisStats> = new Set(["salvageTax"]);
 
 /** Kept as an alias because the rest of the game asks the machine what it can do, not how. */
 export type ChassisUpgrades = ChassisStats;
@@ -62,7 +81,7 @@ export const emptyStats = (): ChassisStats => ({
   paddleWidth: 0,
   travelSpeedPercent: 0,
   rotationPercent: 0,
-  vacuum: 0,
+  salvageTax: 0,
   predictBounces: 0,
   blastCapacity: 0,
   resonanceGrades: 0,
@@ -81,7 +100,11 @@ export interface StationGrade {
   confers: Partial<ChassisStats>;
   /** A verb that must already be earned. Material cannot substitute for it. */
   requiresVerb?: VerbId;
-  /** One line, in the player's language, about what changes. */
+  /**
+   * What this grade does, literally, as a transition. "ARMOR 20 -> 36", never "Layered cobalt.
+   * Deep claims survivable." Absolute rather than a delta because a grade *is* a state, and
+   * because seeing where the number lands is what the decision needs.
+   */
   detail: string;
 }
 
@@ -89,10 +112,14 @@ export interface Station {
   id: StationId;
   /** Shown as the station's heading in the bay. */
   name: string;
-  /** Where to look on the machine. The forge points at this. */
+  /**
+   * Where to look on the machine, and what the leader line in the bay points at.
+   *
+   * A location rather than a description. There used to be a `purpose` line here too -- "Soaks
+   * the load a claim leaves standing" -- and it is gone: a player at the bay is asking what an
+   * upgrade does and what it costs, and every other word on the card is in the way of that.
+   */
   mount: string;
-  /** What this part of the machine is for, in one line. */
-  purpose: string;
   grades: readonly StationGrade[];
 }
 
@@ -109,37 +136,36 @@ export const STATIONS: readonly Station[] = [
     id: "plating",
     name: "HULL PLATING",
     mount: "flanks",
-    purpose: "Soaks the load a claim leaves standing.",
     grades: [
       {
         name: "Copper Plate",
         cost: { copper: 18, coal: 6 },
         confers: { armor: 8 },
-        detail: "Thin ceramic over copper. Enough for Band I.",
+        detail: "ARMOR 0 \u2192 8",
       },
       {
         name: "Iron Plate",
         cost: { iron: 24, coal: 10 },
         confers: { armor: 20 },
-        detail: "Doubled plate. Band II load stops biting.",
+        detail: "ARMOR 8 \u2192 20",
       },
       {
         name: "Cobalt Plate",
         cost: { cobalt: 26, coal: 14 },
         confers: { armor: 36 },
-        detail: "Layered cobalt. Deep claims survivable.",
+        detail: "ARMOR 20 \u2192 36",
       },
       {
         name: "Mithril Plate",
         cost: { mithril: 28, coal: 18 },
         confers: { armor: 56 },
-        detail: "Full flank coverage.",
+        detail: "ARMOR 36 \u2192 56",
       },
       {
         name: "Runite Plate",
         cost: { runite: 24, coal: 22 },
         confers: { armor: 80 },
-        detail: "Nothing in the mine loads through this.",
+        detail: "ARMOR 56 \u2192 80",
       },
     ],
   },
@@ -149,25 +175,24 @@ export const STATIONS: readonly Station[] = [
     mount: "spine and thrusters",
     // Drive Tune folded in here rather than standing as a station of its own: one recipe is
     // not a ladder, and a stronger spine carrying bigger thrusters is one idea, not two.
-    purpose: "How much the hull takes before it fails, and how fast it travels.",
     grades: [
       {
         name: "Reinforced Spine",
         cost: { iron: 14, coal: 6 },
         confers: { maxIntegrity: 6, travelSpeedPercent: 6 },
-        detail: "+6 max health, +6% travel",
+        detail: "MAX HEALTH 0 \u2192 +6   TRAVEL +6%",
       },
       {
         name: "Braced Spine",
         cost: { cobalt: 18, coal: 10 },
         confers: { maxIntegrity: 14, travelSpeedPercent: 15 },
-        detail: "+14 max health, +15% travel",
+        detail: "MAX HEALTH +6 \u2192 +14   TRAVEL +15%",
       },
       {
         name: "Truss Spine",
         cost: { mithril: 20, coal: 14 },
         confers: { maxIntegrity: 24, travelSpeedPercent: 25 },
-        detail: "+24 max health, +25% travel",
+        detail: "MAX HEALTH +14 \u2192 +24   TRAVEL +25%",
       },
     ],
   },
@@ -175,25 +200,24 @@ export const STATIONS: readonly Station[] = [
     id: "emitter",
     name: "EMITTER",
     mount: "working face",
-    purpose: "The face that strikes the ball. Wider and faster.",
     grades: [
       {
         name: "Emitter Coil",
         cost: { cobalt: 10, sapphire: 4, coal: 4 },
         confers: { paddleSpeedPercent: 12 },
-        detail: "+12% paddle speed",
+        detail: "PADDLE SPEED +12%",
       },
       {
         name: "Broad Emitter",
         cost: { cobalt: 14, coal: 6 },
         confers: { paddleSpeedPercent: 14, paddleWidth: 0.25 },
-        detail: "+14% speed, a wider face",
+        detail: "PADDLE SPEED +14%   WIDTH +0.25",
       },
       {
         name: "Ruby Emitter",
         cost: { cobalt: 16, ruby: 6, coal: 8 },
         confers: { paddleSpeedPercent: 22, paddleWidth: 0.45 },
-        detail: "+22% speed, widest face",
+        detail: "PADDLE SPEED +22%   WIDTH +0.45",
       },
     ],
   },
@@ -201,25 +225,24 @@ export const STATIONS: readonly Station[] = [
     id: "mast",
     name: "SURVEY MAST",
     mount: "above the hull",
-    purpose: "How well the machine reads a claim before committing to it.",
     grades: [
       {
         name: "Gimbal",
         cost: { cobalt: 8, emerald: 4, coal: 3 },
         confers: { rotationPercent: 25 },
-        detail: "+25% survey rotation",
+        detail: "SURVEY ROTATION +25%",
       },
       {
         name: "Trajectory Optics",
         cost: { cobalt: 10, emerald: 5, coal: 5 },
         confers: { rotationPercent: 25, predictBounces: 1 },
-        detail: "the line predicts one rebound",
+        detail: "ROTATION +25%   PREDICTS 1 BOUNCE",
       },
       {
         name: "Deep Optics",
         cost: { cobalt: 14, ruby: 7, coal: 9 },
         confers: { rotationPercent: 30, predictBounces: 3 },
-        detail: "the line predicts three rebounds",
+        detail: "ROTATION +30%   PREDICTS 3 BOUNCES",
       },
       {
         // The one grade material cannot reach. Fitting a lens to a machine that cannot
@@ -228,33 +251,34 @@ export const STATIONS: readonly Station[] = [
         cost: { cobalt: 12, diamond: 5, coal: 6 },
         confers: { rotationPercent: 30, predictBounces: 3, resonanceGrades: 1 },
         requiresVerb: "surveyResonance",
-        detail: "one extra grade of survey precision",
+        detail: "ROTATION +30%   SURVEY GRADE +1",
       },
     ],
   },
   {
-    id: "collector",
-    name: "COLLECTOR RING",
-    mount: "underside",
-    purpose: "How far the machine pulls loose ore toward itself.",
+    id: "salvage",
+    name: "SALVAGE DRONE",
+    mount: "below the paddle",
     grades: [
       {
-        name: "Collector Coil",
+        name: "Scavenger",
         cost: { copper: 12, coal: 5 },
-        confers: { vacuum: 1.2 },
-        detail: "a wider pull",
+        // The tax is the whole point: a drone that caught everything for free would delete the
+        // reason to catch anything yourself. Half is steep enough that the paddle still matters.
+        confers: { salvageTax: 0.5 },
+        detail: "CATCHES MISSED ORE   KEEPS 50%",
       },
       {
-        name: "Twin Coil",
+        name: "Sorter",
         cost: { copper: 20, emerald: 3, coal: 8 },
-        confers: { vacuum: 2.4 },
-        detail: "much wider pull",
+        confers: { salvageTax: 0.3 },
+        detail: "KEEPS 50% \u2192 30%",
       },
       {
-        name: "Field Collector",
+        name: "Refiner",
         cost: { cobalt: 12, emerald: 5, coal: 10 },
-        confers: { vacuum: 4 },
-        detail: "sweeps the whole claim",
+        confers: { salvageTax: 0.15 },
+        detail: "KEEPS 30% \u2192 15%",
       },
     ],
   },
@@ -265,25 +289,24 @@ export const STATIONS: readonly Station[] = [
     // Capacity rather than ammunition on purpose. Buying charges by the unit made the bay a
     // shop you restocked at, which is the kind of bookkeeping this game does not want. The
     // rack is a part of the machine; it refills itself when you come home.
-    purpose: "Charges carried, to detonate what a claim left standing. Refills at the bay.",
     grades: [
       {
         name: "Charge Rack",
         cost: { saltpeter: 6, sulfur: 6, coal: 4 },
         confers: { blastCapacity: 2 },
-        detail: "carry 2 charges",
+        detail: "CHARGES 0 \u2192 2",
       },
       {
         name: "Twin Rack",
         cost: { saltpeter: 10, sulfur: 10, coal: 7 },
         confers: { blastCapacity: 4 },
-        detail: "carry 4 charges",
+        detail: "CHARGES 2 \u2192 4",
       },
       {
         name: "Bandolier",
         cost: { saltpeter: 14, sulfur: 14, coal: 11 },
         confers: { blastCapacity: 6 },
-        detail: "carry 6 charges",
+        detail: "CHARGES 4 \u2192 6",
       },
     ],
   },

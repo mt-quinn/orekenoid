@@ -39,7 +39,7 @@ async function boot(page: import("@playwright/test").Page): Promise<void> {
 
 const pose = (page: import("@playwright/test").Page, at: number) =>
   page.evaluate(([station, seconds]) =>
-    (window as unknown as Win).__OREKENOID__.poseFit(station, seconds), ["collector", at] as const);
+    (window as unknown as Win).__OREKENOID__.poseFit(station, seconds), ["salvage", at] as const);
 
 test("the arm carries the part in, seats it, and lets go", async ({ page }) => {
   test.setTimeout(200_000);
@@ -95,12 +95,12 @@ test("the arm carries the part in, seats it, and lets go", async ({ page }) => {
   const after = await page.evaluate(() => {
     const api = (window as unknown as Win).__OREKENOID__;
     return {
-      level: api.bayModel().stations.find((station: any) => station.id === "collector").level,
-      vacuum: api.game.vacuumRadius,
+      level: api.bayModel().stations.find((station: any) => station.id === "salvage").level,
+      tax: api.game.salvageTax,
     };
   });
   expect(after.level).toBe(1);
-  expect(after.vacuum).toBeGreaterThan(1.15);
+  expect(after.tax).toBeGreaterThan(0);
 
   expect(errors).toEqual([]);
 });
@@ -116,7 +116,7 @@ test("a fit can be skipped, and lands rather than being cancelled", async ({ pag
     api.game.gantry.skipFit();
     return {
       fitting: api.game.gantry.fitting,
-      level: api.bayModel().stations.find((station: any) => station.id === "collector").level,
+      level: api.bayModel().stations.find((station: any) => station.id === "salvage").level,
     };
   });
   // Skipping must not cost the player the upgrade they paid for.

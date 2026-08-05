@@ -242,11 +242,28 @@ export class Hud {
 
   // --- Tutorial -----------------------------------------------------------
 
-  renderTutorial(steps: readonly TutorialStep[]): void {
+  /**
+   * The opening sequence, one rung at a time.
+   *
+   * `history` is drawn as spent pips rather than as rows: how far along the player is, without
+   * six labels competing for the one instruction that currently matters.
+   */
+  renderTutorial(step: TutorialStep | null, history: readonly TutorialStep[]): void {
     if (!this.tutorialList) return;
-    this.tutorialList.innerHTML = steps
-      .map((step) => `<li class="${step.done ? "done" : ""}"><b>${step.keys}</b><span>${step.label}</span><i></i></li>`)
-      .join("");
+    if (!step) {
+      this.tutorialList.innerHTML = "";
+      return;
+    }
+    const pips = history
+      .map((entry) => `<i class="ftue-pip${entry.done ? " on" : ""}"></i>`).join("");
+    this.tutorialList.innerHTML = `<li class="ftue-now">
+      <b>${step.keys}</b><span>${step.label}</span>
+    </li><li class="ftue-track">${pips}</li>`;
+  }
+
+  /** Flash the prompt when a key the sequence has not offered yet is pressed. */
+  setTutorialNudge(on: boolean): void {
+    this.tutorialPanel?.classList.toggle("nudge", on);
   }
 
   /** Begin the fade. The panel is removed by `removeTutorial` once it finishes. */

@@ -82,6 +82,21 @@ test("an expedition survives a reload, and the Atlas records only what was surve
   await page.click("#continueButton");
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 
+  // A save means this player has already been taught. The opening sequence must not run again,
+  // and above all its input gate must not run again -- a restored half-finished checklist used to
+  // leave the prompt asking for a control the player had used a hundred times, while refusing
+  // everything the old save had not happened to record.
+  await expect(page.locator("#tutorial")).toHaveCount(0);
+  const ftue = await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    return {
+      complete: game.tutorialComplete,
+      pending: game.tutorial.filter((step: any) => !step.done).map((step: any) => step.id),
+    };
+  });
+  expect(ftue.complete).toBe(true);
+  expect(ftue.pending).toEqual([]);
+
   const restored = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     return {
