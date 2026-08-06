@@ -127,8 +127,9 @@ test("a claim is committed, paddled, aimed and served by touch alone", async ({ 
 
   const paddled = await state(page);
   expect(paddled.paddleU, "the paddle did not follow the finger").not.toBeCloseTo(framed.paddleU ?? 0, 1);
-  // Pre-serve, the same drag carries the launch angle on its other axis.
-  expect(paddled.serveAim).not.toBeCloseTo(framed.serveAim ?? 0, 2);
+  // The drag positions the paddle and nothing else. Aim is a separate tap, so holding the paddle
+  // over to one side must not steer the serve on its own.
+  expect(paddled.serveAim).toBeCloseTo(framed.serveAim ?? 0, 2);
 
   await page.screenshot({ path: "phone-touch-claim.png" });
 
@@ -140,9 +141,22 @@ test("a claim is committed, paddled, aimed and served by touch alone", async ({ 
   }, low);
   await page.waitForTimeout(150);
 
-  // A tap -- down and up with no travel -- serves.
-  await page.touchscreen.tap(centre.x, centre.y);
+  // Aim by tapping where the ball should go. The paddle is parked over on the right from the drag
+  // above, and tapping up and to the left must still produce a hard left serve -- that parity with
+  // Q and E is the whole point of aiming being its own control. An earlier version derived the
+  // angle from the paddle's own position, which made this shot impossible on a phone.
+  const paddleSide = await state(page);
+  expect(paddleSide.paddleU!, "the paddle should be right of centre for this check").toBeGreaterThan(0);
+
+  await page.touchscreen.tap(box!.x + box!.width * 0.12, box!.y + box!.height * 0.3);
+  await page.waitForTimeout(300);
+  const aimed = await state(page);
+  expect(aimed.serveAim!, "tapping up-left did not aim left").toBeLessThan(-0.2);
+  expect(aimed.served, "aiming must not launch the ball").toBe(false);
+
+  // Launching is the SERVE button, so a tap only ever means one thing.
+  await page.locator("#touchPrimary").tap();
   await page.waitForTimeout(400);
   const served = await state(page);
-  expect(served.served, "a tap did not serve the ball").toBe(true);
+  expect(served.served, "SERVE did not launch the ball").toBe(true);
 });

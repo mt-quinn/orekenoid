@@ -221,8 +221,8 @@ export class OrekenoidGame {
     // steers the ball off the paddle and is fixed once the ball is live. Teaching it afterwards
     // made it unreachable in that claim, which is the kind of thing a sequential tutorial makes
     // obvious and a checklist hides.
-    { id: "arenaAim", keys: "Q / E", gesture: "DRAG WIDE TO ANGLE IT", label: "AIM THE SERVE", why: "The only steering you get.", where: "play", done: false },
-    { id: "serve", keys: "SPACE", gesture: "TAP", demo: "tap", label: "SERVE", where: "play", done: false },
+    { id: "arenaAim", keys: "Q / E", gesture: "TAP WHERE IT SHOULD GO", label: "AIM THE SERVE", why: "The only steering you get.", where: "play", done: false },
+    { id: "serve", keys: "SPACE", gesture: "PRESS SERVE", label: "SERVE", where: "play", done: false },
     // Shown, not demanded.
     { id: "speed", keys: "W / S", gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "For the long tail of a claim.", where: "play", optional: true, done: false },
   ];
@@ -1630,19 +1630,37 @@ export class OrekenoidGame {
   /**
    * A tap on the world means the obvious thing for the mode.
    *
-   * In a claim it serves; out in the mine it commits. Both are the one action a player reaches for
-   * without thinking, and both are already reachable from a labelled button -- this is the
-   * shortcut, not the only route, which is why it is safe for a stray tap to trigger either.
+   * Out in the mine it commits. Inside a claim, before the serve, it *aims*: the ball leaves the
+   * paddle toward wherever the player tapped.
+   *
+   * Aiming is a tap rather than part of the paddle drag because the two are separate decisions, and
+   * because a tap gives touch the same freedom the keyboard has -- the angle is the direction from
+   * the paddle to the tapped point, so a paddle parked hard right can still serve hard left. Every
+   * version of this that read the drag instead ended up tying the angle to where the paddle
+   * happened to be, which is strictly less control than Q and E give, and that is not a trade worth
+   * making on one platform.
+   *
+   * Launching stays on the SERVE button, so a tap always means exactly one thing.
    */
   private answerTaps(): void {
     const taps = this.touch.drainTaps();
     if (!taps.length || !this.started || this.paused || this.cameraTransition) return;
     if (this.craftingOpen || this.atlasOpen) return;
-    for (const _tap of taps) {
-      if (this.arena) {
-        if (this.arena.balls.some((ball) => ball.served)) continue;
-        if (!this.can("serve")) { this.refuseControl(); continue; }
-        this.serve();
+    for (const tap of taps) {
+      const arena = this.arena;
+      if (arena) {
+        if (arena.balls.some((ball) => ball.served)) continue;
+        if (!this.can("arenaAim")) { this.refuseControl(); continue; }
+        const world = this.camera.screenToWorld(tap.x, tap.y);
+        const local = this.world.worldToLocal(world.x / CELL, world.y / CELL, arena);
+        // The direction from the paddle to the tap, as a horizontal fraction of the depth to it.
+        // Floored so a tap right on the paddle's own row cannot divide by nothing and fling the aim
+        // to the clamp.
+        const across = local.x - arena.paddle.u;
+        const ahead = Math.max(1.5, local.y);
+        arena.serveAim = clamp(across / ahead, -0.72, 0.72);
+        this.markTutorial("arenaAim");
+        this.audio.play(SOUNDS.tutorialStep);
       } else {
         if (!this.can("commit")) { this.refuseControl(); continue; }
         this.establishArena();
@@ -1803,21 +1821,10 @@ export class OrekenoidGame {
       const aim = canAim ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0) : 0;
       if (aim) this.markTutorial("arenaAim");
       arena.serveAim = clamp(arena.serveAim + aim * 1.45 * dt, -0.72, 0.72);
-      // Before the serve the same one-thumb drag carries a second axis: horizontal still positions
-      // the paddle, and how far the finger sits from the paddle's own row sets the launch angle.
-      // This is the reason the paddle scheme is absolute rather than relative -- an absolute
-      // mapping leaves the vertical axis free to mean something else.
-      if (canAim && touched) {
-        const local = this.world.worldToLocal(touched.x / CELL, touched.y / CELL, arena);
-        // Reading upward from the paddle: a finger held high aims steeply, low aims flat. Scaled
-        // against the board's own depth so the gesture means the same thing on every claim size.
-        const reach = Math.max(1, arena.depth * 0.45);
-        const steer = clamp((local.x - arena.paddle.u) / reach, -1, 1);
-        const wanted = clamp(steer * 0.72, -0.72, 0.72);
-        // Eased rather than assigned, so the ball does not snap around as the thumb settles.
-        arena.serveAim += (wanted - arena.serveAim) * Math.min(1, dt * 9);
-        if (Math.abs(wanted - arena.serveAim) > 0.02) this.markTutorial("arenaAim");
-      }
+      // Touch aims by tapping where the ball should go -- see `answerTaps`. Aim is deliberately not
+      // derived from the paddle drag: positioning, aiming and serving are three decisions taken in
+      // sequence, not three axes of one gesture, and every attempt to fold aim into the drag gave
+      // the phone less control than the keyboard has.
       for (const ball of arena.balls) ball.u = arena.paddle.u;
       return;
     }

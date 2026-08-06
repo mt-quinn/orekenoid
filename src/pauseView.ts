@@ -90,8 +90,8 @@ const TOUCH_CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string
     group: "IN A CLAIM",
     rows: [
       ["DRAG", "Slide the paddle. It rides above your thumb"],
-      ["DRAG WIDE", "Before serving, angles the launch"],
-      ["TAP  ·  SERVE", "Launch the ball"],
+      ["TAP THE BOARD", "Before serving, aims where the ball goes"],
+      ["SERVE", "Launch it"],
       ["HOLD FAST", "Runs at ×2, then ×4, then ×8"],
     ],
   },

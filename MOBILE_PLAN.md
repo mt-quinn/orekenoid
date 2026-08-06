@@ -70,6 +70,9 @@ anticipate, and what the work turned up:
   is time-based now.
 - **`[hidden]` loses to `display: grid`.** The FAST pad stayed on screen out in the mine, where it
   does nothing, because the UA `display: none` was out-specified.
+- **The pre-serve aim was derived from an axis that carries no signal**, and the assertion covering
+  it checked that the aim *changed* rather than that it went the right way -- so it passed on easing
+  noise while the feature did nothing. Aiming is its own tap now. See phase C.
 - **The deployment screen was a hard blocker** nobody had looked at: two of three chassis off the
   right edge, DEPLOY unreachable. It gated every phone test that starts a game.
 
@@ -113,9 +116,19 @@ source; the keyboard becomes one implementation of that source rather than the o
 | speed up | hold W / S | hold the FAST pad; ramps ×2 → ×4 → ×8 |
 | atlas / forge / pause | M / C / ESC | control cluster, 44px targets |
 
-The pre-serve gesture carries two axes on one thumb: horizontal positions the paddle, vertical sets
-the serve angle. A tap — down and up with no travel — serves. This is why the paddle scheme is
-direct rather than relative: an absolute mapping leaves the vertical axis free.
+Positioning, aiming and serving are three sequential decisions, so they are three separate
+controls: the drag moves the paddle, a tap on the board aims the serve at the tapped point, and the
+SERVE button launches.
+
+The plan originally called for two axes on one thumb, with the vertical component carrying the
+angle. That does not work — the paddle chases the finger so the horizontal gap closes, and the
+paddle lift fixes the vertical gap at a constant — and it was built anyway.
+
+Worse was the first attempt to repair it, which read the angle from which side of the board the
+thumb was on. That gave a phone player strictly less control than Q and E give: with the paddle
+parked right, a hard left serve became impossible. **Any fix that leaves one platform with less
+control than another is not a fix.** The aim is now the direction from the paddle to the tapped
+point, which gives touch the full range the keyboard has, and the spec asserts exactly that shot.
 
 ### D. Mobile HUD and menus
 
