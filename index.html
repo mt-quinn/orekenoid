@@ -143,6 +143,9 @@
             <div class="atlas-tools">
               <div class="atlas-icons" id="atlasIcons" role="radiogroup" aria-label="Marker"></div>
               <span class="atlas-hint" id="atlasHint">Click the map to mark it. M closes.</span>
+              <!-- A real button, because the Atlas sits above the touch controls and there is no M
+                   key on a phone -- opening it was a one-way door. Useful on a desktop too. -->
+              <button id="atlasClose" type="button" aria-label="Close the Atlas">✕</button>
             </div>
           </header>
           <div class="atlas-stage" id="atlasStage">

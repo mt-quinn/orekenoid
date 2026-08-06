@@ -139,8 +139,11 @@ export class TouchControls {
     const pulse = 0.55 + Math.sin(this.phase * 1.6) * 0.2;
     this.hint.alpha = this.hintAlpha * pulse;
     const y = view.height - 132 - view.safe.bottom;
-    const left = view.width * 0.25;
-    const right = view.width * 0.75;
+    // Inset horizontally as well: on a phone held sideways the island eats a side, and on a rounded
+    // display the corners are not usable even in portrait.
+    const usable = view.width - view.safe.left - view.safe.right;
+    const left = view.safe.left + usable * 0.25;
+    const right = view.safe.left + usable * 0.75;
 
     // Left: a ring, which is what a thumb landing there will produce.
     this.hint

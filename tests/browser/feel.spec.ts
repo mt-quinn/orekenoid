@@ -139,3 +139,48 @@ test("the cargo readout answers a catch, and the health bar answers being nearly
   });
   await expect(page.locator("#integrityStat")).toHaveAttribute("data-state", "critical");
 });
+
+test("a cleared board waits for ore still in the air", async ({ page }) => {
+  await deploy(page);
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.establishArena());
+  await page.waitForFunction(
+    () => (window as unknown as Win).__OREKENOID__.game.camera.transition === null,
+    null, { timeout: 25_000 },
+  );
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.serve());
+  await page.waitForTimeout(200);
+
+  // Clear the board but leave one piece of ore high above the paddle. Resolving here would take the
+  // player's payout away mid-fall, which reads as the game snatching back what it just gave.
+  const staged = await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    const arena = game.arena;
+    const ore = arena.bricks.find((brick: any) => brick.alive && brick.resource);
+    if (!ore) return { ok: false, drops: 0 };
+    arena.paddle.u = ore.u;
+    for (let blow = 0; blow < 8 && ore.alive; blow++) game.hitBrick(ore, arena.balls[0]);
+    // Everything else gone, and the drop parked high with no downward speed yet.
+    for (const brick of arena.bricks) {
+      if (brick.alive && !brick.persistent) { brick.alive = false; brick.display?.destroy({ children: true }); }
+    }
+    for (const drop of arena.drops) { drop.u = arena.paddle.u; drop.v = 7; drop.vv = 0; }
+    return { ok: true, drops: arena.drops.length };
+  });
+  expect(staged.ok, "no resource brick to stage the fall with").toBe(true);
+  expect(staged.drops).toBeGreaterThan(0);
+
+  // Still in the claim a beat later, with the ore still falling.
+  await page.waitForTimeout(500);
+  const midFall = await page.evaluate(() => {
+    const api = (window as unknown as Win).__OREKENOID__;
+    return { mode: api.state.mode, drops: api.game.arena?.drops.length ?? 0 };
+  });
+  expect(midFall.mode, "the claim resolved while ore was still in the air").toBe("play");
+  expect(midFall.drops).toBeGreaterThan(0);
+
+  // And once it lands, the claim finishes on its own.
+  await page.waitForFunction(
+    () => (window as unknown as Win).__OREKENOID__.state.mode === "survey",
+    null, { timeout: 25_000 },
+  );
+});

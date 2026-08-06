@@ -755,6 +755,11 @@ export class OrekenoidGame {
       this.gestureDemo = null;
     }
     const demo = this.gestureDemo?.kind === step.demo ? step.demo : undefined;
+    // Flipped below the subject when the plate would otherwise land in the notch. The tag hangs
+    // about 100px above its anchor, so anything closer to the top than that -- plus whatever the
+    // island has taken -- has no room up there.
+    const onScreen = this.camera.worldToScreen(anchor.x, anchor.y);
+    this.coach.setFlipped(onScreen.y - 100 < view.safe.top + 8);
     this.coach.show({
       goal: step.label,
       why: step.why,
@@ -2098,7 +2103,14 @@ export class OrekenoidGame {
         arena.drops.splice(index, 1);
       }
     }
-    if (!arena.bricks.some((brick) => brick.alive && !brick.persistent)) this.finishArena("clear");
+    // Cleared, but not finished: ore already in the air still has to land. Resolving the moment the
+    // last brick broke stole the drops the player had just earned -- the board went away with their
+    // payout mid-fall, which reads as the game taking it back.
+    //
+    // Safe to wait on. A drop's velocity only ever accelerates downward, so every one of them reaches
+    // the paddle's row and is removed; there is no state in which this holds a claim open forever.
+    const cleared = !arena.bricks.some((brick) => brick.alive && !brick.persistent);
+    if (cleared && arena.drops.length === 0) this.finishArena("clear");
   }
 
   /**
@@ -2831,6 +2843,7 @@ export class OrekenoidGame {
       // drifting behind the map while the player reads it.
       this.keys.clear();
     }
+    this.atlasView.touch = this.touch.used;
     this.atlasView.setOpen(this.atlasOpen);
     this.updateUI();
   }
@@ -2843,6 +2856,17 @@ export class OrekenoidGame {
 
   onAnnotationsChanged(): void {
     this.requestSave();
+  }
+
+  /**
+   * The Atlas asked to be closed.
+   *
+   * Same path as M, including the sound and the state flag. The map sits above the touch controls, so
+   * on a phone the button that opened it was unreachable while it was open -- and the hint said "M
+   * closes" to a player with no keyboard, which made the Atlas a one-way door.
+   */
+  onCloseRequested(): void {
+    if (this.atlasOpen) this.toggleAtlas();
   }
 
   private bindInterfaceUI(): void {
@@ -2924,6 +2948,8 @@ export class OrekenoidGame {
     const game = this;
     (window as unknown as { __OREKENOID__: unknown }).__OREKENOID__ = {
       game,
+      /** The live stage, including the safe-area insets the drawn layer lays itself out against. */
+      view,
       world: this.world,
       economy: this.economy,
       terrain: this.terrain,

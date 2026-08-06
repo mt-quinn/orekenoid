@@ -137,9 +137,21 @@ export function syncLayout(shell: HTMLElement): Layout {
   return layout;
 }
 
+/**
+ * One safe-area inset, in pixels.
+ *
+ * Read from the `--safe-*` custom properties rather than from `env()` directly. Both work -- a
+ * custom property holding `env(safe-area-inset-top, 0px)` does resolve to a length, which was worth
+ * checking because it is the sort of thing that could plausibly have come back as an unsubstituted
+ * token and silently zeroed every inset the drawn layer relies on.
+ *
+ * Going through the custom property has the advantage that the CSS is the single source: the DOM
+ * HUD already lays itself out with `var(--safe-top)`, so the canvas cannot drift from it, and either
+ * can be overridden in one place -- which is also what makes this testable on hardware that has no
+ * insets of its own.
+ */
 const readInset = (styles: CSSStyleDeclaration, name: string): number => {
-  const raw = styles.getPropertyValue(name).trim();
-  const parsed = Number.parseFloat(raw);
+  const parsed = Number.parseFloat(styles.getPropertyValue(name).trim());
   return Number.isFinite(parsed) ? parsed : 0;
 };
 

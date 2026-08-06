@@ -22,6 +22,9 @@ import type { MapAnnotation } from "./persistence";
 import type { WorldModel } from "./world";
 
 const HINT_IDLE = "Click the map to mark it. M closes.";
+// The same offer without naming a key nobody is holding. Which one is shown is decided by whether the
+// player has actually touched the screen, not by the layout: a tablet with a keyboard should keep M.
+const HINT_IDLE_TOUCH = "Tap the map to mark it.";
 const HINT_EDITING = "Type a note, or pick a different icon.";
 const HINT_UNSURVEYED = "UNSURVEYED GROUND · GO AND LOOK";
 
@@ -37,6 +40,8 @@ export interface AtlasHost {
   atlasPlayer(): { x: number; y: number; heading: number };
   /** Called after any annotation change, so the expedition saves it. */
   onAnnotationsChanged(): void;
+  /** The player asked to close the map. Routed through the host so it takes the same path M does. */
+  onCloseRequested(): void;
 }
 
 export class AtlasView {
@@ -48,6 +53,14 @@ export class AtlasView {
   private readonly editor = document.querySelector<HTMLElement>("#atlasEditor");
   private readonly noteField = document.querySelector<HTMLInputElement>("#atlasNote");
   private readonly legend = document.querySelector<HTMLElement>("#atlasLegend");
+  private readonly closeButton = document.querySelector<HTMLElement>("#atlasClose");
+  /**
+   * Whether to phrase things for fingers.
+   *
+   * Set by the host rather than sniffed here, so the Atlas and the rest of the interface agree about
+   * which device the player is on -- and they agree because there is one source for that fact.
+   */
+  touch = false;
 
   private context: CanvasRenderingContext2D | null = null;
   private icon: AtlasIcon = ATLAS_ICONS[0];
@@ -55,7 +68,12 @@ export class AtlasView {
   /** Only ever increments, so an id is never reused after a delete. */
   private sequence = 0;
 
-  constructor(private readonly host: AtlasHost) {}
+  constructor(private readonly host: AtlasHost) {
+    // Routed through the host rather than flipping the panel here, so closing by button and closing
+    // by key run the identical path -- the game owns `atlasOpen`, and a view that hid itself behind
+    // the game's back would leave the two disagreeing.
+    this.closeButton?.addEventListener("click", () => this.host.onCloseRequested());
+  }
 
   get isEditing(): boolean {
     return this.editing !== null;
@@ -86,6 +104,7 @@ export class AtlasView {
 
   setOpen(open: boolean): void {
     this.panel?.classList.toggle("open", open);
+    this.panel?.classList.toggle("touch", this.touch);
     this.panel?.setAttribute("aria-hidden", String(!open));
     this.closeEditor();
     if (open) {
@@ -204,7 +223,7 @@ export class AtlasView {
   closeEditor(): void {
     this.editing = null;
     if (this.editor) this.editor.hidden = true;
-    if (this.hint) this.hint.textContent = HINT_IDLE;
+    if (this.hint) this.hint.textContent = this.touch ? HINT_IDLE_TOUCH : HINT_IDLE;
   }
 
   commitNote(): void {

@@ -67,6 +67,8 @@ export class Coach {
   private phase = 0;
   /** Rises when a locked control is pressed, so the refusal is answered where the player is looking. */
   private refuse = 0;
+  /** True when the tag hangs below its subject because there is no room above it. */
+  private flip = false;
   /** Eased 0..1, so a prompt arrives and leaves rather than blinking. */
   private opacity = 0;
   private wanted = 0;
@@ -101,6 +103,16 @@ export class Coach {
   /** A locked control was pressed. Answer it at the prompt rather than somewhere else. */
   refused(): void {
     this.refuse = 1;
+  }
+
+  /**
+   * Whether this prompt has to hang below its subject instead of above it.
+   *
+   * Decided by the caller, which is the only thing that knows where the subject lands on screen and
+   * how much of the top of that screen belongs to a notch rather than to the game.
+   */
+  setFlipped(flipped: boolean): void {
+    this.flip = flipped;
   }
 
   show(prompt: CoachPrompt): void {
@@ -154,7 +166,9 @@ export class Coach {
     const shove = this.refuse > 0 ? Math.sin(this.refuse * 30) * 6 * this.refuse : 0;
     const left = side > 0 ? 66 : -66 - width;
     const x = left + shove * side + (1 - this.opacity) * 14 * side;
-    const y = -74 + breathe;
+    // Hung below the subject instead of above it when there is not room above -- which on a phone
+    // with a Dynamic Island means the top of the screen plus the inset, not the top of the screen.
+    const y = this.flip ? 34 + breathe : -74 + breathe;
     const edge = this.refuse > 0.02 ? PALETTE.danger : BRASS;
 
     this.goalText.position.set(x + padding, y + padding);
@@ -170,12 +184,14 @@ export class Coach {
       .rect(side > 0 ? x : x + width - 2, y, 2, height)
       .fill({ color: edge, alpha: 0.95 });
 
-    // An elbowed leader down to the subject, so the tag is attached to the thing rather than
-    // merely near it.
+    // An elbowed leader to the subject, so the tag is attached to the thing rather than merely near
+    // it. Taken from whichever edge of the plate faces the subject, which flips with the plate --
+    // otherwise a flipped tag draws its leader out of its own far side and across itself.
     const elbowX = side > 0 ? x : x + width;
+    const elbowY = this.flip ? y + 9 : y + height - 9;
     this.leader.clear()
-      .moveTo(elbowX, y + height - 9)
-      .lineTo(elbowX - 20 * side, y + height - 9)
+      .moveTo(elbowX, elbowY)
+      .lineTo(elbowX - 20 * side, elbowY)
       .lineTo(0, 0)
       .stroke({ width: 1.5, color: edge, alpha: 0.5 })
       .circle(0, 0, 3)
@@ -214,7 +230,8 @@ export class Coach {
     // Eased out and back, held at the extremes.
     const travel = t < 0.55 ? Math.min(1, t / 0.4) : Math.max(0, 1 - (t - 0.55) / 0.2);
     const eased = travel * travel * (3 - 2 * travel);
-    const baseY = 58;
+    // On the opposite side of the subject from the plate, so the mime and the tag never overlap.
+    const baseY = this.flip ? -58 : 58;
     const reach = 46;
 
     if (prompt.demo === "tap" || prompt.demo === "hold") {
