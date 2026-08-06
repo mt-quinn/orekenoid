@@ -450,6 +450,136 @@ button { color: inherit; font: inherit; }
   .viewport { width: calc(100vw - 8px); height: calc((100vw - 8px) * 9 / 16); }
 }
 
+/* --- The HUD, in portrait ---------------------------------------------------
+   Two rules decide all of this.
+
+   Nothing that has to be *read* under pressure belongs in the bottom third, because that is where
+   the thumbs are -- so the readouts move up and the bottom is left to the hands. And the readouts
+   were laid out as three clusters across a 16:9 field; on a 390px phone they overlapped each other
+   and the hint strip, which is what the first claim screenshot showed.
+   -------------------------------------------------------------------------- */
+.shell[data-layout="phone"] .hud-top {
+  flex-direction: column;
+  gap: 6px;
+  padding: calc(6px + var(--safe-top)) 10px 0;
+}
+/* The objective is two lines of prose and the least urgent thing on screen once a claim is live;
+   it is worth its space in the survey and not worth it over a board. */
+.shell[data-layout="phone"] .viewport[data-mode="play"] .objective { display: none; }
+.shell[data-layout="phone"] .objective strong { font-size: 15px; }
+.shell[data-layout="phone"] .objective span { font-size: 11px; }
+/* Clear of the action cluster in the top-right corner. */
+.shell[data-layout="phone"] .hud-top { padding-right: 168px; }
+
+.shell[data-layout="phone"] .hud-bottom {
+  /* A single row across the top of the thumb zone rather than three clusters spread over a wide
+     field: the figures stay together, stay readable, and stay out of the hands' way. */
+  inset: calc(58px + var(--safe-top)) 10px auto;
+  grid-template-columns: auto auto 1fr;
+  align-items: start;
+  gap: 12px;
+}
+.shell[data-layout="phone"] .stakes { grid-column: 3; gap: 14px; }
+.shell[data-layout="phone"] .stat > span { font-size: 9px; letter-spacing: .1em; }
+.shell[data-layout="phone"] .stat > strong { font-size: 21px; }
+.shell[data-layout="phone"] .health {
+  min-width: 0;
+  grid-column: 1 / 3;
+  justify-items: start;
+}
+.shell[data-layout="phone"] .health-head,
+.shell[data-layout="phone"] .health-read { justify-content: flex-start; gap: 8px; }
+.shell[data-layout="phone"] .health-head span { font-size: 10px; letter-spacing: .1em; }
+.shell[data-layout="phone"] .health-head b { font-size: 9px; }
+.shell[data-layout="phone"] .health-read strong { font-size: 30px; }
+/* The hint strip stops naming keys on a touchscreen -- see `hintText` -- so what is left is short
+   status, and it sits under the readouts rather than across the bottom where a thumb covers it. */
+.shell[data-layout="phone"] .hints {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.shell[data-layout="phone"] .cargo { grid-column: 1 / -1; }
+
+/* --- Touch actions ---------------------------------------------------------
+   The discrete half of the control scheme. Continuous gestures -- fly, turn, paddle, aim -- are
+   drawn in the canvas by `view/touchControls.ts`; everything you press once lives here, because a
+   real button gets a 44px target, focus, a pressed state and a label for nothing.
+
+   Placement follows the hand. A portrait phone has a comfortable arc at the bottom and a hostile
+   far corner at the top, so anything pressed under pressure -- COMMIT, FAST -- sits low, and
+   anything deliberate and rare -- atlas, forge, pause -- sits high where a stray brush is least
+   likely to reach it.
+   -------------------------------------------------------------------------- */
+.touch-actions { display: contents; }
+.touch-actions[hidden] { display: none; }
+.touch-cluster { position: absolute; z-index: 9; display: flex; gap: 8px; }
+
+.touch-cluster-top {
+  top: calc(8px + var(--safe-top));
+  right: calc(10px + var(--safe-right));
+}
+.touch-cluster-main {
+  right: calc(10px + var(--safe-right));
+  bottom: calc(14px + var(--safe-bottom));
+  align-items: flex-end;
+}
+
+.touch-actions button {
+  min-width: 46px;
+  min-height: 46px;
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  padding: 6px 9px;
+  border: 1px solid rgb(185 154 97 / .5);
+  background: rgb(10 14 16 / .82);
+  color: var(--ink);
+  /* Every button answers within a frame of contact. A press with no acknowledgement reads as a
+     dropped input, and the player's next move is to press harder and then twice. */
+  transition: transform .06s ease, background .06s ease, border-color .06s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.touch-actions button:active {
+  transform: scale(.93);
+  border-color: var(--ore-hot);
+  background: rgb(40 22 12 / .92);
+}
+.touch-actions button i { font-style: normal; font-size: 15px; line-height: 1; }
+.touch-actions button small {
+  color: var(--dim);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+/* The primary action is the one thing on screen a thumb must never miss. */
+#touchPrimary {
+  min-width: 132px;
+  min-height: 60px;
+  border: 1px solid #e1a263;
+  background: #b95a32;
+  color: #21160e;
+  box-shadow: 3px 3px 0 #080806;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+#touchPrimary:active { background: var(--ore-hot); box-shadow: 1px 1px 0 #080806; }
+/* Disabled rather than hidden: a control that appears and disappears moves everything around it,
+   and a thumb aiming for where a button was a second ago presses whatever replaced it. */
+#touchPrimary[disabled] {
+  border-color: #5b503d;
+  background: #302a21;
+  color: #b8aa8e;
+  box-shadow: 3px 3px 0 #080806;
+}
+[data-touch="fast"][aria-pressed="true"] { border-color: var(--ore-hot); background: rgb(60 30 14 / .92); }
+
 /* --- Deployment, in portrait -----------------------------------------------
    The screen was authored as three chassis side by side across a 16:9 field. On a 390px phone
    that runs Surveyor half off the right edge, puts Bastion entirely off-screen, and carries DEPLOY

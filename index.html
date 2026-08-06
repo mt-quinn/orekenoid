@@ -42,6 +42,21 @@
 
         <div class="resonance" id="resonance" aria-live="polite"></div>
 
+        <!-- Touch actions. Real buttons rather than anything drawn in the canvas: they get 44px
+             targets, focus, a pressed state and a screen-reader label for free, and the HUD is
+             already DOM. Hidden entirely unless the game is being played with fingers. -->
+        <nav class="touch-actions" id="touchActions" aria-label="Controls" hidden>
+          <div class="touch-cluster touch-cluster-top">
+            <button type="button" data-touch="atlas" aria-label="Atlas"><i>▤</i><small>ATLAS</small></button>
+            <button type="button" data-touch="forge" aria-label="Refit Bay"><i>⚒</i><small>FORGE</small></button>
+            <button type="button" data-touch="pause" aria-label="Pause"><i>❚❚</i><small>PAUSE</small></button>
+          </div>
+          <div class="touch-cluster touch-cluster-main">
+            <button type="button" data-touch="fast" aria-label="Speed up"><i>▶▶</i><small>FAST</small></button>
+            <button type="button" data-touch="primary" id="touchPrimary"><b>COMMIT</b></button>
+          </div>
+        </nav>
+
         <footer class="hud-bottom">
           <div class="cargo" id="cargo"></div>
           <div class="bank-notice" id="bankNotice"></div>

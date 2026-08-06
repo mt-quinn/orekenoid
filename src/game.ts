@@ -43,7 +43,9 @@ import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
+import { TouchControls } from "./view/touchControls";
 import { measure as measureView, syncLayout, view } from "./viewport";
+import { TouchInput, type TouchState } from "./touch";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
@@ -114,6 +116,19 @@ export class OrekenoidGame {
   readonly framePreview = new Container();
   /** The opening sequence's prompt, anchored in the world rather than pinned to a corner. */
   readonly coach = new Coach();
+  /** Fingers. Answers the same questions the key set does, from a different device. */
+  readonly touch = new TouchInput();
+  /** And what they look like. Screen furniture: outside the camera, so it never rotates or scales. */
+  readonly touchControls = new TouchControls();
+  /**
+   * This frame's touch intent, read once at the top of the frame and shared.
+   *
+   * Read once rather than per-consumer because `read` drains the accumulated turn: asking twice
+   * would hand the rotation to whichever caller got there first and nothing to the other.
+   */
+  private touchState: TouchState = {
+    moveX: 0, moveY: 0, turn: 0, paddle: null, stick: null, turning: null,
+  };
   readonly frameWash = new Graphics();
   readonly frameGrid = new Graphics();
   readonly frameScan = new Graphics();
@@ -383,7 +398,8 @@ export class OrekenoidGame {
     this.app.canvas.style.width = "100%";
     this.app.canvas.style.height = "100%";
     this.app.canvas.setAttribute("aria-label", "Orekenoid");
-    this.app.stage.addChild(this.worldRoot, this.gantry.container);
+    // Above the world and the bay: these are the player's own hands, and nothing occludes them.
+    this.app.stage.addChild(this.worldRoot, this.gantry.container, this.touchControls.container);
     this.worldRoot.addChild(this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer, this.actorLayer, this.framePreview, this.coach.container);
     this.terrainLayer.addChild(this.terrain.container);
     buildFarGeology(this.farLayer);
@@ -394,6 +410,8 @@ export class OrekenoidGame {
     this.featureMarks = buildFeatureMarks(this.featureLayer, this.world.generated.rooms.features, this.world);
     this.actorLayer.addChild(this.drone);
     this.bindInput();
+    this.touch.attach(this.app.canvas);
+    this.bindTouchActions();
     this.bindInterfaceUI();
     await this.deploymentPreviews.build(this.chassisRoster);
     // The world stays hidden until deployment so the previews read cleanly.
@@ -406,6 +424,96 @@ export class OrekenoidGame {
       requestAnimationFrame(() => resolve());
     }));
     this.expeditionView.markReady();
+  }
+
+  /**
+   * How long FAST has been held, in seconds. Drives the ramp.
+   *
+   * A single speed would be the wrong answer at both ends: x8 makes the opening of a claim
+   * unreadable, and x2 does nothing for the long tail. Holding longer means going faster, which is
+   * one control expressing the same three rates W, S and both do on a keyboard.
+   */
+  private fastHeld = 0;
+  private fastDown = false;
+
+  /** The touch rate, or 1 when nothing is held. */
+  private get touchRate(): number {
+    if (!this.fastDown) return 1;
+    if (this.fastHeld > 1.6) return 8;
+    if (this.fastHeld > 0.7) return 4;
+    return 2;
+  }
+
+  private bindTouchActions(): void {
+    const panel = document.querySelector<HTMLElement>("#touchActions");
+    if (!panel) return;
+    for (const button of panel.querySelectorAll<HTMLButtonElement>("button[data-touch]")) {
+      const action = button.dataset.touch ?? "";
+      if (action === "fast") {
+        // Held rather than pressed, so it needs the raw pointer pair rather than a click.
+        const press = (down: boolean) => {
+          this.fastDown = down;
+          if (!down) this.fastHeld = 0;
+          button.setAttribute("aria-pressed", String(down));
+        };
+        button.addEventListener("pointerdown", (event) => { event.preventDefault(); press(true); });
+        button.addEventListener("pointerup", () => press(false));
+        button.addEventListener("pointercancel", () => press(false));
+        button.addEventListener("pointerleave", () => press(false));
+        continue;
+      }
+      button.addEventListener("click", () => this.pressTouchAction(action));
+    }
+  }
+
+  /**
+   * The primary action is whatever the mode makes it.
+   *
+   * One button rather than three that appear and disappear: a control that comes and goes moves
+   * everything around it, and a thumb aiming for where a button was a moment ago presses whatever
+   * took its place.
+   */
+  private pressTouchAction(action: string): void {
+    if (action === "pause") { this.togglePause(); return; }
+    if (this.paused || this.cameraTransition) return;
+    if (action === "atlas") {
+      if (!this.can("atlas")) { this.refuseControl(); return; }
+      this.toggleAtlas();
+      return;
+    }
+    if (action === "forge") { if (this.mode === "survey") this.toggleCrafting(); return; }
+    if (action === "primary") {
+      if (this.arena) {
+        if (this.arena.balls.some((ball) => ball.served)) return;
+        if (!this.can("serve")) { this.refuseControl(); return; }
+        this.serve();
+      } else {
+        if (!this.can("commit")) { this.refuseControl(); return; }
+        this.establishArena();
+      }
+    }
+  }
+
+  /** Keep the action panel telling the truth about what it does right now. */
+  private renderTouchActions(dt: number): void {
+    const panel = document.querySelector<HTMLElement>("#touchActions");
+    if (!panel) return;
+    const wanted = this.touch.used && this.started;
+    if (panel.hidden === wanted) panel.hidden = !wanted;
+    if (!wanted) return;
+    if (this.fastDown) this.fastHeld += dt;
+    const primary = document.querySelector<HTMLButtonElement>("#touchPrimary");
+    if (primary) {
+      const serving = Boolean(this.arena) && !this.arena?.balls.some((ball) => ball.served);
+      const label = this.arena ? "SERVE" : "COMMIT";
+      const text = primary.querySelector("b");
+      if (text && text.textContent !== label) text.textContent = label;
+      // Dimmed rather than removed while a ball is live: the button keeps its place in the layout
+      // so nothing shifts under the thumb mid-rally.
+      primary.disabled = this.arena ? !serving : !this.can("commit") && !this.tutorialComplete;
+    }
+    const fast = panel.querySelector<HTMLButtonElement>('[data-touch="fast"]');
+    if (fast) fast.hidden = !this.arena;
   }
 
   private bindInput(): void {
@@ -1361,6 +1469,22 @@ export class OrekenoidGame {
       this.saveTimer -= dt;
       if (this.saveTimer <= 0) this.saveNow();
     }
+    // One read per frame, before anything consumes it. The router is told the mode here rather
+    // than inferring it, because a touch has to be assigned a job the instant it lands -- there is
+    // no movement yet to infer one from.
+    this.touch.mode = this.mode === "play" ? "play" : "survey";
+    this.touch.enabled = this.started && !this.craftingOpen && !this.atlasOpen && !this.paused;
+    this.touchState = this.touch.read(this.camera);
+    this.answerTaps();
+    this.renderTouchActions(dt);
+    this.touchControls.update(
+      dt,
+      this.touchState,
+      // Drawn only once a finger has actually been used, so a laptop with a touchscreen does not
+      // grow a virtual stick for someone playing with a keyboard.
+      this.touch.used && this.touch.enabled,
+      this.mode === "survey" && !this.touch.active && !this.cameraTransition,
+    );
     if (this.started && !this.craftingOpen && !this.atlasOpen) {
       if (this.mode === "survey") this.updateSurvey(dt);
       if (this.mode === "play") this.updatePlay(dt);
@@ -1413,6 +1537,30 @@ export class OrekenoidGame {
     }
   }
 
+  /**
+   * A tap on the world means the obvious thing for the mode.
+   *
+   * In a claim it serves; out in the mine it commits. Both are the one action a player reaches for
+   * without thinking, and both are already reachable from a labelled button -- this is the
+   * shortcut, not the only route, which is why it is safe for a stray tap to trigger either.
+   */
+  private answerTaps(): void {
+    const taps = this.touch.drainTaps();
+    if (!taps.length || !this.started || this.paused || this.cameraTransition) return;
+    if (this.craftingOpen || this.atlasOpen) return;
+    for (const _tap of taps) {
+      if (this.arena) {
+        if (this.arena.balls.some((ball) => ball.served)) continue;
+        if (!this.can("serve")) { this.refuseControl(); continue; }
+        this.serve();
+      } else {
+        if (!this.can("commit")) { this.refuseControl(); continue; }
+        this.establishArena();
+      }
+      return;
+    }
+  }
+
   private updateSurvey(dt: number): void {
     // Arrows mirror WASD out here. Inside a claim the horizontal pair moves the paddle and the
     // vertical pair drives the simulation speed, so the mirroring is deliberately mode-local.
@@ -1420,9 +1568,18 @@ export class OrekenoidGame {
     // Movement and aiming are gated separately rather than behind one early return: they are two
     // steps of the sequence, and one being locked must never silently disable the other.
     const canMove = this.can("move");
-    const dx = canMove ? (held("KeyD", "ArrowRight") ? 1 : 0) - (held("KeyA", "ArrowLeft") ? 1 : 0) : 0;
-    const dy = canMove ? (held("KeyS", "ArrowDown") ? 1 : 0) - (held("KeyW", "ArrowUp") ? 1 : 0) : 0;
-    const length = Math.hypot(dx, dy) || 1;
+    const keyX = (held("KeyD", "ArrowRight") ? 1 : 0) - (held("KeyA", "ArrowLeft") ? 1 : 0);
+    const keyY = (held("KeyS", "ArrowDown") ? 1 : 0) - (held("KeyW", "ArrowUp") ? 1 : 0);
+    // The stick wins when it is deflected, and the keys are still read otherwise, so a tablet with
+    // a keyboard attached does not have to choose. Movement here is world-absolute rather than
+    // heading-relative, which is why a stick vector drops straight in with no conversion.
+    const stickX = this.touchState.moveX;
+    const stickY = this.touchState.moveY;
+    const dx = canMove ? (stickX || stickY ? stickX : keyX) : 0;
+    const dy = canMove ? (stickX || stickY ? stickY : keyY) : 0;
+    // The stick is already clamped to the unit disc and carries its own magnitude, so normalising
+    // it again would throw away every speed between stopped and full.
+    const length = Math.max(Math.hypot(dx, dy), 1);
     const movementDt = Math.min(0.033, dt);
     const vx = dx / length * this.travelSpeed * movementDt;
     const vy = dy / length * this.travelSpeed * movementDt;
@@ -1435,18 +1592,36 @@ export class OrekenoidGame {
     if (stuck || this.hullFits(this.player.x + vx, this.player.y, heading)) this.player.x += vx;
     if (stuck || this.hullFits(this.player.x, this.player.y + vy, heading)) this.player.y += vy;
 
-    const rotation = this.can("aim")
-      ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0)
-      : 0;
-    if (rotation) {
-      // Rotation is refused when it would drive the hull into rock. Always safe to
-      // refuse: the pose the drone arrived in is by definition clear, so turning
-      // back the way it came is always available.
-      const turned = normalizeAngle(heading + rotation * this.rotationSpeed * dt);
-      if (stuck || this.hullFits(this.player.x, this.player.y, turned)) this.player.heading = turned;
+    const canAim = this.can("aim");
+    const rotation = canAim ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0) : 0;
+    // The drag is already an angle, so it bypasses the rotation-speed term entirely: the frame
+    // follows the thumb at the rate the thumb moves, which is the whole reason a drag feels
+    // direct where a held button feels like a request.
+    const dragged = canAim ? this.touchState.turn : 0;
+    const delta = rotation * this.rotationSpeed * dt + dragged;
+    let turnedBy = 0;
+    if (delta) {
+      // Rotation is refused when it would drive the hull into rock. Always safe to refuse: the
+      // pose the drone arrived in is by definition clear, so turning back the way it came is
+      // always available.
+      //
+      // Applied in small steps rather than as one jump, so a large turn rotates as far as it can
+      // instead of being refused outright. A held key produces a few hundredths of a radian per
+      // frame and never noticed the difference, but a thumb flick arrives as most of a radian at
+      // once -- and all-or-nothing meant the fastest gestures were the ones most likely to do
+      // nothing at all, which reads as the game ignoring you.
+      const STEP = 0.05;
+      const steps = Math.max(1, Math.ceil(Math.abs(delta) / STEP));
+      const increment = delta / steps;
+      for (let step = 0; step < steps; step++) {
+        const turned = normalizeAngle(this.player.heading + increment);
+        if (!stuck && !this.hullFits(this.player.x, this.player.y, turned)) break;
+        this.player.heading = turned;
+        turnedBy += increment;
+      }
     }
     if (dx || dy) this.markTutorial("move");
-    if (rotation) this.markTutorial("aim");
+    if (turnedBy) this.markTutorial("aim");
     // The map records where the drone has been, not what the generator produced.
     this.world.markDiscovered(this.player.x / CELL, this.player.y / CELL, DISCOVERY_RADIUS);
     this.tryBank();
@@ -1490,12 +1665,15 @@ export class OrekenoidGame {
    */
   private get simulationRate(): number {
     if (!this.can("speed") || this.paused) return 1;
+    // The touch ramp and the keys are the same control from two devices; whichever is asking for
+    // more wins, so holding both never means less than holding one.
+    const touched = this.touchRate;
     const up = this.keys.has("KeyW") || this.keys.has("ArrowUp");
     const down = this.keys.has("KeyS") || this.keys.has("ArrowDown");
-    if (up && down) return 8;
-    if (down) return 4;
-    if (up) return 2;
-    return 1;
+    if (up && down) return Math.max(8, touched);
+    if (down) return Math.max(4, touched);
+    if (up) return Math.max(2, touched);
+    return touched;
   }
 
   private stepArena(arena: Arena, dt: number): void {
@@ -1504,9 +1682,25 @@ export class OrekenoidGame {
     const input = canPaddle
       ? (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) - (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0)
       : 0;
-    arena.paddle.velocity = input * this.paddleSpeed;
-    if (input) this.markTutorial("paddle");
-    arena.paddle.u += arena.paddle.velocity * dt;
+    const before = arena.paddle.u;
+    const touched = canPaddle ? this.touchState.paddle : null;
+    if (touched) {
+      // Direct drag: the paddle *chases* the finger at up to its own speed rather than being
+      // assigned its position. Two reasons, and both matter. A paddle that teleports can cross the
+      // ball without touching it. And `paddle.velocity` drives the English the ball takes off the
+      // face -- snapping the position and leaving velocity at zero would silently delete a
+      // mechanic the physics pass was built around.
+      const local = this.world.worldToLocal(touched.x / CELL, touched.y / CELL, arena);
+      const reach = this.paddleSpeed * dt;
+      const gap = local.x - arena.paddle.u;
+      arena.paddle.u += clamp(gap, -reach, reach);
+    } else {
+      arena.paddle.u += input * this.paddleSpeed * dt;
+    }
+    // Derived from what actually happened, so it is correct for both sources and stays correct
+    // when the paddle is stopped against a wall.
+    arena.paddle.velocity = dt > 0 ? (arena.paddle.u - before) / dt : 0;
+    if (input || (touched && Math.abs(arena.paddle.velocity) > 1)) this.markTutorial("paddle");
     arena.paddle.flash = Math.max(0, arena.paddle.flash - dt);
     arena.paddle.impact *= Math.pow(0.0005, dt);
     const limit = arena.width / 2 - arena.paddle.width / 2;
@@ -1515,11 +1709,25 @@ export class OrekenoidGame {
     for (const brick of arena.bricks) brick.hitFlash = Math.max(0, brick.hitFlash - dt);
 
     if (!arena.balls.some((ball) => ball.served)) {
-      const aim = this.can("arenaAim")
-        ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0)
-        : 0;
+      const canAim = this.can("arenaAim");
+      const aim = canAim ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0) : 0;
       if (aim) this.markTutorial("arenaAim");
       arena.serveAim = clamp(arena.serveAim + aim * 1.45 * dt, -0.72, 0.72);
+      // Before the serve the same one-thumb drag carries a second axis: horizontal still positions
+      // the paddle, and how far the finger sits from the paddle's own row sets the launch angle.
+      // This is the reason the paddle scheme is absolute rather than relative -- an absolute
+      // mapping leaves the vertical axis free to mean something else.
+      if (canAim && touched) {
+        const local = this.world.worldToLocal(touched.x / CELL, touched.y / CELL, arena);
+        // Reading upward from the paddle: a finger held high aims steeply, low aims flat. Scaled
+        // against the board's own depth so the gesture means the same thing on every claim size.
+        const reach = Math.max(1, arena.depth * 0.45);
+        const steer = clamp((local.x - arena.paddle.u) / reach, -1, 1);
+        const wanted = clamp(steer * 0.72, -0.72, 0.72);
+        // Eased rather than assigned, so the ball does not snap around as the thumb settles.
+        arena.serveAim += (wanted - arena.serveAim) * Math.min(1, dt * 9);
+        if (Math.abs(wanted - arena.serveAim) > 0.02) this.markTutorial("arenaAim");
+      }
       for (const ball of arena.balls) ball.u = arena.paddle.u;
       return;
     }
@@ -1894,21 +2102,44 @@ export class OrekenoidGame {
    * strip carries only genuinely contextual prompts.
    */
   private hintText(): string {
+    // On a touchscreen the strip stops naming keys. Everything that was a key is either a labelled
+    // button in the thumb zone or a gesture with its own on-screen control, so listing "SPACE
+    // serve" to somebody holding a phone is worse than saying nothing -- it advertises a control
+    // they do not have and hides the one they do.
+    const touching = this.touch.used;
     if (!this.tutorialComplete) {
-      return this.atAnchor() && this.mode === "survey" ? "<b>C</b> forge" : "";
+      if (!(this.atAnchor() && this.mode === "survey")) return "";
+      return touching ? "FORGE AVAILABLE" : "<b>C</b> forge";
     }
-    if (this.craftingOpen) return "<b>1-9</b> forge <b>ESC</b> close";
+    if (this.craftingOpen) {
+      return touching ? "TAP A STATION TO FIT" : "<b>1-9</b> forge <b>ESC</b> close";
+    }
     if (this.mode === "survey") {
+      if (touching) {
+        // Only what is genuinely contextual. The stick, the turn zone and COMMIT all show
+        // themselves, so repeating them here would be a manual for controls already on screen.
+        return this.atAnchor() ? "AT AN ANCHOR · FORGE OPEN" : "";
+      }
       return [
         this.hasCommitted ? "" : "<b>WASD</b> move <b>Q / E</b> aim <b>F</b> commit",
         this.atAnchor() ? "<b>C</b> forge" : "",
         "<b>M</b> atlas",
       ].filter(Boolean).join(" ");
     }
+    const rail = this.economy.verbs.has("railSeed") && !this.railSeedUsed;
+    const blast = this.economy.blastCharges > 0;
+    if (touching) {
+      // The two claim verbs have no button of their own yet, so they stay named -- but as the
+      // thing they do rather than as the key that does it.
+      return [
+        rail ? "RAIL READY" : "",
+        blast ? `BLAST ×${this.economy.blastCharges}` : "",
+      ].filter(Boolean).join(" · ");
+    }
     return [
       this.hasServed ? "" : "<b>A / D</b> paddle <b>Q / E</b> aim <b>SPACE</b> serve",
-      this.economy.verbs.has("railSeed") && !this.railSeedUsed ? "<b>R</b> rail" : "",
-      this.economy.blastCharges > 0 ? `<b>B</b> blast ×${this.economy.blastCharges}` : "",
+      rail ? "<b>R</b> rail" : "",
+      blast ? `<b>B</b> blast ×${this.economy.blastCharges}` : "",
     ].filter(Boolean).join(" ");
   }
 

@@ -37,8 +37,12 @@ export function surveyZoom(): number {
  * puts the contact point -- the one thing the player must watch -- underneath their own hand.
  */
 export function boardZoom(width: number, depth: number): number {
-  const boardWidth = width * CELL;
-  const boardDepth = depth * CELL;
+  // The board draws a little beyond its brick field -- a heavy backdrop stroke, the rails along
+  // the far edge, the corner anchors -- and the far rail sits a further half cell past the last
+  // row. Measured at about 0.4 cells across the width and 1.1 down the depth, so a cell of
+  // allowance on each axis covers it without throwing away screen.
+  const boardWidth = (width + 1) * CELL;
+  const boardDepth = (depth + 1.2) * CELL;
   const sideMargin = view.layout === "phone" ? 18 : 90;
   const topMargin = (view.layout === "phone" ? 96 : 70) + view.safe.top;
   // Room for the paddle, the drag hand and the home indicator underneath it.
@@ -166,6 +170,24 @@ export class Camera {
     this.kickY -= dirY / length * magnitude;
   }
 
+  /**
+   * Undo the camera transform: a point on the canvas, in world pixels.
+   *
+   * Deliberately ignores the kick. The kick is a few pixels of transient shake, and including it
+   * would make a finger held perfectly still read as a moving touch -- the paddle would jitter in
+   * sympathy with every brick it broke, which is the exact opposite of what the shake is for.
+   */
+  screenToWorld(screenX: number, screenY: number): Vec2 {
+    const dx = (screenX - view.width / 2) / this.zoom;
+    const dy = (screenY - view.height / 2) / this.zoom;
+    const cos = Math.cos(-this.rotation);
+    const sin = Math.sin(-this.rotation);
+    return {
+      x: this.focus.x + dx * cos - dy * sin,
+      y: this.focus.y + dx * sin + dy * cos,
+    };
+  }
+
   /** Decay the kick. Real seconds, so it feels the same at any frame rate. */
   private settleKick(dt: number): void {
     // Critically-damped-ish: fast enough to be a snap rather than a wobble.
@@ -183,5 +205,6 @@ export class Camera {
     // moment that stopped being true.
     worldRoot.position.set(view.width / 2 + this.kickX, view.height / 2 + this.kickY);
     worldRoot.rotation = this.rotation;
+    worldRoot.scale.set(this.zoom);
   }
 }
