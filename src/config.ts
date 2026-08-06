@@ -1,5 +1,7 @@
-export const VIEW_WIDTH = 1280;
-export const VIEW_HEIGHT = 720;
+// The stage size lives in `viewport.ts` now, as a live value rather than a pair of constants:
+// the game takes the shape of whatever is holding it, which on a phone is a tall rectangle and
+// not a 16:9 letterbox. `DESIGN_WIDTH`/`DESIGN_HEIGHT` there record what the desktop layout was
+// authored against, for the few places that still want a reference size.
 export const CELL = 42;
 
 // The world is now a generated region rather than an authored fixture.

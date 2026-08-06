@@ -20,7 +20,8 @@
 // world root, so it is laid out in the fixed 1280x720 the renderer is initialised at.
 
 import { Container, Graphics, Text } from "pixi.js";
-import { CELL, PALETTE, RESOURCES, VIEW_HEIGHT, VIEW_WIDTH, type ResourceId } from "../config";
+import { CELL, PALETTE, RESOURCES, type ResourceId } from "../config";
+import { view } from "../viewport";
 import type { StationGrades, StationId } from "../economy";
 import { createDrone } from "./actors";
 
@@ -86,7 +87,10 @@ const DRONE_AT = { x: 640, y: 316 };
 const DRONE_TARGET_WIDTH = 440;
 const CARD = { width: 342, height: 148 };
 const LEFT_X = 44;
-const RIGHT_X = VIEW_WIDTH - CARD.width - 44;
+// A function rather than a constant: the bay is laid out against the live stage, and a value
+// computed at module load would be the width of whatever the window happened to be when the
+// bundle first evaluated -- which on a rotating phone is the wrong number within seconds.
+const rightX = () => view.width - CARD.width - 44;
 const ROW_Y = [96, 258, 420];
 
 /**
@@ -427,7 +431,7 @@ export class Gantry {
     this.lastHandlers = handlers;
     // Oversized so the kick cannot shear a gap at the edge and show the world behind.
     this.backdrop.clear()
-      .rect(-24, -24, VIEW_WIDTH + 48, VIEW_HEIGHT + 48).fill({ color: 0x05080a, alpha: 0.93 });
+      .rect(-24, -24, view.width + 48, view.height + 48).fill({ color: 0x05080a, alpha: 0.93 });
 
     this.drawStructure();
     this.drawDrone(model);
@@ -440,7 +444,7 @@ export class Gantry {
     const scale = DRONE_TARGET_WIDTH / Math.max(1, width + 26);
     for (const station of model.stations) {
       const mount = MOUNTS[station.id];
-      const cardX = mount.side === "left" ? LEFT_X : RIGHT_X;
+      const cardX = mount.side === "left" ? LEFT_X : rightX();
       const cardY = ROW_Y[mount.row];
       const anchorX = DRONE_AT.x + mount.x(width) * scale;
       const anchorY = DRONE_AT.y + mount.y * scale;
@@ -462,8 +466,8 @@ export class Gantry {
   /** The bay: a floor, two gantry arms holding the machine, and a service rail. */
   private drawStructure(): void {
     const g = this.structure.clear();
-    g.rect(0, 0, VIEW_WIDTH, 62).fill({ color: 0x0b1113, alpha: 0.9 })
-      .moveTo(0, 62).lineTo(VIEW_WIDTH, 62).stroke({ width: 1, color: BRASS, alpha: 0.3 });
+    g.rect(0, 0, view.width, 62).fill({ color: 0x0b1113, alpha: 0.9 })
+      .moveTo(0, 62).lineTo(view.width, 62).stroke({ width: 1, color: BRASS, alpha: 0.3 });
     // Floor under the machine.
     g.moveTo(DRONE_AT.x - 300, DRONE_AT.y + 132).lineTo(DRONE_AT.x + 300, DRONE_AT.y + 132)
       .stroke({ width: 3, color: BRASS, alpha: 0.55 });
@@ -484,8 +488,8 @@ export class Gantry {
       g.moveTo(at - side * 40, DRONE_AT.y + 132).lineTo(at - side * 74, DRONE_AT.y + 62)
         .stroke({ width: 4, color: BRASS, alpha: 0.4 });
     }
-    g.rect(0, VIEW_HEIGHT - 118, VIEW_WIDTH, 118).fill({ color: 0x080d0f, alpha: 0.85 })
-      .moveTo(0, VIEW_HEIGHT - 118).lineTo(VIEW_WIDTH, VIEW_HEIGHT - 118)
+    g.rect(0, view.height - 118, view.width, 118).fill({ color: 0x080d0f, alpha: 0.85 })
+      .moveTo(0, view.height - 118).lineTo(view.width, view.height - 118)
       .stroke({ width: 1, color: BRASS, alpha: 0.28 });
   }
 
@@ -544,7 +548,7 @@ export class Gantry {
 
     const hint = text("CLICK A STATION, OR PRESS ITS NUMBER  ·  ESC CLOSES", 12, FAINT, "600", 2);
     hint.anchor.set(1, 0);
-    hint.position.set(VIEW_WIDTH - 44, 32);
+    hint.position.set(view.width - 44, 32);
     this.chrome.addChild(title, chassis, readouts, hint);
   }
 
@@ -651,11 +655,11 @@ export class Gantry {
 
   private drawBank(model: GantryModel): void {
     const heading = text("BANK", 12, BRASS, "800", 4);
-    heading.position.set(44, VIEW_HEIGHT - 100);
+    heading.position.set(44, view.height - 100);
     this.chrome.addChild(heading);
     if (!model.bank.length) {
       const empty = text("EMPTY", 13, FAINT, "800", 3);
-      empty.position.set(44, VIEW_HEIGHT - 78);
+      empty.position.set(44, view.height - 78);
       this.chrome.addChild(empty);
       return;
     }
@@ -664,7 +668,7 @@ export class Gantry {
       const column = index % 6;
       const row = Math.floor(index / 6);
       const at = 44 + column * 96;
-      const top = VIEW_HEIGHT - 80 + row * 26;
+      const top = view.height - 80 + row * 26;
       const dot = new Graphics().rect(at, top + 4, 9, 9).fill(swatch(entry.resource));
       const label = text(`${RESOURCES[entry.resource].name} ${entry.count}`, 12, DIM, "600");
       label.position.set(at + 14, top);
@@ -676,13 +680,13 @@ export class Gantry {
   private drawBerth(model: GantryModel, handlers: GantryHandlers): void {
     const heading = text("FABRICATION BERTH", 12, BRASS, "800", 4);
     heading.anchor.set(1, 0);
-    heading.position.set(VIEW_WIDTH - 44, VIEW_HEIGHT - 100);
+    heading.position.set(view.width - 44, view.height - 100);
     this.chrome.addChild(heading);
 
     model.hulls.forEach((hull, index) => {
       const width = 196;
-      const x = VIEW_WIDTH - 44 - (model.hulls.length - index) * (width + 10) + 10;
-      const y = VIEW_HEIGHT - 78;
+      const x = view.width - 44 - (model.hulls.length - index) * (width + 10) + 10;
+      const y = view.height - 78;
       const card = new Container();
       card.position.set(x, y);
       card.addChild(new Graphics()

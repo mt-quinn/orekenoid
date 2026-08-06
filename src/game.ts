@@ -16,8 +16,6 @@ import {
   PHYSICS_STEP,
   PROVINCE_PALETTE,
   RESOURCES,
-  VIEW_HEIGHT,
-  VIEW_WIDTH,
   type MaterialKind,
   type PaddleChassis,
   type ResourceId,
@@ -29,7 +27,7 @@ import { materialOf } from "./materials";
 import { ballSpeed, createBall, stepBall, type BallStepEvents } from "./physics";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
-import { Camera, type CameraTransition } from "./camera";
+import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
 import { Effects } from "./effects";
 import { clamp, normalizeAngle } from "./maths";
 import { attachBall, attachMembrane, createDrone, spawnDrop } from "./view/actors";
@@ -45,6 +43,7 @@ import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
+import { measure as measureView, syncLayout, view } from "./viewport";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
@@ -337,14 +336,44 @@ export class OrekenoidGame {
   get integrity() { return this.chassisIntegrity.get(this.chassis.id) ?? this.maxIntegrity; }
   set integrity(value: number) { this.chassisIntegrity.set(this.chassis.id, clamp(value, 0, this.maxIntegrity)); }
 
+  /** The element the stage lives in, kept so a resize can re-measure it. */
+  private host: HTMLElement | null = null;
+  /** The shell around it, which carries the layout attribute CSS branches on. */
+  private shell: HTMLElement | null = null;
+
+  /**
+   * Take the shape of the host again.
+   *
+   * Everything downstream of a resize is expensive -- resizing the renderer reallocates its
+   * buffers, and the Refit Bay rebuilds its whole layout -- so nothing runs unless the stage
+   * genuinely changed. A resize observer fires for plenty of reasons that are not resizes.
+   */
+  private reshape(): void {
+    if (!this.host) return;
+    // Stamp first, measure second. The shell's layout attribute decides the container's size, so
+    // measuring before stamping would read the size the previous layout produced.
+    if (this.shell) syncLayout(this.shell);
+    if (!measureView(this.host)) return;
+    this.app.renderer.resize(view.width, view.height);
+    this.deploymentPreviews.layout();
+    if (this.atlasOpen) this.atlasView.render();
+  }
+
   async init(host: HTMLElement): Promise<void> {
+    this.host = host;
+    // Measured before the renderer exists, so the very first frame is already the right shape.
+    // Creating at a fixed size and resizing afterwards produces one frame at the wrong aspect,
+    // which on a phone is a visible flash of letterboxed game.
+    this.shell = host.closest<HTMLElement>(".shell");
+    if (this.shell) syncLayout(this.shell);
+    measureView(host);
     await this.app.init({
-      width: VIEW_WIDTH,
-      height: VIEW_HEIGHT,
+      width: view.width,
+      height: view.height,
       background: PALETTE.void,
-      antialias: true,
+      antialias: view.layout === "desktop",
       autoDensity: true,
-      resolution: Math.min(2, window.devicePixelRatio || 1),
+      resolution: view.resolution,
       preference: ["webgl", "canvas"],
       powerPreference: "high-performance",
     });
@@ -445,10 +474,12 @@ export class OrekenoidGame {
     });
     window.addEventListener("keyup", (event) => this.keys.delete(event.code));
     window.addEventListener("blur", () => this.keys.clear());
-    window.addEventListener("resize", () => {
-      this.deploymentPreviews.layout();
-      if (this.atlasOpen) this.atlasView.render();
-    });
+    window.addEventListener("resize", () => this.reshape());
+    // A resize observer catches the cases `resize` does not: a rotating phone settles its layout
+    // after the event fires, and the shell's own container can change without the window doing so.
+    if (typeof ResizeObserver !== "undefined" && this.host) {
+      new ResizeObserver(() => this.reshape()).observe(this.host);
+    }
   }
 
   start(): void {
@@ -920,7 +951,15 @@ export class OrekenoidGame {
     this.effects.clearSettled();
     this.loadStrike.clear();
     const center = this.world.localToWorld(0, arena.depth / 2, arena);
-    this.camera.begin({ x: center.x * CELL, y: center.y * CELL }, -arena.angle, false);
+    // Zoom is the third channel of the commit move, so the claim is *framed* in one motion rather
+    // than flown to and then scaled. It also fixes a defect that predates any of the mobile work:
+    // a 19-deep frame is 798px tall, which never fitted the old 720px stage either.
+    this.camera.begin(
+      { x: center.x * CELL, y: center.y * CELL },
+      -arena.angle,
+      false,
+      boardZoom(arena.width, arena.depth),
+    );
     this.showToast(`${arena.initialLiability} LIABLE · ${resources} RETURNS · CLAIM COMMITTED`);
     this.audio.play(SOUNDS.claimCommitted);
     this.updateUI();
@@ -1285,7 +1324,10 @@ export class OrekenoidGame {
     // The volley needs time to land before the camera pulls out, or the most dramatic beat of a
     // claim plays off screen.
     const volley = remaining.length ? 1050 : 0;
-    window.setTimeout(() => this.camera.begin(focus, 0, true), Math.max(volley, arena.damageTaken > 0 ? 680 : 360));
+    window.setTimeout(
+      () => this.camera.begin(focus, 0, true, surveyZoom()),
+      Math.max(volley, arena.damageTaken > 0 ? 680 : 360),
+    );
   }
 
   private completeArenaExit(): void {
@@ -1788,7 +1830,7 @@ export class OrekenoidGame {
     // rock and the paddle across the board, which is the difference between a prompt that belongs
     // to a thing and one that merely appeared near it once.
     this.renderTutorial();
-    this.coach.update(step, this.camera.rotation);
+    this.coach.update(step, this.camera.rotation, this.camera.zoom);
     if (this.tutorialFadeTimer > 0) {
       this.tutorialFadeTimer = Math.max(0, this.tutorialFadeTimer - step);
       if (this.tutorialFadeTimer === 0) {

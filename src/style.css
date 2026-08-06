@@ -14,6 +14,15 @@
   --brass: #b99a61;
   --paper: #d8c7a5;
   --case: #242018;
+
+  /* Safe-area insets, hoisted into custom properties so TypeScript can read them too. A notch and
+     a home indicator are not decoration: anything under them is genuinely invisible, and a button
+     under the home indicator is worse than invisible, because the swipe that dismisses the app
+     starts there. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 * { box-sizing: border-box; }
@@ -21,6 +30,15 @@ html, body { width: 100%; height: 100%; }
 body {
   margin: 0;
   overflow: hidden;
+  /* No rubber-band scroll, no pull-to-refresh, no double-tap zoom, no selection callout on a long
+     press. Every one of these is a browser gesture that fires in the middle of a drag and reads to
+     the player as the game dropping their input. */
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   background:
     radial-gradient(ellipse at 50% 100%, #38311f 0, transparent 58%),
     #0d0d0a;
@@ -35,10 +53,18 @@ button { color: inherit; font: inherit; }
   padding: clamp(6px, 1.2vw, 18px);
 }
 
+/* On a phone the game is the screen. The desktop framing -- centred, inset, bordered, with the
+   aperture marks and the vignette -- is a cabinet the game sits inside, and a cabinet is a luxury
+   that costs a ninth of a 390px-wide display. */
+.shell[data-layout="phone"] {
+  padding: 0;
+}
+
 .viewport {
   position: relative;
   isolation: isolate;
   overflow: hidden;
+  /* Desktop keeps the 16:9 cabinet it was authored for. */
   width: min(calc(100vw - clamp(12px, 2.4vw, 36px)), calc((100dvh - clamp(12px, 2.4vw, 36px)) * 16 / 9));
   height: min(calc(100dvh - clamp(12px, 2.4vw, 36px)), calc((100vw - clamp(12px, 2.4vw, 36px)) * 9 / 16));
   border: 1px solid #6c6049;
@@ -46,6 +72,20 @@ button { color: inherit; font: inherit; }
   box-shadow: 0 24px 80px #050503, inset 0 0 0 5px #171611, inset 0 0 0 6px #3d382b;
   container-type: size;
 }
+.shell[data-layout="phone"] .viewport {
+  /* The whole screen, no aspect lock. The stage takes this shape rather than being letterboxed
+     into it, so a tall phone gets a tall game instead of a 378x213 strip in a field of black. */
+  width: 100vw;
+  height: 100dvh;
+  border: 0;
+  box-shadow: none;
+}
+/* The cabinet dressing is desktop-only: it costs pixels a phone does not have to spare, and the
+   vignette in particular darkens exactly the bottom corners where the thumbs live. */
+.shell[data-layout="phone"] .viewport::before,
+.shell[data-layout="phone"] .viewport::after,
+.shell[data-layout="phone"] .aperture-mark { display: none; }
+
 .viewport > .game-canvas { position: absolute; z-index: 1; inset: 0; display: block; width: 100% !important; height: 100% !important; }
 .viewport::before {
   content: "";
@@ -408,6 +448,75 @@ button { color: inherit; font: inherit; }
 @media (max-aspect-ratio: 4 / 3) {
   .shell { padding: 4px; }
   .viewport { width: calc(100vw - 8px); height: calc((100vw - 8px) * 9 / 16); }
+}
+
+/* --- Deployment, in portrait -----------------------------------------------
+   The screen was authored as three chassis side by side across a 16:9 field. On a 390px phone
+   that runs Surveyor half off the right edge, puts Bastion entirely off-screen, and carries DEPLOY
+   away with it -- so the first thing a phone player meets is a screen they cannot finish.
+
+   Stacked instead, one chassis per row, with DEPLOY pinned to the bottom as an action bar. The
+   three previews stay live and real: they are rendered by the production renderer and are the
+   whole argument of the screen, so they get reshaped rather than replaced with artwork.
+   -------------------------------------------------------------------------- */
+.shell[data-layout="phone"] .deployment {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 10px;
+  /* Room for the action bar, plus the home indicator underneath it. */
+  padding: calc(14px + var(--safe-top)) 12px calc(78px + var(--safe-bottom));
+}
+.shell[data-layout="phone"] .deployment h1 { font-size: 26px; }
+/* The armour rule is a full sentence of body copy and the least urgent thing here; it reads fine
+   once a chassis is chosen, and on a phone it costs a card's worth of height. */
+.shell[data-layout="phone"] .armor-rule { display: none; }
+
+.shell[data-layout="phone"] .paddle-bay {
+  grid-template-columns: 1fr;
+  gap: 10px;
+  padding: 8px;
+  /* The bay scrolls; the page does not. `pan-y` re-enables vertical dragging here specifically,
+     since the body switches `touch-action` off wholesale to kill pull-to-refresh. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.shell[data-layout="phone"] .paddle-option {
+  /* Name across the top, then the three figures in a row beneath the preview. */
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: auto minmax(150px, 34vh) auto;
+  gap: 8px;
+  padding: 10px 10px 12px;
+}
+.shell[data-layout="phone"] .paddle-option .field-window { grid-row: 2; grid-column: 1 / -1; }
+.shell[data-layout="phone"] .paddle-option .option-name { grid-row: 1; grid-column: 1 / -1; }
+.shell[data-layout="phone"] .paddle-option .option-data { grid-row: 3; }
+.shell[data-layout="phone"] .paddle-option .option-speed { grid-row: 4; grid-column: 1 / -1; }
+/* Hover does not exist on a finger, and iOS fabricates a first-tap hover that makes a lifted card
+   look selected when it is not. Selection is shown by the pressed state alone. */
+.shell[data-layout="phone"] .paddle-option:hover { transform: none; }
+.shell[data-layout="phone"] .paddle-option[aria-pressed="true"] {
+  box-shadow: inset 4px 0 var(--ore), inset -1px 0 #7a583c, inset 0 0 0 2px var(--ore), 0 6px 0 #070806;
+}
+
+/* DEPLOY lives in the thumb arc at the bottom, full width, at a size a thumb cannot miss. */
+.shell[data-layout="phone"] .deploy-row {
+  position: absolute;
+  right: 12px;
+  bottom: calc(12px + var(--safe-bottom));
+  left: 12px;
+  justify-content: stretch;
+  padding: 0;
+}
+.shell[data-layout="phone"] #beginButton {
+  width: 100%;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  font-size: 16px;
 }
 
 @media (prefers-reduced-motion: reduce) {

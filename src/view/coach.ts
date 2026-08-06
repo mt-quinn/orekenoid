@@ -103,8 +103,15 @@ export class Coach {
     this.container.visible = true;
   }
 
-  /** `cameraRotation` is the world's rotation, which this cancels so the tag stays upright. */
-  update(dt: number, cameraRotation: number): void {
+  /**
+   * `cameraRotation` and `cameraZoom` are the world's, and this cancels both.
+   *
+   * Rotation because a claim can be framed at any angle and text on its side is not text. Zoom
+   * because the tag is an annotation, not scenery: it is anchored *at* a world point but should be
+   * the same size on screen however far the camera has pulled back. Without this it shrinks with
+   * the board, and on a phone -- where the zoom does the most work -- it shrinks to illegible.
+   */
+  update(dt: number, cameraRotation: number, cameraZoom = 1): void {
     this.opacity += (this.wanted - this.opacity) * Math.min(1, dt * 7);
     if (this.opacity < 0.01 && this.wanted === 0) {
       this.container.visible = false;
@@ -120,6 +127,7 @@ export class Coach {
     // moving thing costs one assignment and the geometry never has to know where it is.
     this.container.position.set(prompt.x, prompt.y);
     this.container.rotation = -cameraRotation;
+    this.container.scale.set(1 / Math.max(0.01, cameraZoom));
     this.container.alpha = this.opacity;
 
     this.goalText.text = prompt.goal;
