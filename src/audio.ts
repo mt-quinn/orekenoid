@@ -12,6 +12,13 @@ export interface ToneSpec {
   frequency: number;
   /** Duration in seconds. */
   duration: number;
+  /**
+   * How far the per-play pitch jitter may wander, as a fraction. Defaults to 3%.
+   *
+   * Narrowed for sounds whose exact pitch carries meaning, and widened for the ones that repeat
+   * most, where sameness is the thing to avoid.
+   */
+  spread?: number;
   /** Peak gain. Kept low: these are stacked several at a time during a cascade. */
   volume?: number;
   /** Frequency to sweep to. Defaults to no sweep. */
@@ -74,10 +81,26 @@ export class GameAudio {
    * Play one shaped sweep. Silently does nothing before `start()`, so callers in
    * the pre-deployment UI never have to check.
    */
+  /**
+   * Play one shaped sweep, detuned slightly.
+   *
+   * The jitter is the talk's sound-variation point and it is not decoration: an identical waveform
+   * fired repeatedly phase-locks into a single buzzing pitch, which is what turns a rally into a
+   * synthesiser. A few percent is inaudible as pitch and completely changes the texture of a run of
+   * hits. It is applied as a *ratio* to both ends of the sweep so the contour is preserved -- a
+   * sound that rises still rises by the same interval.
+   *
+   * `spread` is per-sound so the deliberately-pitched ones can narrow it: the combo ladder means
+   * something by its exact pitch, and wide jitter there would blur one rung into the next.
+   */
   play(spec: ToneSpec): void {
     const context = this.context;
     if (!context) return;
-    const { frequency, duration, volume = 0.025, end = frequency } = spec;
+    const { duration, volume = 0.025 } = spec;
+    const spread = spec.spread ?? 0.03;
+    const detune = 1 + (Math.random() * 2 - 1) * spread;
+    const frequency = spec.frequency * detune;
+    const end = (spec.end ?? spec.frequency) * detune;
     const now = context.currentTime;
     const oscillator = context.createOscillator();
     const gain = context.createGain();
@@ -103,17 +126,17 @@ export class GameAudio {
 export const SOUNDS = {
   // --- Ball contact. Short, quiet, and pitched apart so a rally is readable
   //     with the screen ignored. ------------------------------------------------
-  paddleHit: { frequency: 120, duration: 0.05, volume: 0.025, end: 220 },
-  railHit: { frequency: 340, duration: 0.025, volume: 0.012, end: 300 },
+  paddleHit: { frequency: 120, duration: 0.05, volume: 0.025, end: 220, spread: 0.05 },
+  railHit: { frequency: 340, duration: 0.025, volume: 0.012, end: 300, spread: 0.07 },
   facetTurn: { frequency: 660, duration: 0.05, volume: 0.02, end: 900 },
   membraneHit: { frequency: 500, duration: 0.05, volume: 0.022, end: 320 },
-  brickChip: { frequency: 170, duration: 0.04, volume: 0.025, end: 220 },
-  brickBreak: { frequency: 260, duration: 0.08, volume: 0.025, end: 110 },
+  brickChip: { frequency: 170, duration: 0.04, volume: 0.025, end: 220, spread: 0.07 },
+  brickBreak: { frequency: 260, duration: 0.08, volume: 0.025, end: 110, spread: 0.06 },
   // The low end of a break, layered under `brickBreak`. "Add more bass to your sound effects" is
   // the talk's cheapest trick and the one its own anecdote turns on -- a gun nobody liked became a
   // favourite on twelve decibels of bass and nothing else. Written, never heard.
-  brickBreakBody: { frequency: 96, duration: 0.17, volume: 0.055, end: 44 },
-  brickBreakHeavy: { frequency: 62, duration: 0.26, volume: 0.075, end: 30 },
+  brickBreakBody: { frequency: 96, duration: 0.17, volume: 0.055, end: 44, spread: 0.05 },
+  brickBreakHeavy: { frequency: 62, duration: 0.26, volume: 0.075, end: 30, spread: 0.04 },
   // Striking structure rings upward rather than breaking: the sound says
   // "this is a mechanism", not "you failed to break it".
   structureStruck: { frequency: 280, duration: 0.12, volume: 0.03, end: 520 },
@@ -141,7 +164,7 @@ export const SOUNDS = {
   fitReach: { frequency: 90, duration: 0.3, volume: 0.018, end: 155 },
   // The grinder taking its cut. Falling and gritty, so losing half a piece sounds like a cost
   // rather than a collection. Written but never heard, like the rest of the fit vocabulary.
-  salvageGrind: { frequency: 210, duration: 0.13, volume: 0.03, end: 70 },
+  salvageGrind: { frequency: 210, duration: 0.13, volume: 0.03, end: 70, spread: 0.06 },
   verbAcquired: { frequency: 180, duration: 0.5, volume: 0.06, end: 900 },
   tutorialStep: { frequency: 520, duration: 0.08, volume: 0.022, end: 720 },
   arrival: { frequency: 210, duration: 0.3, volume: 0.028, end: 320 },
@@ -153,6 +176,21 @@ export const SOUNDS = {
   markRefused: { frequency: 180, duration: 0.12, volume: 0.03, end: 120 },
   forgeOutOfRange: { frequency: 240, duration: 0.12, volume: 0.03, end: 180 },
   cannotForge: { frequency: 88, duration: 0.16, volume: 0.03, end: 60 },
+
+  // --- The hull against rock. -----------------------------------------------
+  // Both fall, because both are the machine being stopped rather than doing something. The knock
+  // carries body; the scrape is deliberately thin and quiet, since it repeats for as long as the
+  // player leans on the wall and must never become the loudest thing in the mine.
+  hullKnock: { frequency: 118, duration: 0.09, volume: 0.032, end: 62, spread: 0.06 },
+  hullScrape: { frequency: 240, duration: 0.06, volume: 0.011, end: 170, spread: 0.1 },
+  // A piece of ore hitting the floor instead of the paddle. Dull and short: it is a small loss and
+  // should register without being scolded for.
+  dropMissed: { frequency: 130, duration: 0.07, volume: 0.016, end: 84, spread: 0.07 },
+  // Arriving home. The bright tone already existed; this is the body underneath it, which is what
+  // the talk means by bass -- the part you feel rather than hear, and the reason a deposit lands
+  // like a weight going down instead of a number going up.
+  bankedBody: { frequency: 76, duration: 0.3, volume: 0.062, end: 40, spread: 0.02 },
+  hullRepaired: { frequency: 380, duration: 0.34, volume: 0.03, end: 720, spread: 0.02 },
 
   // --- Loss. These fall, and fall further than anything else rises. ----------
   armorBreached: { frequency: 92, duration: 0.42, volume: 0.06, end: 36 },
@@ -171,6 +209,9 @@ export type SoundId = keyof typeof SOUNDS;
 export const collectSound = (collected: number): ToneSpec => ({
   frequency: 540 + collected * 35,
   duration: 0.1,
+  // Barely detuned. Each rung of this ladder is meant to be heard as a step up from the last, and
+  // wide jitter would blur one rung into the next -- which is the one thing this sound must not do.
+  spread: 0.008,
   volume: 0.03,
   end: 760,
 });

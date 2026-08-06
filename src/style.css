@@ -450,6 +450,30 @@ button { color: inherit; font: inherit; }
   .viewport { width: calc(100vw - 8px); height: calc((100vw - 8px) * 9 / 16); }
 }
 
+/* The hull nearly gone. Hung off the `data-state` the HUD already derives rather than a second class
+   saying the same thing. Slow, and only the readout: fast flashing would be noise at exactly the
+   moment the player most needs to read the board, and the number is where they already look. */
+.health[data-state="critical"] .health-read strong { animation: integrity-low 1.5s ease-in-out infinite; }
+.health[data-state="critical"] .health-bar { box-shadow: 0 0 0 1px rgb(216 111 61 / .5); }
+@keyframes integrity-low {
+  0%, 100% { color: var(--paper); }
+  50% { color: var(--ore-hot); }
+}
+
+/* The hold emptying at the rack. A sweep of brass across the strip as it clears, so the deposit and
+   the strip going quiet are one event. */
+.cargo.banked { animation: cargo-banked .6s ease-out; }
+@keyframes cargo-banked {
+  0% { filter: brightness(1.5) saturate(1.3); transform: translateX(0); }
+  40% { filter: brightness(1.2); }
+  100% { filter: none; transform: translateX(-6px); opacity: .85; }
+}
+
+/* A catch landing. Brief, and a scale punch rather than a colour change: the ore already carries its
+   own colour on the board, and tinting the readout as well would say the same thing twice. */
+.cargo.caught { transform: scale(1.06); filter: brightness(1.22); }
+.cargo { transition: transform .09s ease-out, filter .09s ease-out; transform-origin: left center; }
+
 /* --- The resume plate and the rotate gate ----------------------------------
    Both are full-cover, both are in the game's own visual language rather than a browser default,
    and both sit above everything including the touch controls -- they exist precisely because the

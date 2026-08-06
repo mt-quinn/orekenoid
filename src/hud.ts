@@ -35,6 +35,8 @@ export interface HudModel {
   cargo: Array<[ResourceId, number]>;
   /** Cargo is only safe once banked, so the hold says so while it is at risk. */
   cargoAtRisk: boolean;
+  /** 0..1, decaying, raised when ore lands. Punches the readout. */
+  cargoPulse: number;
   /** Coarse dial grades, or null when Survey Resonance is absent or irrelevant. */
   resonance: { density: string; volatility: string; yield: string } | null;
   /** The one fact the player cannot read off the world. Survey only. */
@@ -84,6 +86,8 @@ export class Hud {
   private readonly toast = document.querySelector<HTMLElement>("#toast");
   private readonly resonancePanel = document.querySelector<HTMLElement>("#resonance");
   private readonly cargoStrip = document.querySelector<HTMLElement>("#cargo");
+  /** Whether the strip is currently showing a catch, so the class is only touched when it changes. */
+  private cargoLit = false;
   private readonly saveFlash = document.querySelector<HTMLElement>("#saveFlash");
 
   /** Cargo markup is only rebuilt when the hold actually changes. */
@@ -127,6 +131,13 @@ export class Hud {
     }
 
     this.cargoStrip?.classList.toggle("at-risk", model.cargoAtRisk);
+    // Driven by the same pulse the catch effects use, so the figure and the ring on the board are
+    // one event rather than two things that happen to coincide.
+    const lit = model.cargoPulse > 0.05;
+    if (lit !== this.cargoLit) {
+      this.cargoLit = lit;
+      this.cargoStrip?.classList.toggle("caught", lit);
+    }
     this.renderCargo(model.cargo);
     this.renderResonance(model.resonance);
 
@@ -218,6 +229,22 @@ export class Hud {
 
   hideArrival(): void {
     this.arrivalCard?.classList.remove("show");
+  }
+
+  /**
+   * The hold discharging.
+   *
+   * The strip goes from carrying a haul to carrying nothing in a single frame, which is the correct
+   * data and a wasted moment -- the player just walked that ore home. A brief sweep as it empties
+   * ties the strip clearing to the deposit landing, rather than leaving the reward entirely to a
+   * toast somewhere else on screen.
+   */
+  flashCargoBanked(): void {
+    if (!this.cargoStrip) return;
+    this.cargoStrip.classList.remove("banked");
+    void this.cargoStrip.offsetWidth;
+    this.cargoStrip.classList.add("banked");
+    window.setTimeout(() => this.cargoStrip?.classList.remove("banked"), 620);
   }
 
   showBankNotice(stored: number): void {

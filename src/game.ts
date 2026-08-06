@@ -44,6 +44,7 @@ import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
 import { TouchControls } from "./view/touchControls";
+import { Gate, Pulse, Shudder } from "./view/feel";
 import { effectBudget, measure as measureView, motionScale, syncLayout, view } from "./viewport";
 import { TouchInput, type TouchState } from "./touch";
 import { Holds } from "./holds";
@@ -51,7 +52,7 @@ import { ScreenAwake } from "./platform";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
-import type { Arena, Ball, Brick, FrameGeometry, Membrane, TutorialStep, Vec2 } from "./types";
+import type { Arena, Ball, Brick, Drop, FrameGeometry, Membrane, TutorialStep, Vec2 } from "./types";
 import { WorldModel } from "./world";
 import { BANK } from "./worldgen/landmarks";
 import type { AtlasSite } from "./atlas";
@@ -124,6 +125,30 @@ export class OrekenoidGame {
   readonly touchControls = new TouchControls();
   /** Holds the game when the world interrupts it: backgrounded, unfocused, sideways, muted. */
   readonly holds = new Holds();
+  /** How long the hull has been against rock, in seconds. Zero means clear. */
+  private contactHeld = 0;
+  /** Rate limit for the grinding texture, so leaning on a wall is not a jackhammer. */
+  private readonly contactGate = new Gate(0.16);
+  /** The hull's own knock, applied to the drone's display each frame. */
+  private readonly hullShudder = new Shudder();
+  /**
+   * Roll toward the direction of travel, in radians. Display only.
+   *
+   * Eased rather than assigned so it banks into a turn and comes back level when the drone stops,
+   * which is the whole reason it reads as a machine with mass rather than a sprite being dragged.
+   */
+  private hullLean = 0;
+  /** Meters out the thruster wash, so speed sets the rate rather than the frame rate doing it. */
+  private readonly wakeGate = new Gate(0.055);
+  /**
+   * Punches the cargo readout when ore lands.
+   *
+   * The number and the catch have to be one event. Two separate things happening at the same moment
+   * -- a ring on the board and a figure quietly incrementing in a corner -- is how a reward ends up
+   * feeling like bookkeeping.
+   */
+  private readonly cargoPulse = new Pulse(4.2);
+
   /** Stops the screen sleeping under a thumb that is holding still on purpose. */
   private readonly awake = new ScreenAwake();
   /**
@@ -1621,6 +1646,10 @@ export class OrekenoidGame {
         this.effects.spawnDust(at.x, at.y, PALETTE.danger, 4, 1.2);
         this.audio.play(SOUNDS.armorBreached);
         this.hitPause = Math.max(this.hitPause, 0.045);
+        // The thing being hit is the machine, so the machine flinches. Saturating rather than
+        // summing: a volley of eight breaches is one hard flinch, not eight stacked into a spasm.
+        arena.paddle.flash = Math.max(arena.paddle.flash, 0.2);
+        arena.paddle.impact = Math.max(arena.paddle.impact, 1);
         const centre = this.world.localToWorld(0, arena.depth / 2, arena);
         this.camera.kick((point.x - centre.x) * CELL, (point.y - centre.y) * CELL, 13);
       }
@@ -1669,6 +1698,95 @@ export class OrekenoidGame {
     }
   }
 
+  /**
+   * The hull meeting rock it cannot get through.
+   *
+   * Split deliberately into two events, because they say different things and want different
+   * volumes.
+   *
+   * **First contact** is a hit: the hull is knocked back along the blocked normal, sparks and dust
+   * come off the point of contact, there is a scrape, and the camera takes one small nudge against
+   * the direction pushed. That nudge is the only new camera movement in this whole pass, and it is
+   * gated to arrival -- a camera that moved every frame the player leaned on a wall would be the
+   * exact mistake this project already made and removed once.
+   *
+   * **Grinding** is a texture: while still pushing, the hull holds pressed a few pixels into the
+   * obstruction, sheds dust at a gated rate, and scrapes quietly. No camera at all. Without the
+   * split, holding a direction into rock fired a fresh impact sixty times a second.
+   */
+  private reportContact(
+    dt: number, blockedX: number, blockedY: number, jammedTurn: boolean, heading: number,
+  ): void {
+    const blocked = blockedX !== 0 || blockedY !== 0;
+    if (!blocked && !jammedTurn) {
+      // Clear of it. Re-arm so the next arrival reads as an arrival.
+      this.contactHeld = 0;
+      this.contactGate.open();
+      return;
+    }
+
+    const fresh = this.contactHeld === 0;
+    this.contactHeld += dt;
+
+    // Where on the hull the contact is: out along the blocked direction for a slide, and off the
+    // nose for a jammed turn, since that is the end that sweeps furthest and hits first.
+    const reach = this.hullHalfLength * CELL * 0.9;
+    const pointX = blocked
+      ? this.player.x + blockedX * reach
+      : this.player.x + Math.cos(heading) * reach;
+    const pointY = blocked
+      ? this.player.y + blockedY * reach
+      : this.player.y + Math.sin(heading) * reach;
+
+    if (fresh) {
+      this.hullShudder.kick(blockedX, blockedY, 210, jammedTurn ? 3.4 : 0);
+      this.effects.spawnShards(pointX, pointY, PALETTE.machine, 5, 0.85);
+      this.effects.spawnDust(pointX, pointY, 0x9a9282, 3, 0.8);
+      this.audio.play(SOUNDS.hullKnock);
+      // Against the push, like a recoil: the view moves the way the drone was stopped from going.
+      const scaled = 5 * motionScale();
+      if (scaled > 0) this.camera.kick(-blockedX, -blockedY, scaled);
+    } else if (this.contactGate.tick(dt)) {
+      // Still leaning on it. Dust and a quieter scrape, nothing else.
+      this.effects.spawnDust(pointX, pointY, 0x9a9282, 2, 0.55);
+      this.audio.play(SOUNDS.hullScrape);
+    }
+    // Held against the rock for as long as the player keeps pushing, so the hull visibly *presses*
+    // rather than merely stopping. Assigned, not accumulated -- a press is a position.
+    this.hullShudder.press(blockedX, blockedY, 3.5);
+  }
+
+  /**
+   * What travelling looks like: a lean into it, and a wake behind it.
+   *
+   * Both are cheap and neither is meant to be noticed on its own. Together they are the difference
+   * between a drone flying through rock and an icon sliding over a map.
+   */
+  private driveWake(dt: number, dx: number, dy: number, length: number, heading: number): void {
+    const moving = dx !== 0 || dy !== 0;
+    // How much of the drone's travel is across its own axis, which is what a machine actually banks
+    // into. Pure forward motion should not roll at all.
+    const across = moving ? (-Math.sin(heading) * dx + Math.cos(heading) * dy) / length : 0;
+    const wanted = across * 0.17 * motionScale();
+    // Slow into the lean, slower out of it, so a flick of input does not snap the hull over.
+    this.hullLean += (wanted - this.hullLean) * Math.min(1, dt * (moving ? 6 : 3.5));
+
+    if (!moving || !this.started || this.arena) return;
+    // Shed opposite the travel, from behind the hull, at a rate set by how hard the player is
+    // pushing -- so a nudge leaves almost nothing and a full run leaves a trail.
+    const speed = Math.min(1, Math.hypot(dx, dy) / length);
+    if (speed < 0.25) return;
+    if (!this.wakeGate.tick(dt / Math.max(0.25, speed))) return;
+    const back = this.hullHalfLength * CELL * 0.55;
+    this.effects.spawnDust(
+      this.player.x - (dx / length) * back,
+      this.player.y - (dy / length) * back,
+      0x8d8676,
+      1,
+      0.5 + speed * 0.5,
+    );
+  }
+
   private updateSurvey(dt: number): void {
     // Arrows mirror WASD out here. Inside a claim the horizontal pair moves the paddle and the
     // vertical pair drives the simulation speed, so the mirroring is deliberately mode-local.
@@ -1697,8 +1815,16 @@ export class OrekenoidGame {
     // An already-intersecting pose has to stay mobile, or a save loaded into rock --
     // or a respawn against a wall -- would be unrecoverable.
     const stuck = !this.hullFits(this.player.x, this.player.y, heading);
+    // Refusal is reported rather than swallowed. Each axis is resolved separately so the hull slides
+    // along a wall, which also means each axis can be blocked on its own -- and a player scraping
+    // along rock with one axis moving needs to see the other one being refused, or the slide reads
+    // as the game having taken half their input and lost the rest.
+    let blockedX = 0;
+    let blockedY = 0;
     if (stuck || this.hullFits(this.player.x + vx, this.player.y, heading)) this.player.x += vx;
+    else if (vx) blockedX = Math.sign(vx);
     if (stuck || this.hullFits(this.player.x, this.player.y + vy, heading)) this.player.y += vy;
+    else if (vy) blockedY = Math.sign(vy);
 
     const canAim = this.can("aim");
     const rotation = canAim ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0) : 0;
@@ -1728,6 +1854,12 @@ export class OrekenoidGame {
         turnedBy += increment;
       }
     }
+    // A turn that was asked for and did not fully happen. Worth reporting separately from a blocked
+    // slide, because it is the more baffling of the two: nothing on screen otherwise explains why
+    // the survey frame will not come round.
+    const jammedTurn = delta !== 0 && Math.abs(turnedBy) < Math.abs(delta) * 0.5;
+    this.reportContact(dt, blockedX, blockedY, jammedTurn, heading);
+    this.driveWake(dt, dx, dy, length, heading);
     if (dx || dy) this.markTutorial("move");
     if (turnedBy) this.markTutorial("aim");
     // The map records where the drone has been, not what the generator produced.
@@ -1898,6 +2030,7 @@ export class OrekenoidGame {
           arena.collected++;
           this.economy.add(drop.resource, 1);
           this.audio.play(collectSound(arena.collected));
+          this.showCatch(arena, drop, arena.collected);
         } else if (this.hasSalvageDrone) {
           // The drone gets everything the paddle missed, and takes its cut in the open where the
           // player can watch it happen. The ore either survives the grinder whole or it does not,
@@ -1908,15 +2041,56 @@ export class OrekenoidGame {
             arena.collected++;
             this.economy.add(drop.resource, 1);
             this.audio.play(collectSound(arena.collected));
+            this.showCatch(arena, drop, arena.collected);
           } else {
             this.audio.play(SOUNDS.salvageGrind);
+            // The grinder taking its cut is a loss, and it should look like one: the ore is visibly
+            // reduced to dust where it was eaten rather than simply not arriving.
+            const at = this.world.localToWorld(drop.u, drop.v, arena);
+            this.effects.spawnDust(at.x * CELL, at.y * CELL, RESOURCES[drop.resource].colour, 4, 0.7);
           }
+        } else {
+          // Nothing to catch it. The piece lands and stays: the board should carry a record of what
+          // the player let through, which is the talk's permanence point applied to a miss rather
+          // than to a kill.
+          const at = this.world.localToWorld(drop.u, drop.v, arena);
+          this.effects.spawnShards(
+            at.x * CELL, at.y * CELL, RESOURCES[drop.resource].colour, 3, 0.45, true,
+          );
+          this.audio.play(SOUNDS.dropMissed);
         }
         drop.display.destroy();
         arena.drops.splice(index, 1);
       }
     }
     if (!arena.bricks.some((brick) => brick.alive && !brick.persistent)) this.finishArena("clear");
+  }
+
+  /**
+   * A catch, made visible.
+   *
+   * This was the most rewarding moment in the game and it had no picture at all -- one tone, and the
+   * drop vanished on the frame it was caught. Everything here is in the ore's own colour, so the
+   * player learns what they are collecting without a label, and the paddle takes the same scale
+   * punch a struck brick takes, so a catch reads as a *contact* rather than as a pickup.
+   *
+   * The run escalates the picture as well as the pitch, and saturates: a streak of twenty must look
+   * better than a streak of three and no better than a streak of twelve, or the effect ends up
+   * drowning the board it is supposed to be decorating.
+   */
+  private showCatch(arena: Arena, drop: Drop, run: number): void {
+    const colour = RESOURCES[drop.resource].colour;
+    const at = this.world.localToWorld(drop.u, drop.v, arena);
+    const x = at.x * CELL;
+    const y = at.y * CELL;
+    // 0 at the first catch, 1 by about a dozen.
+    const heat = Math.min(1, (run - 1) / 12);
+    this.effects.spawnRing(x, y, colour, 0.5 + heat * 0.7);
+    this.effects.spawnShards(x, y, colour, 3 + Math.round(heat * 3), 0.6 + heat * 0.4);
+    // The paddle answers the catch, the way it answers a ball.
+    arena.paddle.flash = Math.max(arena.paddle.flash, 0.1 + heat * 0.06);
+    arena.paddle.impact = Math.max(arena.paddle.impact, 0.35 + heat * 0.3);
+    this.cargoPulse.hit(0.55 + heat * 0.45);
   }
 
   /** Fit the salvage drone to the claim just framed, or hide it if none is fitted. */
@@ -2027,8 +2201,15 @@ export class OrekenoidGame {
   }
 
   private updateDisplays(dt: number): void {
-    this.drone.position.set(this.player.x, this.player.y);
-    this.drone.rotation = this.player.heading;
+    // The hull carries its own knock and its own lean. Both are written here rather than into
+    // `player`, because neither is where the drone *is* -- the collision hull, the survey frame and
+    // the save all read the true pose, and a lean that moved the real position would let the player
+    // clip a corner by leaning into it.
+    this.hullShudder.update(dt);
+    this.drone.position.set(this.player.x + this.hullShudder.x, this.player.y + this.hullShudder.y);
+    // Rolled toward the direction of travel, in the hull's own frame, and settled back when stopped.
+    // A few degrees is enough: it reads as mass rather than as an animation.
+    this.drone.rotation = this.player.heading + this.hullShudder.roll + this.hullLean;
     this.drone.visible = !this.arena;
     const arena = this.arena;
     if (arena) {
@@ -2130,6 +2311,13 @@ export class OrekenoidGame {
     // top of that turns a fast-forward into a stutter.
     if (this.hitPause > 0) this.hitPause = Math.max(0, this.hitPause - step * this.simulationRate);
     this.pauseView.showCountdown(this.resumeCountdown);
+    if (this.cargoPulse.value > 0) {
+      const before = this.cargoPulse.value > 0.05;
+      this.cargoPulse.update(step);
+      // Pushed at the HUD only on the edges, not every frame: the readout is DOM, and rewriting it
+      // sixty times a second to animate one class would be the most expensive thing in the loop.
+      if (before !== (this.cargoPulse.value > 0.05)) this.updateUI();
+    }
     this.advanceTutorial(step);
     if (this.gestureDemo) {
       this.gestureDemo.left -= step;
@@ -2184,6 +2372,7 @@ export class OrekenoidGame {
       spareBalls: arena?.spareBalls ?? 0,
       cargo: [...this.economy.resources.entries()],
       cargoAtRisk: this.economy.carriedTotal > 0,
+      cargoPulse: this.cargoPulse.value,
       resonance: showResonance
         ? {
           density: gradeOf(reading.dials.density, grades),
@@ -2326,6 +2515,12 @@ export class OrekenoidGame {
     if (wounded > 0) {
       this.integrity = this.maxIntegrity;
       this.showToast(`HULL REPAIRED · +${wounded}`);
+      // A shimmer over the hull rather than a number going up somewhere. Scaled by how badly the
+      // drone was hurt, so limping home reads differently from arriving scratched.
+      const hurt = Math.min(1, wounded / Math.max(1, this.maxIntegrity));
+      this.effects.spawnRing(this.player.x, this.player.y, PALETTE.rail, 0.5 + hurt * 0.6);
+      this.effects.spawnDust(this.player.x, this.player.y, 0xbfe0d6, 3 + Math.round(hurt * 4), 0.5);
+      this.audio.play(SOUNDS.hullRepaired);
     }
     if (this.economy.carriedTotal <= 0) return;
     const stored = this.economy.deposit();
@@ -2339,7 +2534,16 @@ export class OrekenoidGame {
     }
     this.showToast(`${stored} BANKED`);
     this.audio.play(SOUNDS.banked);
+    // The payoff for a whole expedition, which until now played one tone. A ring at the rack, ore
+    // shards thrown off the deposit, and a body thud underneath -- the low end is what makes it land
+    // as arriving somewhere rather than as a counter changing.
+    const weight = Math.min(1, stored / 40);
+    this.effects.spawnRing(this.player.x, this.player.y, PALETTE.machine, 0.7 + weight * 0.8);
+    this.effects.spawnShards(this.player.x, this.player.y, PALETTE.machine, 5 + Math.round(weight * 6), 0.9);
+    this.audio.play(SOUNDS.bankedBody);
+    this.hullShudder.kick(0, -1, 90 + weight * 90);
     this.hud.showBankNotice(stored);
+    this.hud.flashCargoBanked();
     this.requestSave();
     this.updateUI();
   }
