@@ -114,7 +114,7 @@ export const runRenderDiagnostics = async (game: OrekenoidGame): Promise<void> =
   const panel = document.createElement("aside");
   panel.className = "render-diagnostics";
   panel.innerHTML = `
-    <header><div><small>OREKENOID</small><h1>RENDER DIAGNOSTICS</h1></div><strong id="diagnosticStatus">RUNNING TESTS…</strong></header>
+    <header><div><small>OREKANOID</small><h1>RENDER DIAGNOSTICS</h1></div><strong id="diagnosticStatus">RUNNING TESTS…</strong></header>
     <section class="diagnostic-reference" id="diagnosticReference"></section>
     <section class="diagnostic-results" id="diagnosticResults"></section>
     <footer><button id="copyDiagnostics" type="button">COPY REPORT</button><span>Reload without <b>?render-diagnostics=1</b> to return.</span></footer>`;

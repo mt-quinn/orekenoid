@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CELL, DEFAULT_SEED } from "../src/config";
+import { CELL, DEFAULT_SEED, WORLD_COLS, WORLD_ROWS } from "../src/config";
 import { WorldModel } from "../src/world";
 import type { FrameGeometry } from "../src/types";
 
@@ -123,5 +123,52 @@ describe("drone hull", () => {
     const bastion = 4.8 / 2 + 13 / CELL;
     expect(world.isHullOpen(inSlot.x, inSlot.y, LONG_AXIS_VERTICAL, HALF_LENGTH, HALF_THICKNESS)).toBe(true);
     expect(world.isHullOpen(inSlot.x, inSlot.y, LONG_AXIS_VERTICAL, bastion, HALF_THICKNESS)).toBe(false);
+  });
+});
+
+describe("claims at the edge of the world", () => {
+  // A frame used to be refused outright if any corner left the map, which cost the player every
+  // claim along a border. Nothing about the board minds: outside the world there is simply nothing to
+  // cut, so the overhanging part is empty space.
+  it("samples an overhanging frame without complaint, and yields only the cells that exist", () => {
+    const world = new WorldModel();
+    // Hard against the right-hand edge, half the frame past it.
+    const frame: FrameGeometry = {
+      origin: { x: WORLD_COLS - 2, y: WORLD_ROWS / 2 },
+      angle: 0,
+      width: 11,
+      depth: 11,
+    };
+    const bricks = world.framedBricks(frame);
+    // Every brick that came back is a real cell inside the world -- the out-of-bounds half
+    // contributed nothing rather than producing phantom material or throwing.
+    for (const brick of bricks) {
+      expect(brick.cell.x).toBeGreaterThanOrEqual(0);
+      expect(brick.cell.x).toBeLessThan(WORLD_COLS);
+      expect(brick.cell.y).toBeGreaterThanOrEqual(0);
+      expect(brick.cell.y).toBeLessThan(WORLD_ROWS);
+    }
+  });
+
+  it("reports material by what is in the frame, not by where the frame is", () => {
+    const world = new WorldModel();
+    // Mostly off the map, but still overlapping solid rock: claimable.
+    const overhanging: FrameGeometry = {
+      origin: { x: WORLD_COLS - 3, y: WORLD_ROWS / 2 },
+      angle: 0,
+      width: 11,
+      depth: 11,
+    };
+    expect(world.frameHasMaterial(overhanging)).toBe(true);
+
+    // Entirely outside the world: nothing to cut, and this is the one case that should refuse.
+    const beyond: FrameGeometry = {
+      origin: { x: WORLD_COLS + 40, y: WORLD_ROWS + 40 },
+      angle: 0,
+      width: 11,
+      depth: 11,
+    };
+    expect(world.frameHasMaterial(beyond)).toBe(false);
+    expect(world.framedBricks(beyond)).toHaveLength(0);
   });
 });

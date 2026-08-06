@@ -496,12 +496,28 @@ export class WorldModel {
     }
   }
 
-  frameWithinBounds(frame: FrameGeometry): boolean {
-    const half = frame.width / 2;
-    return [[-half, 0], [half, 0], [-half, frame.depth + 0.5], [half, frame.depth + 0.5]].every(([u, v]) => {
-      const point = this.localToWorld(u, v, frame);
-      return point.x >= 1 && point.y >= 1 && point.x < WORLD_COLS - 1 && point.y < WORLD_ROWS - 1;
-    });
+  /**
+   * Is there anything in this frame worth cutting?
+   *
+   * Replaced `frameWithinBounds`, which refused any claim whose corners left the map. That was the
+   * wrong question: outside the world there is simply nothing to cut, and a board is perfectly happy
+   * to carry empty space, so overhanging the edge cost the player every claim along a border for no
+   * reason. The condition that actually refuses a commit is an empty frame, and this is it.
+   *
+   * Cell centres only, with an early exit. This runs every frame for the survey preview, and the
+   * authoritative sampling in `framedBricks` is twenty-five points per cell -- three thousand point
+   * tests a frame would be a real cost on a phone for a question a hundred can answer. A frame whose
+   * every cell centre is empty will not produce bricks, and the commit re-checks properly anyway.
+   */
+  frameHasMaterial(frame: FrameGeometry): boolean {
+    for (let row = 0; row < frame.depth; row++) {
+      for (let column = 0; column < frame.width; column++) {
+        const u = -frame.width / 2 + 0.5 + column;
+        const point = this.localToWorld(u, 0.5 + row, frame);
+        if (this.solidAt(point.x, point.y)) return true;
+      }
+    }
+    return false;
   }
 
   /** Nearest cornerstone, for world-scale telegraphing in the HUD. */

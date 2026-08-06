@@ -255,7 +255,7 @@ test("an expedition survives a reload, and the Atlas records only what was surve
   });
   expect(roundTrip.goodOk).toBe(true);
   expect(roundTrip.goodSeed).toBe("bounceworld-01");
-  expect(roundTrip.fileName).toMatch(/^orekenoid-bounceworld-01-.*\.json$/);
+  expect(roundTrip.fileName).toMatch(/^orekanoid-bounceworld-01-.*\.json$/);
   expect(roundTrip.truncatedOk).toBe(false);
   expect(roundTrip.truncatedReason).toContain("JSON");
   expect(roundTrip.wrongVersionOk).toBe(false);

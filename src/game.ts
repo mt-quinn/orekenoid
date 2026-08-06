@@ -452,7 +452,7 @@ export class OrekenoidGame {
     host.dataset.renderer = this.app.renderer.constructor.name;
     this.app.canvas.style.width = "100%";
     this.app.canvas.style.height = "100%";
-    this.app.canvas.setAttribute("aria-label", "Orekenoid");
+    this.app.canvas.setAttribute("aria-label", "Orekanoid");
     // Above the world and the bay: these are the player's own hands, and nothing occludes them.
     this.app.stage.addChild(this.worldRoot, this.gantry.container, this.touchControls.container);
     this.worldRoot.addChild(this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer, this.actorLayer, this.framePreview, this.coach.container);
@@ -1144,7 +1144,13 @@ export class OrekenoidGame {
 
   private establishArena(): void {
     const frame = this.frameGeometry();
-    if (!this.world.frameWithinBounds(frame)) { this.showToast("CLAIM CROSSES SURVEY LIMIT"); return; }
+    // A claim may hang off the edge of the world. There was a guard here refusing any frame whose
+    // corners left the map, which cost the player every claim along a border for no reason: sampling
+    // outside the world already yields nothing, because `solidAt` reports a cell that does not exist
+    // as not solid, so the overhanging part of the board is simply empty space.
+    //
+    // "No material in frame" still refuses, which covers the only case that was ever really at
+    // stake -- a frame aimed entirely at nothing.
     const sampled = this.world.framedBricks(frame);
     if (!sampled.length) { this.showToast("NO MATERIAL IN FRAME"); return; }
     const bricks: Brick[] = [];

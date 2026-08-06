@@ -268,7 +268,7 @@ export function hasSave(): boolean {
 export function saveFileName(data: SaveData): string {
   const stamp = new Date(data.savedAt || Date.now()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const seed = data.seedLabel.replace(/[^a-z0-9-]+/gi, "-");
-  return `orekenoid-${seed}-${stamp}.json`;
+  return `orekanoid-${seed}-${stamp}.json`;
 }
 
 /** Hand the player a save file. Two spaces of indent so it stays hand-readable. */

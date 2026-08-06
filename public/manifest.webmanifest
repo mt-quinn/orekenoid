@@ -1,6 +1,6 @@
 {
-  "name": "Orekenoid",
-  "short_name": "Orekenoid",
+  "name": "Orekanoid",
+  "short_name": "Orekanoid",
   "description": "A mining expedition, one claim at a time.",
   "start_url": "/",
   "scope": "/",

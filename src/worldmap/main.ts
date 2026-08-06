@@ -310,7 +310,7 @@ function exportPng(pixelsPerCell: number): void {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `orekenoid-${seedField.value}-${raster.layer}-${pixelsPerCell}x.png`;
+    link.download = `orekanoid-${seedField.value}-${raster.layer}-${pixelsPerCell}x.png`;
     link.click();
     URL.revokeObjectURL(url);
   }, "image/png");

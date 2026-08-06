@@ -137,9 +137,11 @@ export function drawFramePreview(
   const toWorld = (u: number, v: number): Vec2 => world.localToWorld(u, v, frame);
   const corners = [[-half, 0], [half, 0], [half, frame.depth + 0.5], [-half, frame.depth + 0.5]]
     .map(([u, v]) => toWorld(u, v));
-  const valid = world.frameWithinBounds(frame);
+  // Reddened for the one condition that genuinely refuses a commit: an empty frame. Overhanging the
+  // edge of the world used to colour red too, which told the player a legal claim was illegal --
+  // outside the map there is simply nothing to cut, and the board carries empty space there.
   const province = world.provinceAt(frame.origin.x, frame.origin.y);
-  const signal = valid ? PROVINCE_PALETTE[province].accent : PALETTE.danger;
+  const signal = world.frameHasMaterial(frame) ? PROVINCE_PALETTE[province].accent : PALETTE.danger;
   const polygon = flatPoints(corners.map((point) => ({ x: point.x * CELL, y: point.y * CELL })));
 
   layers.wash.clear().poly(polygon)
