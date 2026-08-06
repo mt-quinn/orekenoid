@@ -102,16 +102,23 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await page.click("#beginButton");
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 
-  // --- Tutorial controls ---------------------------------------------------
-  // One rung at a time, taught by doing, then removed from the DOM for good. It used to be a
-  // six-row checklist with every control already live; now the sequence asks for one thing and
-  // refuses everything it has not offered yet.
-  await expect(page.locator("#tutorial")).toBeVisible();
-  await expect(page.locator("#tutorialList .ftue-now")).toHaveCount(1);
-  await expect(page.locator("#tutorialList .ftue-now")).toContainText("MOVE");
-  // Progress is a row of pips, none of them lit on the first frame.
-  await expect(page.locator("#tutorialList .ftue-pip")).toHaveCount(8);
-  await expect(page.locator("#tutorialList .ftue-pip.on")).toHaveCount(0);
+  // --- The opening sequence --------------------------------------------------
+  // One rung at a time, taught by doing. There is no DOM panel any more: the prompt is drawn in
+  // the world on the thing it is talking about, so what is asserted is where it is pointing and
+  // what it is asking for, not a box in a corner.
+  await expect(page.locator("#tutorial")).toHaveCount(0);
+  const firstPrompt = await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    const prompt = game.coach.prompt;
+    return prompt && { goal: prompt.goal, keys: prompt.keys, x: prompt.x, y: prompt.y };
+  });
+  expect(firstPrompt?.goal).toBe("FLY THE DRONE");
+  // Anchored on the drone itself, which is the whole point of the rewrite.
+  const dronePos = await page.evaluate(() => {
+    const player = (window as unknown as Win).__OREKENOID__.game.player;
+    return { x: player.x, y: player.y };
+  });
+  expect(Math.hypot((firstPrompt?.x ?? 0) - dronePos.x, (firstPrompt?.y ?? 0) - dronePos.y)).toBeLessThan(1);
 
   // Exclusive: a control the sequence has not reached yet does nothing. Committing a claim is
   // three rungs away, so F must not frame one.
@@ -170,9 +177,34 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await page.waitForTimeout(600);
   await page.keyboard.up("KeyS");
   await page.keyboard.up("KeyE");
-  // Moving and aiming light their pips and hand the sequence on to the next rung.
-  await expect(page.locator("#tutorialList .ftue-pip.on")).toHaveCount(2);
-  await expect(page.locator("#tutorialList .ftue-now")).toContainText("COMMIT THE CLAIM");
+  // Moving and aiming hand the sequence on to the Atlas, which is taught out here in the survey
+  // rather than after a claim has started -- asking a player to stop reading a live board and go
+  // and open a map is a strange thing to do in the middle of a rally.
+  await page.waitForFunction(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    return game.coach.prompt?.goal === "OPEN THE ATLAS";
+  }, null, { timeout: 5_000 });
+  await page.keyboard.press("KeyM");
+  await expect(page.locator("#atlas")).toHaveClass(/open/);
+  await page.keyboard.press("KeyM");
+  await expect(page.locator("#atlas")).not.toHaveClass(/open/);
+
+  // Then the commit rung, whose prompt points at the framed rock out in front rather than at the
+  // machine -- "commit the claim" is about the rectangle of rock, and the drone is the wrong noun.
+  await page.waitForFunction(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    return game.coach.prompt?.goal === "COMMIT THE CLAIM";
+  }, null, { timeout: 5_000 });
+  const commitAnchor = await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    const prompt = game.coach.prompt;
+    return {
+      distance: Math.hypot((prompt?.x ?? 0) - game.player.x, (prompt?.y ?? 0) - game.player.y),
+      ring: prompt?.ring === true,
+    };
+  });
+  expect(commitAnchor.distance).toBeGreaterThan(20);
+  expect(commitAnchor.ring).toBe(true);
   const surveyAfter = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.player.heading);
   expect(Math.abs(surveyAfter - surveyBefore.heading)).toBeGreaterThan(0.15);
   expect(Math.abs(surveyAfter / (Math.PI / 2) - Math.round(surveyAfter / (Math.PI / 2)))).toBeGreaterThan(0.05);
@@ -249,16 +281,28 @@ test("deployment previews, generated world, province rules, and the crafting cha
   expect(hud.arenaBalls).toBe(2);
   await page.screenshot({ path: "webgl-karst-claim.png", fullPage: true });
 
-  // Aiming the serve comes first in the sequence, because it is the only steering the player has
-  // and it stops working the instant the ball is live. Serving is refused until it is taught.
-  const aimGate = await page.evaluate(async () => {
+  // Moving the paddle comes first inside a claim: the player holds the thing they control before
+  // anything is launched with it. Serving first meant discovering the paddle while a ball was
+  // already falling, which is a bad first ten seconds of a new mode.
+  const serveGate = await page.evaluate(async () => {
     const api = (window as unknown as Win).__OREKENOID__;
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 150));
     return api.state.arena.balls.some((ball: any) => ball.served);
   });
-  expect(aimGate, "served before the sequence taught aiming").toBe(false);
+  expect(serveGate, "served before the sequence taught the paddle").toBe(false);
 
+  await page.keyboard.down("KeyD");
+  await page.waitForTimeout(400);
+  await page.keyboard.up("KeyD");
+  await page.waitForFunction(() => {
+    const done = (window as unknown as Win).__OREKENOID__.game.tutorial
+      .filter((step: any) => step.done).map((step: any) => step.id);
+    return done.includes("paddle");
+  }, null, { timeout: 10_000 });
+
+  // Aiming then comes before the serve, because it is the only steering the player has and it
+  // stops working the instant the ball is live.
   const aimedBefore = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.arena.serveAim);
   await page.keyboard.down("KeyE");
   await page.waitForTimeout(320);
@@ -272,36 +316,22 @@ test("deployment previews, generated world, province rules, and the crafting cha
   const hintsAfterServe = await page.locator("#instructions").innerText();
   expect(hintsAfterServe).not.toContain("serve");
 
-  // Move the paddle and read the Atlas to finish the checklist, then the panel
-  // retires permanently. The Atlas is readable mid-arena by design.
-  await page.keyboard.down("KeyD");
-  await page.waitForTimeout(400);
-  await page.keyboard.up("KeyD");
-
-  // The sequence still owes two rungs before the Atlas: aiming a serve, which only happens
-  // pre-serve, and the optional speed controls, which dismiss themselves once the claim is over.
-  await page.waitForFunction(() => {
-    const done = (window as unknown as Win).__OREKENOID__.game.tutorial
-      .filter((step: any) => step.done).map((step: any) => step.id);
-    return done.includes("paddle");
-  }, null, { timeout: 10_000 });
-  // Then wait for the sequence to reach the Atlas rung. The optional speed step gets there either
-  // by being demonstrated or by dismissing itself when the claim ends.
+  // The sequence now owes only the optional speed step, which finishes either by being
+  // demonstrated or by dismissing itself. Nothing left asks the player to leave the board.
   await page.waitForFunction(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
-    return game.tutorial.find((step: any) => !step.done)?.id === "atlas";
+    return game.tutorial.every((step: any) => step.done);
   }, null, { timeout: 25_000 });
-
-  await page.keyboard.press("KeyM");
-  await expect(page.locator("#atlas")).toHaveClass(/open/);
-  await page.keyboard.press("KeyM");
-  await expect(page.locator("#atlas")).not.toHaveClass(/open/);
   const checklist = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     return { done: game.tutorial.filter((step: any) => step.done).length, total: game.tutorial.length };
   });
   expect(checklist.done).toBe(checklist.total);
-  await expect(page.locator("#tutorial")).toHaveCount(0, { timeout: 10_000 });
+  // Finished means gone: the prompt fades out and stops claiming a subject.
+  await page.waitForFunction(
+    () => (window as unknown as Win).__OREKENOID__.game.coach.prompt === null,
+    null, { timeout: 10_000 },
+  );
 
   // Resolution charges load only for liable material, and landmarks survive.
   await page.evaluate(() => (window as unknown as Win).__OREKENOID__.forceLoss());
@@ -460,9 +490,9 @@ test("deployment previews, generated world, province rules, and the crafting cha
       const style = getComputedStyle(element);
       return style.visibility === "hidden" || Number(style.opacity) === 0;
     };
-    return { top: hidden(".hud-top"), bottom: hidden(".hud-bottom"), tutorial: hidden(".tutorial") };
+    return { top: hidden(".hud-top"), bottom: hidden(".hud-bottom") };
   });
-  expect(hudHidden).toEqual({ top: true, bottom: true, tutorial: true });
+  expect(hudHidden).toEqual({ top: true, bottom: true });
 
   await page.screenshot({ path: "webgl-forge.png", fullPage: true });
 

@@ -44,6 +44,7 @@ import { Gantry, type GantryModel } from "./view/gantry";
 import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
+import { Coach } from "./view/coach";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
@@ -112,6 +113,8 @@ export class OrekenoidGame {
   readonly effectLayer = new Container();
   readonly actorLayer = new Container();
   readonly framePreview = new Container();
+  /** The opening sequence's prompt, anchored in the world rather than pinned to a corner. */
+  readonly coach = new Coach();
   readonly frameWash = new Graphics();
   readonly frameGrid = new Graphics();
   readonly frameScan = new Graphics();
@@ -182,21 +185,26 @@ export class OrekenoidGame {
    * and it would be silly to hold the tutorial hostage to them.
    */
   readonly tutorial: TutorialStep[] = [
-    { id: "move", keys: "WASD / ARROWS", label: "MOVE", where: "survey", done: false },
-    { id: "aim", keys: "Q / E", label: "AIM THE FRAME", where: "survey", done: false },
-    { id: "commit", keys: "F", label: "COMMIT THE CLAIM", where: "survey", done: false },
-    // Aiming inside a claim comes *before* the serve, because that is the only time it does
-    // anything -- the aim steers the ball off the paddle and is fixed once the ball is live.
-    // Teaching it after "SERVE" made it unreachable in that claim, which is exactly the kind of
-    // thing a sequential tutorial makes obvious and a checklist hides.
-    { id: "arenaAim", keys: "Q / E", label: "AIM THE SERVE", where: "play", done: false },
+    { id: "move", keys: "WASD / ARROWS", label: "FLY THE DRONE", why: "Rock worth cutting is everywhere down here.", where: "survey", done: false },
+    { id: "aim", keys: "Q / E", label: "TURN THE FRAME", why: "The frame is the rock you will cut.", where: "survey", done: false },
+    // The Atlas is how the mine becomes navigable at all, so it is taught rather than left to be
+    // found -- and taught out here, before the first claim. It used to come last, which put it
+    // after the claim had already started: the sequence asked the player to stop reading a live
+    // board and go and open a map, which is a strange thing to do in the middle of a rally.
+    { id: "atlas", keys: "M", label: "OPEN THE ATLAS", why: "Everywhere you have been.", where: "survey", done: false },
+    { id: "commit", keys: "F", label: "COMMIT THE CLAIM", why: "The framed rock becomes your board.", where: "survey", done: false },
+    // Inside a claim the order is: hold the thing you control, then aim it, then let go. Serving
+    // first meant the player's very first act in the new mode was to launch a ball they had no
+    // idea how to catch, and then to discover the paddle while it was already falling.
+    { id: "paddle", keys: "A / D", label: "MOVE THE PADDLE", why: "It is the drone, edge on.", where: "play", done: false },
+    // Aiming comes before the serve because that is the only time it does anything -- the aim
+    // steers the ball off the paddle and is fixed once the ball is live. Teaching it afterwards
+    // made it unreachable in that claim, which is the kind of thing a sequential tutorial makes
+    // obvious and a checklist hides.
+    { id: "arenaAim", keys: "Q / E", label: "AIM THE SERVE", why: "The only steering you get.", where: "play", done: false },
     { id: "serve", keys: "SPACE", label: "SERVE", where: "play", done: false },
-    { id: "paddle", keys: "A / D", label: "MOVE THE PADDLE", where: "play", done: false },
     // Shown, not demanded.
-    { id: "speed", keys: "W / S", label: "HOLD TO SPEED UP", where: "play", optional: true, done: false },
-    // The Atlas is how the mine becomes navigable at all, so it is taught rather
-    // than left to be found.
-    { id: "atlas", keys: "M", label: "OPEN THE ATLAS", where: "survey", done: false },
+    { id: "speed", keys: "W / S", label: "HOLD TO SPEED UP", why: "For the long tail of a claim.", where: "play", optional: true, done: false },
   ];
   /**
    * A real pause: the claim's simulation stops, not just the interface.
@@ -218,8 +226,6 @@ export class OrekenoidGame {
   tutorialComplete = false;
   /** How long the current step has been on screen, for advancing the optional ones. */
   private tutorialShownFor = 0;
-  /** Pulses the prompt when a key the player has not been given yet is pressed. */
-  private tutorialNudge = 0;
   private tutorialFadeTimer = 0;
   private arrivalTimer = 0;
   private compassTimer = 0;
@@ -304,7 +310,10 @@ export class OrekenoidGame {
 
   /** A key was pressed that the sequence has not offered yet. Pulse rather than nag. */
   private refuseControl(): void {
-    this.tutorialNudge = 0.6;
+    // Answered at the prompt itself. A refusal that flashes a panel on the far side of the screen
+    // is a refusal the player does not see, and an unexplained dead key is the worst thing a
+    // tutorial can hand someone in their first minute.
+    this.coach.refused();
   }
 
   /** Can the hull occupy this pose without intersecting rock? */
@@ -346,7 +355,7 @@ export class OrekenoidGame {
     this.app.canvas.style.height = "100%";
     this.app.canvas.setAttribute("aria-label", "Orekenoid");
     this.app.stage.addChild(this.worldRoot, this.gantry.container);
-    this.worldRoot.addChild(this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer, this.actorLayer, this.framePreview);
+    this.worldRoot.addChild(this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer, this.actorLayer, this.framePreview, this.coach.container);
     this.terrainLayer.addChild(this.terrain.container);
     buildFarGeology(this.farLayer);
     // Build the opening neighbourhood synchronously so the first frame is complete.
@@ -478,11 +487,75 @@ export class OrekenoidGame {
     this.hud.render(this.buildHudModel());
   }
 
+  /**
+   * Put the prompt on the thing it is about.
+   *
+   * The step decides its own subject: the drone for flying and framing, the frame's own centre for
+   * committing, the paddle for paddling and aiming, the ball for serving. That is the entire idea
+   * behind this rewrite -- the player never has to look away from what they are being taught in
+   * order to read about it, and there is never any doubt about which object the sentence means.
+   *
+   * A step whose mode the player is not in shows nothing at all rather than asking for the
+   * impossible from a subject that is not on screen.
+   */
   private renderTutorial(): void {
-    if (this.tutorialComplete) return;
-    // One rung, not the whole ladder. A list of six invites the player to go and do all six; a
-    // single line asks for one thing and is finished with it before the next appears.
-    this.hud.renderTutorial(this.currentStep, this.tutorial);
+    // Nothing while the bay or the Atlas is up. Those cover the world, and a tag pointing at a
+    // drone the player cannot currently see is worse than no tag at all.
+    if (this.tutorialComplete || this.craftingOpen || this.atlasOpen || this.paused) {
+      this.coach.hide();
+      return;
+    }
+    const step = this.currentStep;
+    if (!step || step.where !== (this.arena ? "play" : "survey")) {
+      this.coach.hide();
+      return;
+    }
+    const anchor = this.tutorialAnchor(step);
+    if (!anchor) {
+      this.coach.hide();
+      return;
+    }
+    this.coach.show({ goal: step.label, why: step.why, keys: step.keys, ...anchor });
+  }
+
+  /** Where the current step's subject is, in world pixels, and how to hang the tag off it. */
+  private tutorialAnchor(step: TutorialStep): { x: number; y: number; side?: 1 | -1; ring?: boolean } | null {
+    const arena = this.arena;
+    if (arena) {
+      // Inside a claim the tag hangs above the paddle and off to the side, out of the ball's
+      // working space. The subject is the paddle for everything except the serve, which is about
+      // the ball -- and the ball is sitting on the paddle at that moment anyway, so the leader
+      // line lands where the player is already watching.
+      const target = step.id === "serve" && arena.balls.length
+        ? { u: arena.balls[0].u, v: arena.balls[0].v }
+        : { u: arena.paddle.u, v: 0 };
+      const point = this.world.localToWorld(target.u, target.v, arena);
+      // Hung toward the middle of the board, so a paddle at either extreme does not push the tag
+      // off the edge of the view.
+      return { x: point.x * CELL, y: point.y * CELL, side: arena.paddle.u > 0 ? -1 : 1, ring: step.id === "serve" };
+    }
+    // Hung on the side the frame is not, so the prompt never covers the rock it is telling the
+    // player to look at. The survey preview is a large bright rectangle out ahead of the drone,
+    // and a tag parked on top of it hides the one thing the sequence is building toward.
+    const ahead: 1 | -1 = Math.cos(this.player.heading) > 0 ? 1 : -1;
+    if (step.id === "commit") {
+      // The frame, not the drone: "commit the claim" is about the rectangle of rock out in front,
+      // and pointing at the machine instead would be pointing at the wrong noun.
+      const frame = this.frameGeometry();
+      const reach = (frame.depth / 2 + 1) * CELL;
+      return {
+        x: this.player.x + Math.cos(frame.angle) * reach,
+        y: this.player.y + Math.sin(frame.angle) * reach,
+        side: ahead,
+        ring: true,
+      };
+    }
+    return {
+      x: this.player.x,
+      y: this.player.y,
+      side: ahead === 1 ? -1 : 1,
+      ring: step.id === "move",
+    };
   }
 
   /**
@@ -1711,15 +1784,15 @@ export class OrekenoidGame {
     if (this.hitPause > 0) this.hitPause = Math.max(0, this.hitPause - step * this.simulationRate);
     this.pauseView.showCountdown(this.resumeCountdown);
     this.advanceTutorial(step);
-    if (this.tutorialNudge > 0) {
-      this.tutorialNudge = Math.max(0, this.tutorialNudge - step);
-      this.hud.setTutorialNudge(this.tutorialNudge > 0);
-    }
+    // Re-anchored every frame, because the subject moves: the tag rides the drone through the
+    // rock and the paddle across the board, which is the difference between a prompt that belongs
+    // to a thing and one that merely appeared near it once.
+    this.renderTutorial();
+    this.coach.update(step, this.camera.rotation);
     if (this.tutorialFadeTimer > 0) {
       this.tutorialFadeTimer = Math.max(0, this.tutorialFadeTimer - step);
       if (this.tutorialFadeTimer === 0) {
         this.tutorialComplete = true;
-        this.hud.removeTutorial();
         this.updateUI();
       }
     }
@@ -1811,7 +1884,6 @@ export class OrekenoidGame {
     this.audio.play(SOUNDS.tutorialStep);
     if (this.tutorial.every((entry) => entry.done)) {
       this.tutorialFadeTimer = 1.4;
-      this.hud.markTutorialComplete();
     }
   }
 
@@ -1837,7 +1909,6 @@ export class OrekenoidGame {
         this.renderTutorial();
         if (this.tutorial.every((entry) => entry.done)) {
           this.tutorialFadeTimer = 1.4;
-          this.hud.markTutorialComplete();
         }
       }
       return;
@@ -1849,7 +1920,6 @@ export class OrekenoidGame {
       this.renderTutorial();
       if (this.tutorial.every((entry) => entry.done)) {
         this.tutorialFadeTimer = 1.4;
-        this.hud.markTutorialComplete();
       }
     }
   }
@@ -2030,7 +2100,7 @@ export class OrekenoidGame {
     // "tutorial over", and every control is unlocked.
     this.tutorialComplete = true;
     for (const step of this.tutorial) step.done = true;
-    this.hud.removeTutorial();
+    this.coach.hide();
     this.regionsSeen.clear();
     for (const region of data.progress.regionsSeen) this.regionsSeen.add(region);
     this.hasCommitted = data.progress.hasCommitted;

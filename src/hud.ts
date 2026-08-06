@@ -76,8 +76,6 @@ export class Hud {
   private readonly soakLabel = document.querySelector<HTMLElement>("#soakValue");
   private readonly ballPips = document.querySelector<HTMLElement>("#ballPips");
   private readonly arrivalCard = document.querySelector<HTMLElement>("#arrival");
-  private readonly tutorialPanel = document.querySelector<HTMLElement>("#tutorial");
-  private readonly tutorialList = document.querySelector<HTMLElement>("#tutorialList");
   private readonly bankNotice = document.querySelector<HTMLElement>("#bankNotice");
   private readonly forgeCompass = document.querySelector<HTMLElement>("#forgeCompass");
   private readonly forgeCompassRange = document.querySelector<HTMLElement>("#forgeCompassRange");
@@ -241,39 +239,6 @@ export class Hud {
   }
 
   // --- Tutorial -----------------------------------------------------------
-
-  /**
-   * The opening sequence, one rung at a time.
-   *
-   * `history` is drawn as spent pips rather than as rows: how far along the player is, without
-   * six labels competing for the one instruction that currently matters.
-   */
-  renderTutorial(step: TutorialStep | null, history: readonly TutorialStep[]): void {
-    if (!this.tutorialList) return;
-    if (!step) {
-      this.tutorialList.innerHTML = "";
-      return;
-    }
-    const pips = history
-      .map((entry) => `<i class="ftue-pip${entry.done ? " on" : ""}"></i>`).join("");
-    this.tutorialList.innerHTML = `<li class="ftue-now">
-      <b>${step.keys}</b><span>${step.label}</span>
-    </li><li class="ftue-track">${pips}</li>`;
-  }
-
-  /** Flash the prompt when a key the sequence has not offered yet is pressed. */
-  setTutorialNudge(on: boolean): void {
-    this.tutorialPanel?.classList.toggle("nudge", on);
-  }
-
-  /** Begin the fade. The panel is removed by `removeTutorial` once it finishes. */
-  markTutorialComplete(): void {
-    this.tutorialPanel?.classList.add("done");
-  }
-
-  removeTutorial(): void {
-    this.tutorialPanel?.remove();
-  }
 
   // --- Compass ------------------------------------------------------------
 

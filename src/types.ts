@@ -13,7 +13,16 @@ export interface Vec2 { x: number; y: number }
 export interface TutorialStep {
   id: "move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas";
   keys: string;
+  /**
+   * The imperative, in the player's terms rather than the machine's.
+   *
+   * This is the line the prompt leads with. "COMMIT THE CLAIM" is a thing a player can want;
+   * "PRESS F" is a thing they can only obey, and a tutorial made of the second kind teaches a
+   * keyboard rather than a game.
+   */
   label: string;
+  /** One short line on what it is for. Omitted where the goal is self-evident. */
+  why?: string;
   /** The mode this can be performed in, so the prompt never asks for the impossible. */
   where: "survey" | "play";
   /** Shown and then advanced automatically. Worth knowing, not worth blocking on. */
