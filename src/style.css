@@ -220,7 +220,14 @@ button { color: inherit; font: inherit; }
 }
 .cargo:not(.at-risk)::before { opacity: .5; }
 .cargo:empty::before { display: none; }
-.cargo.at-risk::before { content: "CARGO — UNBANKED"; color: var(--ore-hot); }
+/* The whole teaching job of this strip, in one caption: a pile of ore that cannot be spent yet. It
+   only appears while something is actually being carried, which is when it is worth saying. */
+.cargo.at-risk::before {
+  content: "IN THE HOLD — UNBANKED";
+  color: var(--ore-hot);
+  font-weight: 900;
+  letter-spacing: .18em;
+}
 .cargo-item { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: clamp(12px, 1cqw, 15px); font-weight: 700; letter-spacing: .06em; }
 .cargo-item i { width: 9px; height: 9px; border: 1px solid rgb(0 0 0 / .55); }
 .cargo-item b { color: var(--ink); font-size: clamp(15px, 1.28cqw, 20px); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }

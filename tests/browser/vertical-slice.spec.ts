@@ -316,26 +316,10 @@ test("deployment previews, generated world, province rules, and the crafting cha
   const hintsAfterServe = await page.locator("#instructions").innerText();
   expect(hintsAfterServe).not.toContain("serve");
 
-  // The sequence now owes only the optional speed step, which finishes either by being
-  // demonstrated or by dismissing itself. Nothing left asks the player to leave the board.
-  await page.waitForFunction(() => {
-    const game = (window as unknown as Win).__OREKENOID__.game;
-    return game.tutorial.every((step: any) => step.done);
-  }, null, { timeout: 25_000 });
-  const checklist = await page.evaluate(() => {
-    const game = (window as unknown as Win).__OREKENOID__.game;
-    return { done: game.tutorial.filter((step: any) => step.done).length, total: game.tutorial.length };
-  });
-  expect(checklist.done).toBe(checklist.total);
-  // Finished means gone: the prompt fades out and stops claiming a subject.
-  await page.waitForFunction(
-    () => (window as unknown as Win).__OREKENOID__.game.coach.prompt === null,
-    null, { timeout: 10_000 },
-  );
-
   // Resolution charges load only for liable material, and landmarks survive.
   await page.evaluate(() => (window as unknown as Win).__OREKENOID__.forceLoss());
   await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.mode === "survey", null, { timeout: 30_000 });
+
   const afterLoss = await page.evaluate(() => {
     const state = (window as unknown as Win).__OREKENOID__.state;
     const cells = (window as unknown as Win).__OREKENOID__.world.generated.cells.flat();
@@ -584,6 +568,39 @@ test("deployment previews, generated world, province rules, and the crafting cha
   const resonanceText = await page.locator("#resonance").innerText();
   expect(resonanceText).not.toMatch(/copper|iron|coal|slate/i);
   await page.screenshot({ path: "webgl-resonance.png", fullPage: true });
+
+  // Last, because banking moves ore into the banked stock and an earlier assertion in this
+  // walkthrough checks that nothing has been banked yet -- better to run the rung at the end than to
+  // reach into the economy afterwards and hide the side effect.
+  //
+  // The last rung of the sequence is taking a haul home, and it completes by *banking* rather than
+  // by a keypress -- it teaches a place, not a control -- so the walkthrough has to fly there. Done
+  // here rather than mid-claim because banking only happens out in the survey, and the only way out
+  // of a claim that keeps the hold is to finish it. Ore is added explicitly so the rung is reachable
+  // whatever the board happened to drop.
+  await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    game.economy.add("copper", 3);
+    game.player.x = 21 * 42;
+    game.player.y = 15 * 42;
+  });
+  await page.waitForFunction(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    return game.tutorial.every((step: any) => step.done);
+  }, null, { timeout: 25_000 });
+  const checklist = await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    return { done: game.tutorial.filter((step: any) => step.done).length, total: game.tutorial.length };
+  });
+  expect(checklist.done).toBe(checklist.total);
+  // Finished means gone: the prompt fades out and stops claiming a subject.
+  await page.waitForFunction(
+    () => (window as unknown as Win).__OREKENOID__.game.coach.prompt === null,
+    null, { timeout: 10_000 },
+  );
+
+
+
 
   expect(errors).toEqual([]);
 });

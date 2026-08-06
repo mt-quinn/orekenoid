@@ -13,6 +13,7 @@ import { CELL, PALETTE, PROVINCE_PALETTE, WORLD_COLS, WORLD_ROWS } from "../conf
 import { flatPoints } from "../maths";
 import type { FrameGeometry, Vec2 } from "../types";
 import type { WorldModel } from "../world";
+import { BANK } from "../worldgen/landmarks";
 
 /** A flat void plate behind the terrain, so unbuilt chunks read as unlit rock. */
 export function buildFarGeology(layer: Container): void {
@@ -55,6 +56,60 @@ export function buildLandmarks(layer: Container, world: WorldModel): void {
     marker.alpha = 0.42;
     layer.addChild(marker);
   }
+
+  drawHomeBeacon(layer);
+}
+
+/**
+ * Home, made findable by eye.
+ *
+ * The Refit Bay had no landmark treatment at all: cornerstones glowed and the one place the player
+ * has to keep coming back to looked like any other stretch of rock. Which meant "there is a home"
+ * was a fact the interface only ever asserted in text, and "where is it" could only be answered by
+ * the compass.
+ *
+ * Deliberately brass rather than a province accent. Every other glow in the mine is geology; this one
+ * is the machine, and it should not read as another seam worth cutting.
+ */
+function drawHomeBeacon(layer: Container): void {
+  // The rack, which is what the compass points at and what banking measures against.
+  const x = BANK.x * CELL;
+  const y = BANK.y * CELL;
+  const colour = PALETTE.machine;
+
+  // Visible from most of a province, the way the cornerstones are -- the point is to be spotted from
+  // far enough away that the player heads for it rather than stumbling on it.
+  const glow = new Graphics();
+  glow.circle(x, y, 340).fill({ color: colour, alpha: 0.05 });
+  glow.filters = [new BlurFilter({ strength: 36, quality: 3 })];
+  layer.addChild(glow);
+
+  // A landing pad rather than concentric geology: squared off, with approach marks on the four
+  // sides, so up close it reads as somewhere built.
+  const pad = new Graphics();
+  for (let ring = 0; ring < 3; ring++) {
+    const radius = (3.2 + ring * 1.6) * CELL;
+    pad.rect(x - radius, y - radius, radius * 2, radius * 2)
+      .stroke({ width: 2, color: colour, alpha: 0.13 - ring * 0.03 });
+  }
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    const inner = 2.1 * CELL;
+    const outer = 3.1 * CELL;
+    pad.moveTo(x + dx * inner, y + dy * inner)
+      .lineTo(x + dx * outer, y + dy * outer)
+      .stroke({ width: 3, color: colour, alpha: 0.3 });
+  }
+  pad.label = "landmark-refitBay";
+  layer.addChild(pad);
+
+  const marker = new Text({
+    text: "REFIT BAY",
+    style: { fill: colour, fontSize: 24, fontWeight: "800", letterSpacing: 4 },
+  });
+  marker.anchor.set(0.5);
+  marker.position.set(x, (BANK.y - 5.5) * CELL);
+  marker.alpha = 0.5;
+  layer.addChild(marker);
 }
 
 /** The four Graphics layers the survey projection draws into. */

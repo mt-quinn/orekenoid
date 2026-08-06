@@ -81,6 +81,7 @@ export class Hud {
   private readonly bankNotice = document.querySelector<HTMLElement>("#bankNotice");
   private readonly forgeCompass = document.querySelector<HTMLElement>("#forgeCompass");
   private readonly forgeCompassRange = document.querySelector<HTMLElement>("#forgeCompassRange");
+  private compassLabel = "";
   private readonly telemetry = document.querySelector<HTMLElement>("#telemetry");
   private readonly instructions = document.querySelector<HTMLElement>("#instructions");
   private readonly toast = document.querySelector<HTMLElement>("#toast");
@@ -295,8 +296,13 @@ export class Hud {
     this.forgeCompass.style.transform = `translate(${edgeX}px, ${edgeY}px) translate(-50%, -50%)`;
     // The triangle points up by default, so rotate a quarter turn past the bearing.
     this.forgeCompass.style.setProperty("--point", `${fix.bearing + Math.PI / 2}rad`);
-    if (this.forgeCompassRange) {
-      this.forgeCompassRange.textContent = `${fix.name} ${Math.round(fix.distanceMetres)}m`;
+    // Only written when it actually changes. This now runs every frame, and rewriting a text node
+    // sixty times a second to say the same thing is the kind of cost that never shows up in a
+    // profile as one line but does show up as a worse frame time on a phone.
+    const label = `${fix.name} ${Math.round(fix.distanceMetres)}m`;
+    if (this.forgeCompassRange && this.compassLabel !== label) {
+      this.compassLabel = label;
+      this.forgeCompassRange.textContent = label;
     }
     this.forgeCompass.classList.add("show");
   }

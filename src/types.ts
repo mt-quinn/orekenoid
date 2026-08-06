@@ -11,7 +11,7 @@ export interface Vec2 { x: number; y: number }
  * there is no separate list of what is available.
  */
 export interface TutorialStep {
-  id: "move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas";
+  id: "move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas" | "bank";
   keys: string;
   /**
    * The imperative, in the player's terms rather than the machine's.

@@ -37,7 +37,7 @@ import { applyReaction, impulse, newReaction, stepReactions } from "./view/feedb
 import { buildFarGeology, buildLandmarks, drawFramePreview } from "./view/survey";
 import { buildFeatureMarks, updateFeatureMarks, type FeatureMark } from "./view/features";
 import { gradeOf, Hud, REGION_RULES, type HudModel } from "./hud";
-import { objectiveFor } from "./objectives";
+import { objectiveFor, type Standing } from "./objectives";
 import { Gantry, type GantryModel } from "./view/gantry";
 import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
@@ -250,6 +250,11 @@ export class OrekenoidGame {
     { id: "serve", keys: "SPACE", gesture: "PRESS SERVE", label: "SERVE", where: "play", done: false },
     // Shown, not demanded.
     { id: "speed", keys: "W / S", gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "For the long tail of a claim.", where: "play", optional: true, done: false },
+    // The last rung, and the one the game most needed. Nothing told a player that ore has to come
+    // home before it can be spent, or that there is a home to bring it to -- so the first haul is
+    // taught explicitly, and the rung completes by banking rather than by pressing anything. It
+    // gates no control: there is no key to withhold here, only a place to find.
+    { id: "bank", keys: "FLY HOME", gesture: "FLY HOME", label: "BANK THE HAUL", why: "Ore only counts once it is banked.", where: "survey", done: false },
   ];
   /**
    * A real pause: the claim's simulation stops, not just the interface.
@@ -315,7 +320,10 @@ export class OrekenoidGame {
     this.camera = new Camera({ x: this.player.x, y: this.player.y });
     for (const chassis of this.chassisRoster) this.chassisIntegrity.set(chassis.id, chassis.maxHealth);
     // Anchor zero: the Refit Bay in the lander.
-    this.anchors.push({ id: "refitBay", x: this.world.start.x, y: this.world.start.y, name: "REFIT BAY" });
+    // At the rack rather than at the landing pad. Those are three cells apart, and pointing the
+    // compass at one while measuring banking against the other had the interface quoting two
+    // different distances to the same place -- 527m in the objective, 489m on the arrow.
+    this.anchors.push({ id: "refitBay", x: BANK.x, y: BANK.y, name: "REFIT BAY" });
     this.effects = new Effects(this.effectLayer);
     this.effectLayer.addChild(this.crumbleEdge);
     this.deploymentPreviews = new DeploymentPreviews(this.world, this.terrain);
@@ -718,6 +726,13 @@ export class OrekenoidGame {
       this.coach.hide();
       return;
     }
+    // Held back until the hold has something in it. A sequential tutorial that asks for the
+    // impossible stops being a sequence, and the player would be staring at "bank the haul" with an
+    // empty drone wondering what they had missed.
+    if (step.id === "bank" && this.economy.carriedTotal <= 0) {
+      this.coach.hide();
+      return;
+    }
     const anchor = this.tutorialAnchor(step);
     if (!anchor) {
       this.coach.hide();
@@ -800,7 +815,9 @@ export class OrekenoidGame {
       side: view.layout === "phone"
         ? roomier(this.player.x, this.player.y)
         : (ahead === 1 ? -1 : 1),
-      ring: step.id === "move",
+      // The banking rung rings the drone too: the subject really is the machine and its full hold,
+      // and the bearing to home is already on screen as the compass.
+      ring: step.id === "move" || step.id === "bank",
     };
   }
 
@@ -812,16 +829,24 @@ export class OrekenoidGame {
    * would point the wrong way for the whole of an arena.
    */
   private updateCompass(): void {
-    if (this.compassTimer <= 0) {
+    // Shown for as long as the hold has anything in it, not only for a few seconds after the player
+    // has already pressed the wrong key. A bearing that appears only in answer to a mistake teaches
+    // the mistake; a bearing that is simply present teaches that there is somewhere to go.
+    const standing = this.standing();
+    const carrying = standing.carried > 0 && !standing.atHome && this.mode === "survey" && !this.arena;
+    if (this.compassTimer <= 0 && !carrying) {
       this.hud.hideCompass();
       return;
     }
-    const anchor = this.anchors
-      .map((entry) => ({
-        entry,
-        distance: Math.hypot(entry.x - this.player.x / CELL, entry.y - this.player.y / CELL),
-      }))
-      .sort((a, b) => a.distance - b.distance)[0];
+    // While carrying, home specifically -- not merely the nearest anchor. Only the bay banks, so
+    // pointing at a closer anchor that cannot take the haul would be actively misleading.
+    const candidates = this.anchors.map((entry) => ({
+      entry,
+      distance: Math.hypot(entry.x - this.player.x / CELL, entry.y - this.player.y / CELL),
+    }));
+    const anchor = carrying
+      ? candidates.find((option) => option.entry.id === "refitBay") ?? candidates[0]
+      : candidates.sort((a, b) => a.distance - b.distance)[0];
     if (!anchor) return;
     const dx = anchor.entry.x * CELL - this.camera.focus.x;
     const dy = anchor.entry.y * CELL - this.camera.focus.y;
@@ -927,10 +952,14 @@ export class OrekenoidGame {
 
   private toggleCrafting(): void {
     if (!this.craftingOpen && !this.atAnchor()) {
-      // Point at the nearest forge rather than only reporting its absence.
+      // Point at the nearest forge, and say what is wrong. An arrow alone reports a direction; it
+      // does not say that the bay is a place, that it has a name, or how far off it is -- and a
+      // player who has not yet worked out that there is a home needs all three.
       this.compassTimer = 4;
       this.updateCompass();
       this.audio.play(SOUNDS.forgeOutOfRange);
+      const standing = this.standing();
+      this.showToast(`REFIT BAY ${Math.round(standing.homeMetres)}m · TOO FAR TO FORGE`);
       return;
     }
     this.craftingOpen = !this.craftingOpen;
@@ -2339,10 +2368,10 @@ export class OrekenoidGame {
         this.updateUI();
       }
     }
-    if (this.compassTimer > 0) {
-      this.compassTimer = Math.max(0, this.compassTimer - step);
-      this.updateCompass();
-    }
+    if (this.compassTimer > 0) this.compassTimer = Math.max(0, this.compassTimer - step);
+    // Every frame, not only while a timer is running: the bearing has to track the drone as it flies
+    // for it to be a bearing at all rather than a stale arrow.
+    this.updateCompass();
     if (this.arrivalTimer > 0) {
       this.arrivalTimer = Math.max(0, this.arrivalTimer - step);
       if (this.arrivalTimer === 0) this.hud.hideArrival();
@@ -2384,7 +2413,7 @@ export class OrekenoidGame {
         ? { name: cornerstone.name, distanceMetres: cornerstone.distance * 14 }
         : null,
       hints: this.hintText(),
-      objective: objectiveFor(this.economy),
+      objective: objectiveFor(this.economy, this.standing()),
     };
   }
 
@@ -2495,6 +2524,22 @@ export class OrekenoidGame {
    * Cargo becomes safe on reaching the bank. Deposit is automatic because there
    * is never a reason to refuse it -- the tension is getting home, not the keypress.
    */
+  /**
+   * Where the drone stands relative to home, for anything that needs to talk about the place.
+   *
+   * One computation shared by the objective line and the compass, so the two can never disagree
+   * about how far away the bay is -- which they would eventually, computed separately.
+   */
+  private standing(): Standing {
+    const cells = Math.hypot(BANK.x - this.player.x / CELL, BANK.y - this.player.y / CELL);
+    return {
+      carried: this.economy.carriedTotal,
+      // 14 metres to the cell, the same scale the depth readout and the Atlas use.
+      homeMetres: cells * 14,
+      atHome: cells <= 4.5,
+    };
+  }
+
   private tryBank(): void {
     const distance = Math.hypot(BANK.x - this.player.x / CELL, BANK.y - this.player.y / CELL);
     if (distance > 4.5) {
@@ -2544,6 +2589,7 @@ export class OrekenoidGame {
     this.hullShudder.kick(0, -1, 90 + weight * 90);
     this.hud.showBankNotice(stored);
     this.hud.flashCargoBanked();
+    this.markTutorial("bank");
     this.requestSave();
     this.updateUI();
   }
@@ -2660,7 +2706,10 @@ export class OrekenoidGame {
     // Anchor zero is rebuilt from the world rather than trusted from the file, so
     // a save can never leave the player without a forge to return to.
     this.anchors.length = 0;
-    this.anchors.push({ id: "refitBay", x: this.world.start.x, y: this.world.start.y, name: "REFIT BAY" });
+    // At the rack rather than at the landing pad. Those are three cells apart, and pointing the
+    // compass at one while measuring banking against the other had the interface quoting two
+    // different distances to the same place -- 527m in the objective, 489m on the arrow.
+    this.anchors.push({ id: "refitBay", x: BANK.x, y: BANK.y, name: "REFIT BAY" });
     for (const anchor of data.anchors) {
       if (anchor.id === "refitBay") continue;
       this.anchors.push({ ...anchor });

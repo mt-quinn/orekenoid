@@ -8,6 +8,8 @@ playwright-report/
 webgl-*.png
 coach-*.png
 phone-*.png
+pause-*.png
+home-*.png
 render-diagnostics.png
 
 # Reference material: local clones of tModLoader, noita-telescope and
