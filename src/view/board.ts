@@ -15,6 +15,7 @@ import { predictPath } from "../physics";
 import type { Arena, Ball, Vec2 } from "../types";
 import { attachBall, createPaddle } from "./actors";
 import { createBrickDisplay } from "./brick";
+import { newReaction } from "./feedback";
 
 /** Arena-local to world-cell transform. Supplied by the caller's `WorldModel`. */
 export type ToWorld = (u: number, v: number) => Vec2;
@@ -26,7 +27,17 @@ export type ToWorld = (u: number, v: number) => Vec2;
  * `board` beneath the bricks; rails, gauges, paddle and balls go on `actors` above
  * them, so a ball never disappears behind the geometry it is bouncing off.
  */
-export function buildArenaDisplay(arena: Arena, toWorld: ToWorld, grades: StationGrades = {}): void {
+export function buildArenaDisplay(
+  arena: Arena, toWorld: ToWorld, grades: StationGrades = {},
+  /**
+   * Whether this board arrives by crumbling out of the rock.
+   *
+   * False for anything nobody plays -- the deployment previews build a real board with this same
+   * function but never run the game loop that advances the wavefront, so a mask they cannot open
+   * left all three chassis cards showing bare terrain with a paddle floating on it.
+   */
+  crumble = true,
+): void {
   const half = arena.width / 2;
   const accent = PROVINCE_PALETTE[arena.province].accent;
   const corners = [[-half, -0.15], [half, -0.15], [half, arena.depth + 0.55], [-half, arena.depth + 0.55]]
@@ -64,18 +75,28 @@ export function buildArenaDisplay(arena: Arena, toWorld: ToWorld, grades: Statio
    * a layer of grout: masking is what makes "it still looks like terrain" literally true rather
    * than approximated.
    */
-  const crumbleMask = new Graphics();
-  arena.container.addChild(crumbleMask);
-  arena.board.mask = crumbleMask;
-  arena.crumbleMask = crumbleMask;
-  arena.crumbleFront = 0;
+  if (crumble) {
+    const crumbleMask = new Graphics();
+    arena.container.addChild(crumbleMask);
+    arena.board.mask = crumbleMask;
+    arena.crumbleMask = crumbleMask;
+    arena.crumbleFront = 0;
+  } else {
+    // Already formed, and nothing will ever advance a front for it.
+    arena.crumbleFront = arena.depth + 2;
+  }
 
   for (const brick of arena.bricks) {
-    const { container, damage } = createBrickDisplay(brick);
+    const { container, damageStages } = createBrickDisplay(brick);
     brick.display = container;
-    brick.damageDisplay = damage;
+    brick.damageStages = damageStages;
+    brick.react = newReaction();
     const position = toWorld(brick.u, brick.v);
-    container.position.set(position.x * CELL, position.y * CELL);
+    // The seat is remembered so the reaction system can shove the brick off it and spring it back
+    // without recomputing a rotation every frame for every brick on the board.
+    brick.baseX = position.x * CELL;
+    brick.baseY = position.y * CELL;
+    container.position.set(brick.baseX, brick.baseY);
     container.rotation = arena.angle;
     // Fully drawn from the first frame. The bricks *are* the rock, so they must never fade or pop
     // into existence -- the board is uncovered by the crumble wavefront's mask, not faded in over

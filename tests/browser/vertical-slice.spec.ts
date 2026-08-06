@@ -27,6 +27,22 @@ test("deployment previews, generated world, province rules, and the crafting cha
     return arenas.length === 3
       && arenas.every((arena: any) => arena.bricks.length > 0 && arena.balls.length === 1);
   });
+
+  // Holding brick data is not the same as drawing it, and this is the gap a real regression walked
+  // through: the crumble wavefront gave every board a mask, previews never run the loop that opens
+  // one, and all three cards rendered bare terrain with a paddle on it. The brick assertion above
+  // passed, and so did the readiness check, because terrain is perfectly good visible pixels.
+  const previewDrawn = await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    return game.deploymentPreviews.arenas.map((arena: any) => ({
+      masked: Boolean(arena.board.mask),
+      drawn: arena.board.children.length,
+    }));
+  });
+  for (const preview of previewDrawn) {
+    expect(preview.masked, "a preview board is behind a mask nothing will ever open").toBe(false);
+    expect(preview.drawn, "a preview board has nothing in it").toBeGreaterThan(3);
+  }
   const previewAlignment = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     return [...document.querySelectorAll<HTMLElement>(".field-window")].map((element, index) => {

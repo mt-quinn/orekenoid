@@ -29,6 +29,7 @@ import { createBall, stepBall } from "./physics";
 import type { ChunkedTerrain } from "./terrain";
 import type { Arena, Brick, FrameGeometry } from "./types";
 import { buildArenaDisplay } from "./view/board";
+import { showDamage } from "./view/brick";
 import type { WorldModel } from "./world";
 
 /** One card's rig. */
@@ -114,11 +115,13 @@ export class DeploymentPreviews {
         resourceCount: 0, collected: 0, combo: 0,
         splitArmed: false, splitUsed: false, serveAim: 0, initialLiability: bricks.length, damageTaken: 0,
         spareBalls: 0,
-        paddle: { u: 0, velocity: 0, width: chassis.paddleWidth, flash: 0, impact: 0 },
-        container: content, board, actors, resolving: false, visualAge: 2, crumbleFront: 999,
+        paddle: { u: 0, velocity: 0, width: chassis.paddleWidth, flash: 0, impact: 0, recoil: 0 },
+        container: content, board, actors, resolving: false, visualAge: 2, crumbleFront: 999, railFlash: 0,
       };
       // The production board builder. Not a preview-specific path.
-      buildArenaDisplay(arena, (u, v) => this.world.localToWorld(u, v, arena));
+      // No crumble: a preview is a still life of a board, and nothing here runs the loop that
+      // would open the mask.
+      buildArenaDisplay(arena, (u, v) => this.world.localToWorld(u, v, arena), {}, false);
       // Bricks normally arrive through the commit scan; a preview is already open.
       for (const brick of arena.bricks) {
         brick.display!.alpha = 1;
@@ -296,7 +299,7 @@ export class DeploymentPreviews {
         }
         brick.hp--;
         brick.hitFlash = 0.14;
-        if (brick.damageDisplay) brick.damageDisplay.alpha = brick.hp < brick.maxHp ? 0.82 : 0;
+        showDamage(brick);
         if (brick.hp <= 0) {
           brick.alive = false;
           if (brick.display) brick.display.visible = false;
@@ -341,7 +344,8 @@ export class DeploymentPreviews {
         brick.display.visible = true;
         brick.display.scale.set(1);
       }
-      if (brick.damageDisplay) brick.damageDisplay.alpha = 0;
+      brick.hp = brick.maxHp;
+      showDamage(brick);
     }
     preview.arena.paddle.u = 0;
     preview.arena.paddle.velocity = 0;

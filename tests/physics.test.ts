@@ -18,8 +18,8 @@ function arenaWith(bricks: Brick[]): Arena {
     resourceCount: 0, collected: 0, combo: 0,
     splitArmed: false, splitUsed: false, serveAim: 0, initialLiability: bricks.length, damageTaken: 0,
     spareBalls: 0,
-    paddle: { u: 0, velocity: 0, width: 3.1, flash: 0, impact: 0 },
-    container, board: new Container(), actors: new Container(), resolving: false, visualAge: 0, crumbleFront: 999,
+    paddle: { u: 0, velocity: 0, width: 3.1, flash: 0, impact: 0, recoil: 0 },
+    container, board: new Container(), actors: new Container(), resolving: false, visualAge: 0, crumbleFront: 999, railFlash: 0,
   };
 }
 

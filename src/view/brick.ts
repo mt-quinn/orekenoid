@@ -13,8 +13,25 @@ import type { Brick } from "../types";
 
 export interface BrickDisplay {
   container: Container;
-  /** Revealed once the brick has taken a hit but is not yet broken. */
-  damage: Graphics;
+  /**
+   * One layer per hit the brick can take before breaking, revealed in order.
+   *
+   * The player must be able to read "one more hit" off a brick without counting their own shots.
+   */
+  damageStages: Graphics[];
+}
+
+/**
+ * Reveal the fracture layers a brick has earned.
+ *
+ * One place, called from everywhere, because the mapping from hit points to visible stages is the
+ * whole readability of multi-hit material and three copies of it would drift.
+ */
+export function showDamage(brick: Brick): void {
+  const stages = brick.damageStages;
+  if (!stages) return;
+  const taken = brick.maxHp - brick.hp;
+  for (let stage = 0; stage < stages.length; stage++) stages[stage].visible = stage < taken;
 }
 
 export function createBrickDisplay(brick: Brick): BrickDisplay {
@@ -99,15 +116,45 @@ export function createBrickDisplay(brick: Brick): BrickDisplay {
     .moveTo(-size / 2 + 5, size / 2 - 7).lineTo(-size / 2 + 5, -size / 2 + 7)
     .stroke({ width: 1, color: 0xffffff, alpha: 0.12 });
 
-  // Fracture state. Multi-hit material must expose its progress, or a four-hit
-  // slate bank is indistinguishable from a wasted shot.
-  const damage = new Graphics()
-    .moveTo(-size * 0.3, -size * 0.1).lineTo(-size * 0.08, 1).lineTo(-size * 0.18, size * 0.28)
-    .moveTo(-size * 0.08, 1).lineTo(size * 0.15, -size * 0.18).lineTo(size * 0.32, -size * 0.08)
-    .stroke({ width: 2.1, color: PALETTE.ink, alpha: 0.78 });
-  damage.alpha = 0;
+  // Fracture state, one visible stage per hit the brick can absorb.
+  //
+  // This replaced a single crack graphic whose alpha went from 0 to 0.82 the moment a brick took
+  // any damage at all: a slate bank at 3 hp looked exactly like the same bank at 1 hp, so the
+  // player had no way to read "one more" and every multi-hit material became a guess. Each stage
+  // adds a longer fracture, a deeper bite out of the silhouette and a little more grime, so the
+  // brick is visibly closer to failing.
+  const damageStages: Graphics[] = [];
+  // One fewer stage than hit points: a brick with one hit point has no survivable damaged state,
+  // so it gets no stages at all. The `Math.max(1, ...)` this replaced handed chalk a stage that
+  // could only ever appear at zero hit points -- which is to say, never, because it is dead.
+  const stageCount = definition.hp - 1;
+  for (let stage = 0; stage < stageCount; stage++) {
+    const severity = (stage + 1) / stageCount;
+    const graphic = new Graphics();
+    // A fracture that grows across the face, at a different angle per stage so they read as
+    // accumulating damage rather than one line thickening.
+    const lean = stage % 2 === 0 ? 1 : -1;
+    const spread = size * (0.16 + severity * 0.24);
+    graphic
+      .moveTo(-spread * lean, -spread * 0.7)
+      .lineTo(-size * 0.04 * lean, size * 0.04)
+      .lineTo(spread * 0.7 * lean, spread)
+      .stroke({ width: 1.6 + severity * 1.4, color: 0x05080a, alpha: 0.5 + severity * 0.35 });
+    // A bite out of the rim, so the outline itself degrades and the damage survives being tinted.
+    const bite = size * (0.08 + severity * 0.1);
+    const corner = [[-1, -1], [1, -1], [1, 1], [-1, 1]][stage % 4];
+    graphic
+      .poly([
+        corner[0] * size / 2, corner[1] * size / 2,
+        corner[0] * (size / 2 - bite), corner[1] * size / 2,
+        corner[0] * size / 2, corner[1] * (size / 2 - bite),
+      ])
+      .fill({ color: 0x05080a, alpha: 0.72 });
+    graphic.visible = false;
+    damageStages.push(graphic);
+  }
 
-  container.addChild(shadow, rim, face, material, bevel, damage);
+  container.addChild(shadow, rim, face, material, bevel, ...damageStages);
 
   // Worked rock: broken once already, so it is not load and the player should be able to see that
   // at a glance rather than counting. Desaturated toward the rim colour rather than merely dimmed,
@@ -122,5 +169,5 @@ export function createBrickDisplay(brick: Brick): BrickDisplay {
       .moveTo(-size * 0.28, size * 0.28).lineTo(size * 0.28, -size * 0.28)
       .stroke({ width: 2, color: PALETTE.ink, alpha: 0.28 }));
   }
-  return { container, damage };
+  return { container, damageStages };
 }

@@ -34,7 +34,8 @@ import { Effects } from "./effects";
 import { clamp, normalizeAngle } from "./maths";
 import { attachBall, attachMembrane, createDrone, spawnDrop } from "./view/actors";
 import { buildArenaDisplay, drawLiabilityGauge, drawTrajectory } from "./view/board";
-import { createBrickDisplay } from "./view/brick";
+import { createBrickDisplay, showDamage } from "./view/brick";
+import { applyReaction, impulse, newReaction, stepReactions } from "./view/feedback";
 import { buildFarGeology, buildLandmarks, drawFramePreview } from "./view/survey";
 import { buildFeatureMarks, updateFeatureMarks, type FeatureMark } from "./view/features";
 import { gradeOf, Hud, REGION_RULES, type HudModel } from "./hud";
@@ -829,8 +830,8 @@ export class OrekenoidGame {
       splitArmed: false, splitUsed: false, serveAim: 0.08,
       initialLiability: bricks.filter((brick) => brick.liable).length, damageTaken: 0,
       spareBalls: Math.max(0, this.arenaBalls - 1),
-      paddle: { u: 0, velocity: 0, width: this.paddleWidth, flash: 0, impact: 0 },
-      container, board, actors, resolving: false, visualAge: 0, crumbleFront: 0,
+      paddle: { u: 0, velocity: 0, width: this.paddleWidth, flash: 0, impact: 0, recoil: 0 },
+      container, board, actors, resolving: false, visualAge: 0, crumbleFront: 0, railFlash: 0,
     };
     this.arena = arena;
     this.mode = "play";
@@ -911,16 +912,68 @@ export class OrekenoidGame {
     this.updateUI();
   }
 
+  /**
+   * Every contact the ball makes, answered in several layers.
+   *
+   * The rule this is built to: a player action should never produce exactly one piece of feedback.
+   * A paddle return is a paddle recoil *and* an emitter flare *and* a ball flash *and* a ring *and*
+   * a sound whose pitch tracks the rally -- none of which is the camera, because the camera is for
+   * things that happen rarely.
+   */
   private handleBallEvents(ball: Ball, events: BallStepEvents): void {
     const arena = this.arena;
     if (!arena) return;
-    if (events.paddle) this.audio.play(SOUNDS.paddleHit);
-    if (events.rail) this.audio.play(SOUNDS.railHit);
-    if (events.faceted) this.audio.play(SOUNDS.facetTurn);
+    const accent = PROVINCE_PALETTE[arena.province].accent;
+
+    if (events.paddle) {
+      this.audio.play(SOUNDS.paddleHit);
+      // The paddle is driven into the board and springs back, so a return is something the machine
+      // visibly did rather than something that happened to the ball.
+      arena.paddle.recoil = 1;
+      arena.paddle.flash = 0.16;
+      ball.glow = 1;
+      const at = this.world.localToWorld(arena.paddle.u, 0.2, arena);
+      this.effects.spawnRing(at.x * CELL, at.y * CELL, accent, 0.45);
+      this.effects.spawnShards(at.x * CELL, at.y * CELL, accent, 3, 0.5, false);
+      // A shove into the board from below: the whole stack feels the serve come back.
+      impulse(arena.bricks, {
+        u: arena.paddle.u, v: 0.2, du: 0, dv: 1,
+        force: 0.5, reach: 6, light: 0.3, speed: 30,
+      });
+    }
+
+    if (events.rail) {
+      this.audio.play(SOUNDS.railHit);
+      // The rail lights where it was struck, and the bricks nearest that point twitch.
+      arena.railFlash = 1;
+      const at = this.world.localToWorld(ball.u, ball.v, arena);
+      this.effects.spawnRing(at.x * CELL, at.y * CELL, accent, 0.22);
+      impulse(arena.bricks, {
+        u: ball.u, v: ball.v, du: ball.vu, dv: ball.vv,
+        force: 0.5, reach: 2.4, light: 0.3, speed: 30,
+      });
+    }
+
+    if (events.faceted) {
+      this.audio.play(SOUNDS.facetTurn);
+      // A right-angle turn is the Mirrorreef rule paying out, so it gets its own colour and its own
+      // wave rather than reading as an ordinary brick contact.
+      const at = this.world.localToWorld(ball.u, ball.v, arena);
+      this.effects.spawnRing(at.x * CELL, at.y * CELL, PALETTE.facetHot, 0.6);
+      ball.glow = 1;
+      impulse(arena.bricks, {
+        u: ball.u, v: ball.v, du: ball.vu, dv: ball.vv,
+        force: 0.9, reach: 3, light: 0.7, speed: 22,
+      });
+    }
+
     for (const membrane of events.membranes) {
       this.audio.play(SOUNDS.membraneHit);
-      void membrane;
+      const at = this.world.localToWorld(membrane.u, membrane.v, arena);
+      this.effects.spawnRing(at.x * CELL, at.y * CELL, PALETTE.spore, 0.5);
+      ball.glow = Math.max(ball.glow, 0.7);
     }
+
     for (const brick of events.bricks) this.hitBrick(brick, ball);
   }
 
@@ -962,14 +1015,40 @@ export class OrekenoidGame {
     // Hardness is the whole scale of an impact: a one-hit chalk chip and a four-hit runite plate
     // should not land the same way.
     const hardness = Math.min(1, definition.hp / 4);
-    this.shardsAtBrick(brick, definition.edge, Math.round(8 * heat), heat, false);
-    this.audio.play(brick.hp <= 0 ? SOUNDS.brickBreak : SOUNDS.brickChip);
+    const broke = brick.hp <= 0;
+    showDamage(brick);
+    this.shardsAtBrick(brick, definition.edge, Math.round((broke ? 8 : 4) * heat), heat, false);
+    this.audio.play(broke ? SOUNDS.brickBreak : SOUNDS.brickChip);
     // Bass layered under the break rather than replacing it: the click says "contact" and the body
     // says "that was heavy". Four-hit stone gets the heavier of the two.
-    if (brick.hp <= 0) this.audio.play(hardness >= 0.75 ? SOUNDS.brickBreakHeavy : SOUNDS.brickBreakBody);
-    // A chip pauses briefly, a break pauses properly.
-    this.hitPause = Math.max(this.hitPause, (brick.hp <= 0 ? 0.05 : 0.018) * (0.6 + hardness));
-    this.kickFrom(brick, (brick.hp <= 0 ? 9 : 3.5) * (0.5 + hardness) * heat);
+    if (broke) this.audio.play(hardness >= 0.75 ? SOUNDS.brickBreakHeavy : SOUNDS.brickBreakBody);
+
+    // The board takes the hit, not the camera.
+    //
+    // This replaced a camera kick on every single contact, which was both far too much and the
+    // wrong instrument: the screenshake talk's own warning is that shake "gets kind of addictive
+    // and you get used to it and you put a ton of it in your games and you stop noticing it". The
+    // effects that actually sell an impact there are the things in the world reacting -- so the
+    // struck brick is shoved off its seat, squashed, spun and flashed, and a wave of shove and
+    // colour travels outward through its neighbours in the material's own accent.
+    const along = Math.hypot(ball.vu, ball.vv) || 1;
+    impulse(arena.bricks, {
+      u: brick.u, v: brick.v,
+      du: ball.vu / along, dv: ball.vv / along,
+      force: (broke ? 3.4 : 1.5) * (0.6 + hardness) * heat,
+      reach: broke ? 3.4 : 2.1,
+      light: broke ? 0.95 : 0.5,
+      // Slower for a break, so a heavy one visibly rolls outward instead of blinking.
+      speed: broke ? 16 : 26,
+      struck: brick,
+    });
+    this.ringAtBrick(brick, definition.edge, broke ? 0.9 * heat : 0.35);
+    // The ball answers too: it squashes into the contact and flares.
+    ball.glow = Math.max(ball.glow, broke ? 1 : 0.5);
+
+    // Hit-stop only where it is earned. A chip gets none at all: a few frames of stopped time on
+    // every contact in a rally is a stutter, not an emphasis.
+    if (broke) this.hitPause = Math.max(this.hitPause, 0.022 + hardness * 0.03);
     if (brick.hp > 0) return;
 
     brick.alive = false;
@@ -993,7 +1072,9 @@ export class OrekenoidGame {
       for (const affected of cascade) {
         affected.hp--;
         affected.hitFlash = 0.16;
+        showDamage(affected);
         this.shardsAtBrick(affected, materialOf(affected.kind).edge, 8);
+        if (affected.react) affected.react.squash = 1;
         if (affected.hp > 0) continue;
         affected.alive = false;
         affected.display?.destroy({ children: true });
@@ -1001,6 +1082,13 @@ export class OrekenoidGame {
         if (affected.resource) spawnDrop(arena, affected.u, affected.v, affected.resource);
       }
       if (cascade.length) {
+        // Rare, board-wide and the province's signature payoff: this one has earned the camera.
+        this.kickFrom(brick, 6 + Math.min(10, cascade.length * 1.6));
+        this.hitPause = Math.max(this.hitPause, 0.06);
+        impulse(arena.bricks, {
+          u: brick.u, v: brick.v, du: 0, dv: 1,
+          force: 3.6, reach: 5.5, light: 1, speed: 13, struck: brick,
+        });
         this.ringAtBrick(brick, PALETTE.facetHot, 1.4);
         this.showToast(`LATTICE CASCADE · ${cascade.length}`);
         this.audio.play(SOUNDS.cascade);
@@ -1034,8 +1122,9 @@ export class OrekenoidGame {
   /**
    * Kick the camera away from a brick.
    *
-   * Directed rather than random: the view recoils from where the blow landed instead of jittering
-   * in place, which is the difference between "something happened" and "something hit you there".
+   * Reserved for the rare and the large -- a cascade, the load punching through the plating, a ball
+   * lost. Ordinary brick contacts deliberately do not call this: the board's own reaction carries
+   * them, and a camera that moves on every hit stops meaning anything by the tenth.
    */
   private kickFrom(brick: Brick, magnitude: number): void {
     const arena = this.arena;
@@ -1335,7 +1424,9 @@ export class OrekenoidGame {
       revived.display?.destroy({ children: true });
       const regrown = createBrickDisplay(revived);
       revived.display = regrown.container;
-      revived.damageDisplay = regrown.damage;
+      revived.damageStages = regrown.damageStages;
+      revived.react = newReaction();
+      showDamage(revived);
       const position = this.world.localToWorld(revived.u, revived.v, arena);
       regrown.container.position.set(position.x * CELL, position.y * CELL);
       regrown.container.rotation = arena.angle;
@@ -1425,12 +1516,10 @@ export class OrekenoidGame {
   private showClaimHeat(): void {
     const arena = this.arena;
     if (!arena) return;
-    const heat = this.claimHeat;
-    for (const ball of arena.balls) {
-      if (ball.display) ball.display.scale.set(1 + heat * 0.22);
-    }
-    arena.actors.alpha = 1;
-    if (arena.railLight) arena.railLight.alpha = 0.55 + heat * 0.45;
+    // Ball scale and rail glow are both written per frame in `updateDisplays`, where they are
+    // combined with the contact reactions -- setting them here as well meant the two fought and the
+    // pop on impact was flattened back out on the same frame it appeared.
+    void arena;
   }
 
   /**
@@ -1523,13 +1612,14 @@ export class OrekenoidGame {
     this.drone.visible = !this.arena;
     const arena = this.arena;
     if (arena) {
+      // The board reacts: every live brick is shoved, spun, squashed and lit by whatever waves are
+      // travelling through it. No reveal ramp and no scale pop -- the bricks are the rock and are
+      // drawn in full from the first frame; what changes is whether the crumble mask has uncovered
+      // them yet. Fading them in read as a board materialising over the terrain.
+      stepReactions(arena.bricks, dt);
+      const accent = PROVINCE_PALETTE[arena.province].accent;
       for (const brick of arena.bricks) if (brick.alive && brick.display) {
-        const flash = brick.hitFlash / 0.14;
-        // No reveal ramp and no scale pop. The bricks are the rock and are drawn in full from the
-        // first frame; what changes is whether the crumble mask has uncovered them yet. Fading them
-        // in read as a board materialising over the terrain, which is the opposite of the point.
-        brick.display.scale.set(1 + flash * 0.07, 1 - flash * 0.05);
-        if (brick.damageDisplay) brick.damageDisplay.alpha = brick.hp < brick.maxHp ? 0.82 : 0;
+        applyReaction(brick, brick.baseX ?? 0, brick.baseY ?? 0, arena.angle, accent);
       }
       for (const membrane of arena.membranes) {
         if (!membrane.display) continue;
@@ -1538,17 +1628,34 @@ export class OrekenoidGame {
           : 1;
       }
       if (arena.paddle.display) {
-        const position = this.world.localToWorld(arena.paddle.u, 0.2, arena);
+        // Recoil: driven down into the board by a return and springing back, plus a squash across
+        // its face. The paddle is the player's own hand on the board and had no reaction at all.
+        arena.paddle.recoil = Math.max(0, arena.paddle.recoil - dt * 7);
+        const recoil = arena.paddle.recoil ** 2;
+        const position = this.world.localToWorld(arena.paddle.u, 0.2 - recoil * 0.24, arena);
         arena.paddle.display.position.set(position.x * CELL, position.y * CELL);
         arena.paddle.display.rotation = arena.angle;
         arena.paddle.display.skew.x = arena.paddle.impact * -0.05;
+        arena.paddle.display.scale.set(1 + recoil * 0.1, 1 - recoil * 0.22);
       }
+      // The rails answer a rebound too, rather than the frame being inert scenery.
+      arena.railFlash = Math.max(0, arena.railFlash - dt * 4.5);
+      if (arena.railLight) arena.railLight.alpha = 0.55 + this.claimHeat * 0.45 + arena.railFlash * 0.5;
       const toWorld = (u: number, v: number) => this.world.localToWorld(u, v, arena);
       drawTrajectory(arena, toWorld, this.predictedBounces);
       drawLiabilityGauge(arena, toWorld, this.soakCapacity);
       for (const ball of arena.balls) {
         const position = this.world.localToWorld(ball.u, ball.v, arena);
         ball.display?.position.set(position.x * CELL, position.y * CELL);
+        // The ball flashes and swells on contact and settles back. Its glow is set by every event
+        // that touches it, so a facet turn and a break and a paddle return all read on the ball
+        // itself as well as on whatever it struck.
+        ball.glow = Math.max(0, ball.glow - dt * 5);
+        if (ball.display) {
+          const pop = ball.glow ** 2;
+          ball.display.scale.set((1 + this.claimHeat * 0.22) * (1 + pop * 0.55));
+          ball.display.alpha = 1;
+        }
         if (ball.trailDisplay) {
           ball.trailDisplay.clear();
           const colour = PROVINCE_PALETTE[arena.province].accent;

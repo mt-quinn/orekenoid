@@ -1,5 +1,6 @@
 import type { Container, Graphics } from "pixi.js";
 import type { Band, EcotoneId, MaterialKind, ProvinceId, ResourceId } from "./config";
+import type { BrickReaction } from "./view/feedback";
 
 export interface Vec2 { x: number; y: number }
 
@@ -85,7 +86,19 @@ export interface Brick {
   sourceCells: Cell[];
   hitFlash: number;
   display?: Container;
-  damageDisplay?: Graphics;
+  /**
+   * Fracture layers, revealed one per hit taken.
+   *
+   * An array rather than one graphic because a four-hit slate bank has to be readable at 4, 3, 2
+   * and 1 -- a single crack that fades in says only "damaged", which makes a nearly-broken brick
+   * indistinguishable from a freshly chipped one and turns every multi-hit material into guesswork.
+   */
+  damageStages?: Graphics[];
+  /** Where this brick sits when nothing is shoving it, in world pixels. */
+  baseX?: number;
+  baseY?: number;
+  /** Transient shove, spin and colour-pulse state. See `view/feedback.ts`. */
+  react?: BrickReaction;
 }
 
 /** A short-lived rebound surface left behind by a destroyed spore bulb. */
@@ -143,7 +156,9 @@ export interface Arena extends FrameGeometry {
   damageTaken: number;
   /** Sequential balls remaining after the current one is lost. */
   spareBalls: number;
-  paddle: { u: number; velocity: number; width: number; flash: number; impact: number; display?: Container };
+  /** Rail glow from a rebound off the frame, 0..1, decaying. */
+  railFlash: number;
+  paddle: { u: number; velocity: number; width: number; flash: number; impact: number; recoil: number; display?: Container };
   liabilityDisplay?: Graphics;
   trajectoryDisplay?: Graphics;
   container: Container;
