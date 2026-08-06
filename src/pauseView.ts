@@ -42,7 +42,7 @@ const CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string, stri
   {
     group: "IN THE MINE",
     rows: [
-      ["WASD / ARROWS", "Move"],
+      ["WASD / \u2191\u2190\u2193\u2192", "Move"],
       ["Q / E", "Aim the survey frame"],
       ["F", "Commit the claim"],
       ["M", "Open the Atlas"],
@@ -54,8 +54,8 @@ const CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string, stri
     rows: [
       ["Q / E", "Aim the serve"],
       ["SPACE", "Serve"],
-      ["A / D  ·  ← / →", "Move the paddle"],
-      ["W / S  ·  ↑ / ↓", "Hold to run at ×2 / ×4"],
+      ["A / D  ·  ←→", "Move the paddle"],
+      ["W / S  ·  ↑↓", "Hold to run at ×2 / ×4"],
       ["BOTH", "Hold both to run at ×8"],
       ["B", "Detonate a blast charge"],
       ["R", "Place the rail seed"],
@@ -165,43 +165,69 @@ export class PauseView {
     // Whichever device the player is actually holding. Listing keys to somebody on a phone
     // describes hardware they do not have, and hides the controls they do.
     const table = model.touch ? TOUCH_CONTROLS : CONTROLS;
+    // Each key gets its own cap rather than sitting in a run of bold text. "WASD / ARROWS  Move"
+    // read as one undifferentiated line; a capped key and a plain description read as two things,
+    // which is the whole job of this table.
+    const caps = (keys: string) => keys
+      .split(/\s*·\s*/)
+      .map((group) => group
+        .split(/\s*\/\s*/)
+        .map((key) => `<kbd>${key}</kbd>`)
+        .join('<span class="pause-or">/</span>'))
+      .join('<span class="pause-dot">·</span>');
     const controls = table.map((section) => `<section class="pause-group">
-      <h3>${section.group}</h3>
+      <h3><span>${section.group}</span></h3>
       <dl>${section.rows.map(([keys, what]) =>
-        `<dt>${keys}</dt><dd>${what}</dd>`).join("")}</dl>
+        `<dt>${model.touch ? `<kbd class="wide">${keys}</kbd>` : caps(keys)}</dt><dd>${what}</dd>`).join("")}</dl>
     </section>`).join("");
 
     // Ending a claim is offered only when there is one, and the cost is stated before the button
     // that charges it -- so the confirmation is informative rather than merely obstructive.
+    // Ending a claim is destructive and irreversible, so it is drawn as a hazard panel rather than
+    // as one more button in a row of identical slabs -- the old layout gave it exactly the same
+    // weight as EXPORT SAVE, which is the wrong thing to do with the only button here that can cost
+    // the player their run.
     let claimBlock = "";
     if (model.inClaim) {
+      const after = Math.max(0, model.integrity - model.endCost);
       claimBlock = this.confirmingEnd
-        ? `<div class="pause-confirm">
-            <b>END THE CLAIM NOW?</b>
+        ? `<div class="pause-hazard pause-confirm">
+            <div class="pause-hazard-head"><b>END THE CLAIM NOW?</b></div>
             <p>${model.endCost > 0
-              ? `Material still standing will load the hull for <b>${model.endCost}</b> damage. Health ${model.integrity} → ${Math.max(0, model.integrity - model.endCost)}.`
-              : "Nothing is still standing that would load the hull. This costs nothing."}</p>
-            <div class="pause-row">
-              <button type="button" data-act="endConfirm" class="danger">END CLAIM</button>
-              <button type="button" data-act="endCancel">KEEP PLAYING</button>
+              ? `Material still standing loads the hull for <b>${model.endCost}</b> damage.`
+              : "Nothing still standing would load the hull. This costs nothing."}</p>
+            ${model.endCost > 0 ? `<div class="pause-toll">
+              <span>HEALTH</span><b>${model.integrity}</b><i>→</i><b class="after">${after}</b>
+            </div>` : ""}
+            <div class="pause-hazard-row">
+              <button type="button" data-act="endConfirm" class="danger">END IT</button>
+              <button type="button" data-act="endCancel" class="quiet">KEEP PLAYING</button>
             </div>
           </div>`
-        : `<div class="pause-row">
-            <button type="button" data-act="end">END CLAIM${model.endCost > 0 ? ` · ${model.endCost} DAMAGE` : " · FREE"}</button>
+        : `<div class="pause-hazard">
+            <div class="pause-hazard-head"><b>ABANDON THE CLAIM</b></div>
+            <p>${model.endCost > 0
+              ? `Everything still standing comes home at you. <b>${model.endCost}</b> damage.`
+              : "Nothing is left standing. Walking away is free."}</p>
+            <button type="button" data-act="end" class="hazard">
+              END CLAIM<i>${model.endCost > 0 ? `${model.endCost} DAMAGE` : "FREE"}</i>
+            </button>
           </div>`;
     }
 
+    // Ordered by what the player came here to do. Resuming is the overwhelmingly common answer, so
+    // it is the largest and the first thing under the hand; the save utilities are rare and quiet.
     this.body.innerHTML = `
       <div class="pause-controls">${controls}</div>
       <div class="pause-actions">
+        <button type="button" data-act="resume" class="pause-resume">
+          <span>RESUME</span><i>${model.inClaim ? "COUNTS BACK IN FROM 3" : "BACK TO THE SURVEY"}</i>
+        </button>
         ${claimBlock}
-        <div class="pause-row">
+        <div class="pause-utils">
           <button type="button" data-act="save">SAVE NOW</button>
-          <button type="button" data-act="export">EXPORT SAVE</button>
-          <button type="button" data-act="import">IMPORT SAVE</button>
-        </div>
-        <div class="pause-row">
-          <button type="button" data-act="resume" class="primary">RESUME</button>
+          <button type="button" data-act="export">EXPORT</button>
+          <button type="button" data-act="import">IMPORT</button>
         </div>
       </div>`;
 

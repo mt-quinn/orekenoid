@@ -39,7 +39,15 @@
 
         <section class="pause" id="pause" aria-label="Paused">
           <div class="pause-frame">
-            <header><b>PAUSED</b><small>ESC resumes</small></header>
+            <!-- Read as the drone's own panel with the power held: a stamped plate, a status lamp,
+                 and a stencilled serial. The lamp is the only moving thing on a stopped screen,
+                 which is what tells you at a glance that the machine is idling rather than dead. -->
+            <header>
+              <i class="pause-lamp" aria-hidden="true"></i>
+              <b>HELD</b>
+              <small>SURVEY RIG IDLE</small>
+              <em id="pauseDismiss">ESC RESUMES</em>
+            </header>
             <div class="pause-body" id="pauseBody"></div>
           </div>
         </section>

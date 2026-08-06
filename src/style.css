@@ -809,51 +809,372 @@ button { color: inherit; font: inherit; }
    a machine with parts on it, and this one's is the session. A picture here would be decoration
    between the player and a save button.
    -------------------------------------------------------------------------- */
+/* ==========================================================================
+   Paused: the drone's own panel, with the power held.
+   ==========================================================================
+   The old version was three columns of small dim text over 900px, above a stack of identical
+   full-width grey slabs -- and the slabs were `#161d20`, a cool blue-grey that appears nowhere else
+   in this game. That is most of why it read as generic: it was not built out of the vocabulary the
+   rest of the interface already speaks. Brass rules, stencil caps, rivets, plating, hazard stripes
+   and segmented readouts are all in use elsewhere; none of them were here.
+
+   The other half was hierarchy. `flex: 1` on every button gave RESUME -- which is what nearly
+   everybody opened this menu to press -- exactly the same weight as EXPORT SAVE, and gave END
+   CLAIM, the one irreversible action, the same weight again.
+   -------------------------------------------------------------------------- */
 .pause {
   position: absolute; z-index: 11; inset: 0;
   display: none; align-items: center; justify-content: center;
-  background: rgb(5 8 10 / .88);
+  padding: clamp(10px, 2cqw, 28px);
+  /* Darkened and desaturated rather than merely dimmed, so the held world reads as switched off
+     behind the panel instead of just being a bit darker. */
+  background:
+    radial-gradient(ellipse at 50% 42%, rgb(10 14 16 / .82), rgb(3 5 6 / .96) 72%);
+  backdrop-filter: blur(3px) saturate(.55);
 }
 .pause.open { display: flex; }
+
 .pause-frame {
-  width: min(92%, 900px); max-height: 88%; overflow-y: auto;
-  background: linear-gradient(rgb(13 15 13 / .98), rgb(9 11 10 / .99));
-  border: 1px solid var(--case); border-top: 3px solid var(--brass);
-  padding: clamp(18px, 2.2cqw, 32px);
+  position: relative;
+  width: min(100%, 720px);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(16px, 2cqw, 26px) clamp(16px, 2.2cqw, 30px) clamp(18px, 2.2cqw, 28px);
+  color: var(--ink);
+  /* Plating: a warm case colour, a lit top edge, and the same faint diagonal rule the viewport
+     uses, so the panel is made of the machine rather than laid over it. */
+  background:
+    repeating-linear-gradient(24deg, transparent 0 53px, rgb(185 154 97 / .022) 54px, transparent 55px 91px),
+    linear-gradient(#1a1a14 0, #141510 46%, #0e0f0b 100%);
+  border: 1px solid #4a4335;
+  box-shadow:
+    0 30px 90px rgb(0 0 0 / .7),
+    inset 0 1px 0 rgb(214 190 138 / .22),
+    inset 0 0 0 1px rgb(0 0 0 / .5);
 }
-.pause-frame > header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 18px; }
+/* The brass cap along the top: the same 2px rule the HUD and the bay use as their signature. */
+.pause-frame::before {
+  content: "";
+  position: absolute; top: 0; right: 0; left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #6d5c3a, var(--brass) 22%, #e2caa0 50%, var(--brass) 78%, #6d5c3a);
+}
+
+/* --- The plate ------------------------------------------------------------ */
+.pause-frame > header {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: clamp(12px, 1.4cqw, 18px);
+  border-bottom: 1px solid #332e24;
+}
+/* The one moving thing on a stopped screen. A machine at rest still has a lamp lit, and that is the
+   difference between idling and broken. */
+.pause-lamp {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: var(--ore-hot);
+  box-shadow: 0 0 0 2px rgb(0 0 0 / .55), 0 0 12px 2px rgb(239 170 98 / .55);
+  animation: pause-idle 2.1s ease-in-out infinite;
+}
+@keyframes pause-idle {
+  0%, 100% { opacity: .35; box-shadow: 0 0 0 2px rgb(0 0 0 / .55), 0 0 6px 1px rgb(239 170 98 / .3); }
+  50% { opacity: 1; box-shadow: 0 0 0 2px rgb(0 0 0 / .55), 0 0 14px 3px rgb(239 170 98 / .6); }
+}
 .pause-frame > header b {
-  color: var(--ink); font-size: clamp(20px, 2cqw, 32px); font-weight: 900; letter-spacing: .2em;
+  color: #f2e7d0;
+  font-size: clamp(22px, 2.2cqw, 34px);
+  font-weight: 900;
+  letter-spacing: .26em;
+  line-height: 1;
 }
-.pause-frame > header small { color: var(--faint); font-size: clamp(11px, .9cqw, 14px); letter-spacing: .12em; }
-.pause-body { display: grid; gap: clamp(16px, 2cqw, 28px); }
-.pause-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: clamp(14px, 1.6cqw, 24px); }
+.pause-frame > header small {
+  align-self: end;
+  color: var(--brass);
+  font-size: clamp(9px, .8cqw, 12px);
+  font-weight: 900;
+  letter-spacing: .2em;
+}
+/* Stencilled on the plate, like a serial: present, unemphatic, not competing with the actions. */
+.pause-frame > header em {
+  padding: 5px 9px;
+  border: 1px solid #3d3629;
+  background: rgb(0 0 0 / .35);
+  color: var(--faint);
+  font-style: normal;
+  font-size: clamp(9px, .78cqw, 11px);
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+/* --- The control reference ------------------------------------------------ */
+.pause-body { display: grid; gap: clamp(14px, 1.8cqw, 22px); }
+/* Two columns, not three. Three across 900px is what made the text small and the gaps enormous. */
+.pause-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: clamp(12px, 1.4cqw, 20px);
+  padding-top: clamp(12px, 1.4cqw, 18px);
+}
+/* The last group is a single row -- one key, one meaning -- so it spans the full width and lays out
+   sideways instead of claiming a whole column and leaving the other half of the panel empty. */
+.pause-group:last-child {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.pause-group:last-child h3 { margin: 0; flex: 0 0 auto; }
+.pause-group:last-child h3::after { display: none; }
+.pause-group:last-child dl { grid-template-columns: auto auto; gap: 0 10px; }
+.pause-group:last-child dt { justify-self: start; }
+/* And the rule runs to the right of it, so the strip still reads as a titled group. */
+.pause-group:last-child::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(185 154 97 / .35), transparent);
+}
+/* A brass rule with the label sitting in it, which is how the rest of the game titles a group. */
 .pause-group h3 {
-  color: var(--brass); font-size: clamp(10px, .84cqw, 13px); font-weight: 900;
-  letter-spacing: .18em; margin: 0 0 8px;
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 0 9px;
+  color: var(--brass);
+  font-size: clamp(9px, .8cqw, 12px);
+  font-weight: 900;
+  letter-spacing: .2em;
 }
-.pause-group dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+.pause-group h3::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgb(185 154 97 / .5), transparent);
+}
+.pause-group dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 7px 12px;
+  margin: 0;
+}
+/* Keys hug their descriptions rather than being left-aligned in their own column. The column is as
+   wide as the widest cap pair in the group -- "WASD / ARROWS" -- so left-aligning opened a gulf of
+   dead space on every shorter row while the descriptions stayed neatly aligned on the far side. */
 .pause-group dt {
-  color: var(--ink); font-size: clamp(11px, .92cqw, 14px); font-weight: 800; letter-spacing: .06em;
+  display: flex; align-items: center; gap: 4px;
+  justify-self: end;
   white-space: nowrap;
 }
-.pause-group dd { color: var(--dim); font-size: clamp(11px, .92cqw, 14px); margin: 0; }
-.pause-actions { display: grid; gap: 10px; border-top: 1px solid var(--case); padding-top: 16px; }
-.pause-row { display: flex; flex-wrap: wrap; gap: 10px; }
-.pause-row button {
-  flex: 1; min-width: 140px;
-  background: #161d20; color: var(--ink); border: 1px solid var(--case);
-  padding: 11px 14px; font: inherit; font-weight: 800; letter-spacing: .1em;
-  cursor: pointer;
+/* Keycaps. The old table ran the key and its meaning together as one bold-then-dim line; a cap and
+   a sentence read as two separate things, which is the entire job of this table. */
+.pause-group kbd {
+  min-width: 22px;
+  padding: 3px 6px 4px;
+  border: 1px solid #554c3a;
+  border-bottom-width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(#23241c, #191a14);
+  box-shadow: inset 0 1px 0 rgb(214 190 138 / .16);
+  color: #f0e6d2;
+  font-family: inherit;
+  font-size: clamp(10px, .86cqw, 13px);
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-align: center;
 }
-.pause-row button:hover { border-color: var(--brass); }
-.pause-row button.primary { background: #1d2a31; border-color: #2f4550; }
-.pause-row button.danger { border-color: #6b3a32; color: #e8a08c; }
-.pause-row button.danger:hover { border-color: #c07a63; }
-.pause-confirm { border: 1px solid #6b3a32; padding: 14px; display: grid; gap: 10px; }
-.pause-confirm b { color: #e8a08c; font-size: clamp(13px, 1.1cqw, 17px); letter-spacing: .12em; }
-.pause-confirm p { color: var(--dim); margin: 0; font-size: clamp(12px, 1cqw, 15px); line-height: 1.5; }
-.pause-confirm p b { color: var(--ink); font-size: 1em; letter-spacing: 0; }
+.pause-group kbd.wide { min-width: 0; letter-spacing: .12em; white-space: nowrap; }
+/* Bright enough to actually separate two caps. At `--faint` these vanished and "WASD ARROWS" read
+   as one key with a space in it. */
+.pause-or, .pause-dot { color: #8a7e63; font-size: 11px; font-weight: 900; }
+.pause-dot { padding: 0 3px; color: #6d6350; }
+/* Legibility: this was `--dim` on near-black, which is the reason the old menu was "barely
+   legible". Descriptions are content, so they get the ink colour. */
+.pause-group dd {
+  margin: 0;
+  color: #cbbd9f;
+  font-size: clamp(12px, 1cqw, 15px);
+  line-height: 1.35;
+}
+
+/* --- Actions, weighted by what they are ---------------------------------- */
+.pause-actions {
+  display: grid;
+  gap: clamp(10px, 1.2cqw, 14px);
+  padding-top: clamp(12px, 1.4cqw, 18px);
+  border-top: 1px solid #332e24;
+}
+
+/* Resume is why nearly everybody is here, so it is the biggest thing on the panel. Ore-filled,
+   because ore is this game's colour for "go". */
+.pause-resume {
+  display: grid;
+  gap: 3px;
+  padding: 15px 18px 16px;
+  border: 1px solid #e6ab6c;
+  background: linear-gradient(#c8622f, #a54d24);
+  color: #1c1209;
+  box-shadow: 0 4px 0 #0a0806, inset 0 1px 0 rgb(255 224 186 / .45);
+  cursor: pointer;
+  transition: transform .08s ease, background .12s ease, box-shadow .08s ease;
+}
+.pause-resume span { font-size: clamp(17px, 1.7cqw, 24px); font-weight: 900; letter-spacing: .2em; }
+.pause-resume i {
+  color: rgb(28 18 9 / .68);
+  font-style: normal;
+  font-size: clamp(9px, .78cqw, 11px);
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+.pause-resume:hover { background: linear-gradient(#d97438, #b85a2b); }
+.pause-resume:active { transform: translateY(3px); box-shadow: 0 1px 0 #0a0806, inset 0 1px 0 rgb(255 224 186 / .3); }
+
+/* The hazard panel. Abandoning a claim is the only irreversible thing here, and the diagonal
+   stripes are the one place this game uses a warning pattern -- earned, because the cost is real. */
+.pause-hazard {
+  position: relative;
+  padding: 13px 15px 14px 19px;
+  border: 1px solid #6b3a2c;
+  background: linear-gradient(rgb(38 18 12 / .72), rgb(24 13 10 / .72));
+}
+.pause-hazard::before {
+  content: "";
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 5px;
+  background: repeating-linear-gradient(-45deg, #b9552f 0 5px, #26140d 5px 10px);
+}
+.pause-hazard.pause-confirm { border-color: #c0603c; box-shadow: 0 0 0 1px rgb(192 96 60 / .35); }
+.pause-hazard-head { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
+.pause-hazard-head b {
+  color: #f0a17f;
+  font-size: clamp(11px, .96cqw, 14px);
+  font-weight: 900;
+  letter-spacing: .18em;
+}
+.pause-hazard p {
+  margin: 0 0 11px;
+  color: #c9ad9c;
+  font-size: clamp(12px, 1cqw, 14px);
+  line-height: 1.4;
+}
+.pause-hazard p b { color: #f5c3a6; font-weight: 900; }
+
+/* The toll, as a before/after rather than a sentence. A number the player is about to pay should
+   look like a readout, and the game already reads health as a big tabular figure. */
+.pause-toll {
+  display: flex; align-items: baseline; gap: 9px;
+  margin-bottom: 12px;
+  padding: 7px 11px;
+  background: rgb(0 0 0 / .34);
+  border-left: 2px solid #6b3a2c;
+}
+.pause-toll span { color: var(--faint); font-size: 9px; font-weight: 900; letter-spacing: .18em; }
+.pause-toll b {
+  color: var(--paper);
+  font-size: clamp(17px, 1.5cqw, 22px);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.pause-toll b.after { color: #ef8a5f; }
+.pause-toll i { color: var(--faint); font-style: normal; font-size: 13px; }
+
+.pause-hazard button, .pause-hazard-row button {
+  padding: 10px 15px;
+  border: 1px solid #7d4433;
+  background: linear-gradient(#33180f, #24120b);
+  color: #f0a17f;
+  font-weight: 900;
+  letter-spacing: .14em;
+  font-size: clamp(11px, .94cqw, 14px);
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, transform .08s ease;
+}
+.pause-hazard button.hazard {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  width: 100%;
+}
+/* The cost rides inside the button, so the price and the act are never read separately. */
+.pause-hazard button.hazard i {
+  padding: 3px 7px;
+  background: rgb(185 85 47 / .22);
+  border: 1px solid #7d4433;
+  color: #f5c3a6;
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: .12em;
+}
+.pause-hazard button:hover { border-color: #c0603c; background: linear-gradient(#43200f, #2e160c); }
+.pause-hazard button:active { transform: translateY(2px); }
+.pause-hazard-row { display: flex; flex-wrap: wrap; gap: 9px; }
+.pause-hazard-row button.danger { flex: 1 1 140px; background: linear-gradient(#8f3d22, #6d2c18); color: #ffdcc8; border-color: #c0603c; }
+.pause-hazard-row button.quiet {
+  flex: 1 1 140px;
+  border-color: #3d3629;
+  background: rgb(0 0 0 / .3);
+  color: var(--dim);
+}
+.pause-hazard-row button.quiet:hover { border-color: var(--brass); color: var(--ink); background: rgb(0 0 0 / .45); }
+
+/* Save utilities: real but rare. Quiet, small, and out of the way of the two decisions above. */
+.pause-utils { display: flex; flex-wrap: wrap; gap: 8px; }
+.pause-utils button {
+  flex: 1 1 96px;
+  padding: 9px 11px;
+  border: 1px solid #3a352a;
+  background: linear-gradient(rgb(30 30 24 / .8), rgb(20 21 16 / .8));
+  color: var(--dim);
+  font-size: clamp(10px, .84cqw, 12px);
+  font-weight: 900;
+  letter-spacing: .14em;
+  cursor: pointer;
+  transition: border-color .12s ease, color .12s ease, transform .08s ease;
+}
+.pause-utils button:hover { border-color: var(--brass); color: var(--ink); }
+.pause-utils button:active { transform: translateY(2px); }
+
+.pause-frame :focus-visible { outline: 2px solid var(--ore-hot); outline-offset: 2px; }
+
+/* On a phone the panel is the screen, the touch reference is one column, and every target has to
+   clear 44px. */
+.shell[data-layout="phone"] .pause { padding: 0; }
+.shell[data-layout="phone"] .pause-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: calc(14px + var(--safe-top)) 12px calc(16px + var(--safe-bottom));
+}
+.shell[data-layout="phone"] .pause-controls { grid-template-columns: 1fr; }
+/* Left-aligned on a phone. Right-aligning keeps descriptions tidy across two desktop columns, but in
+   a single column with labels as wide as "DRAG · LEFT HALF" it leaves a badly ragged left edge. */
+.shell[data-layout="phone"] .pause-group dt { justify-self: start; }
+/* Actions pinned to the bottom, reference scrolling above them. The panel is the whole screen here,
+   so leaving RESUME floating in the middle with dead space underneath would put the most-pressed
+   button on the panel outside the thumb arc -- the exact mistake the rest of this work exists to
+   avoid. */
+.shell[data-layout="phone"] .pause-frame {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+.shell[data-layout="phone"] .pause-body {
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+.shell[data-layout="phone"] .pause-controls {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  /* Stacked from the top rather than distributed. As a `1fr` grid row the three groups stretched to
+     fill the scroll area, opening 100px voids between them that read as missing content. */
+  align-content: start;
+}
+.shell[data-layout="phone"] .pause-frame > header em { display: none; }
+.shell[data-layout="phone"] .pause-resume { min-height: 62px; }
+.shell[data-layout="phone"] .pause-utils button,
+.shell[data-layout="phone"] .pause-hazard button { min-height: 46px; }
 
 /* The 3-2-1. Never drop a player straight back onto a live ball. */
 .countdown {
