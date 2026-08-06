@@ -20,6 +20,24 @@ export interface ToneSpec {
 
 export class GameAudio {
   private context: AudioContext | null = null;
+  /**
+   * Told when the context stops on its own.
+   *
+   * Mobile browsers suspend audio for reasons that have nothing to do with this game -- a call, a
+   * route change, another app taking the output -- and the suspension outlives whatever caused it.
+   * Recovering needs a fresh gesture, so somebody has to ask the player for one, and the game
+   * would rather stop and say so than carry on silently muted.
+   */
+  onLost: (() => void) | null = null;
+  /**
+   * Whether the context has ever actually been running.
+   *
+   * A context can be *born* suspended -- a browser with no output device, or one that has not yet
+   * accepted the gesture -- and that is not a loss, it is a context that has not started. Reporting
+   * it as a loss held the whole game behind an "audio cut" plate the moment the page loaded, which
+   * is both wrong and impossible for the player to interpret.
+   */
+  private everRan = false;
 
   /**
    * Browsers refuse to start audio before a gesture, so this is called from
@@ -27,7 +45,24 @@ export class GameAudio {
    * earlier page state may have suspended.
    */
   start(): void {
-    if (!this.context) this.context = new AudioContext();
+    if (!this.context) {
+      this.context = new AudioContext();
+      // `statechange` is the only honest signal here: polling would either miss a brief suspension
+      // or spend a timer on a question the browser is willing to answer by event.
+      this.context.addEventListener("statechange", () => {
+        const state = this.context?.state;
+        if (state === "running") this.everRan = true;
+        // Only a context that had been running can be lost.
+        else if (state === "suspended" && this.everRan) this.onLost?.();
+      });
+    }
+    if (this.context.state === "suspended") void this.context.resume();
+    else if (this.context.state === "running") this.everRan = true;
+  }
+
+  /** Bring the context back after a hold. Safe to call when it never stopped. */
+  revive(): void {
+    if (!this.context) return;
     if (this.context.state === "suspended") void this.context.resume();
   }
 

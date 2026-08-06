@@ -1,5 +1,9 @@
 import { OrekenoidGame } from "./game";
 import { runRenderDiagnostics } from "./renderDiagnostics";
+import { registerServiceWorker } from "./platform";
+
+// Before the game, so a failed boot still leaves an installable, offline-capable shell.
+registerServiceWorker();
 
 async function boot(): Promise<void> {
   const host = document.querySelector<HTMLElement>("#gameHost");

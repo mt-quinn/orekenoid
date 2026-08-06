@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable: the same mark held inside the safe circle, since Android crops to whatever shape
+       the launcher prefers and anything in the outer 20% can be cut. -->
+  <rect width="512" height="512" fill="#0d0d0a"/>
+  <g transform="translate(256 256) scale(.62) translate(-256 -256)">
+    <g fill="none" stroke="#b99a61" stroke-width="18">
+      <rect x="96" y="96" width="320" height="200" rx="4" opacity=".45"/>
+      <path d="M96 96h320M96 296h320" opacity=".7"/>
+    </g>
+    <g fill="#4f6d7a" opacity=".85">
+      <rect x="120" y="120" width="60" height="36" rx="6"/>
+      <rect x="196" y="120" width="60" height="36" rx="6"/>
+      <rect x="272" y="120" width="60" height="36" rx="6"/>
+      <rect x="158" y="172" width="60" height="36" rx="6"/>
+      <rect x="234" y="172" width="60" height="36" rx="6"/>
+      <rect x="310" y="172" width="60" height="36" rx="6"/>
+    </g>
+    <circle cx="330" cy="356" r="20" fill="#eadfc8"/>
+    <path d="M148 400h216l-24 32H172z" fill="#b99a61"/>
+    <rect x="160" y="392" width="192" height="16" rx="8" fill="#eadfc8"/>
+  </g>
+</svg>

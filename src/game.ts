@@ -44,8 +44,10 @@ import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
 import { TouchControls } from "./view/touchControls";
-import { measure as measureView, syncLayout, view } from "./viewport";
+import { effectBudget, measure as measureView, motionScale, syncLayout, view } from "./viewport";
 import { TouchInput, type TouchState } from "./touch";
+import { Holds } from "./holds";
+import { ScreenAwake } from "./platform";
 import { AtlasView } from "./atlasView";
 import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
@@ -120,6 +122,10 @@ export class OrekenoidGame {
   readonly touch = new TouchInput();
   /** And what they look like. Screen furniture: outside the camera, so it never rotates or scales. */
   readonly touchControls = new TouchControls();
+  /** Holds the game when the world interrupts it: backgrounded, unfocused, sideways, muted. */
+  readonly holds = new Holds();
+  /** Stops the screen sleeping under a thumb that is holding still on purpose. */
+  private readonly awake = new ScreenAwake();
   /**
    * This frame's touch intent, read once at the top of the frame and shared.
    *
@@ -199,26 +205,26 @@ export class OrekenoidGame {
    * and it would be silly to hold the tutorial hostage to them.
    */
   readonly tutorial: TutorialStep[] = [
-    { id: "move", keys: "WASD / ARROWS", label: "FLY THE DRONE", why: "Rock worth cutting is everywhere down here.", where: "survey", done: false },
-    { id: "aim", keys: "Q / E", label: "TURN THE FRAME", why: "The frame is the rock you will cut.", where: "survey", done: false },
+    { id: "move", keys: "WASD / ARROWS", gesture: "DRAG · LEFT HALF", demo: "stick", label: "FLY THE DRONE", why: "Rock worth cutting is everywhere down here.", where: "survey", done: false },
+    { id: "aim", keys: "Q / E", gesture: "DRAG · RIGHT HALF", demo: "swipe", label: "TURN THE FRAME", why: "The frame is the rock you will cut.", where: "survey", done: false },
     // The Atlas is how the mine becomes navigable at all, so it is taught rather than left to be
     // found -- and taught out here, before the first claim. It used to come last, which put it
     // after the claim had already started: the sequence asked the player to stop reading a live
     // board and go and open a map, which is a strange thing to do in the middle of a rally.
-    { id: "atlas", keys: "M", label: "OPEN THE ATLAS", why: "Everywhere you have been.", where: "survey", done: false },
-    { id: "commit", keys: "F", label: "COMMIT THE CLAIM", why: "The framed rock becomes your board.", where: "survey", done: false },
+    { id: "atlas", keys: "M", gesture: "TAP ATLAS, TOP RIGHT", label: "OPEN THE ATLAS", why: "Everywhere you have been.", where: "survey", done: false },
+    { id: "commit", keys: "F", gesture: "TAP COMMIT", label: "COMMIT THE CLAIM", why: "The framed rock becomes your board.", where: "survey", done: false },
     // Inside a claim the order is: hold the thing you control, then aim it, then let go. Serving
     // first meant the player's very first act in the new mode was to launch a ball they had no
     // idea how to catch, and then to discover the paddle while it was already falling.
-    { id: "paddle", keys: "A / D", label: "MOVE THE PADDLE", why: "It is the drone, edge on.", where: "play", done: false },
+    { id: "paddle", keys: "A / D", gesture: "DRAG ANYWHERE", demo: "swipe", label: "MOVE THE PADDLE", why: "It is the drone, edge on.", where: "play", done: false },
     // Aiming comes before the serve because that is the only time it does anything -- the aim
     // steers the ball off the paddle and is fixed once the ball is live. Teaching it afterwards
     // made it unreachable in that claim, which is the kind of thing a sequential tutorial makes
     // obvious and a checklist hides.
-    { id: "arenaAim", keys: "Q / E", label: "AIM THE SERVE", why: "The only steering you get.", where: "play", done: false },
-    { id: "serve", keys: "SPACE", label: "SERVE", where: "play", done: false },
+    { id: "arenaAim", keys: "Q / E", gesture: "DRAG WIDE TO ANGLE IT", label: "AIM THE SERVE", why: "The only steering you get.", where: "play", done: false },
+    { id: "serve", keys: "SPACE", gesture: "TAP", demo: "tap", label: "SERVE", where: "play", done: false },
     // Shown, not demanded.
-    { id: "speed", keys: "W / S", label: "HOLD TO SPEED UP", why: "For the long tail of a claim.", where: "play", optional: true, done: false },
+    { id: "speed", keys: "W / S", gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "For the long tail of a claim.", where: "play", optional: true, done: false },
   ];
   /**
    * A real pause: the claim's simulation stops, not just the interface.
@@ -238,6 +244,22 @@ export class OrekenoidGame {
   /** Seconds left of the 3-2-1. Zero means the claim is live. */
   resumeCountdown = 0;
   tutorialComplete = false;
+  /**
+   * Gestures already demonstrated, so each is mimed once and then trusted.
+   *
+   * Keyed by gesture kind rather than by step, because "drag" is one thing to learn even though
+   * three different rungs use it -- the paddle drag needs no demonstration once the survey drag has
+   * been seen.
+   */
+  private readonly gesturesShown = new Set<string>();
+  /**
+   * The demonstration currently running, and how long it has left.
+   *
+   * Time-based rather than call-based, and that distinction is the whole reason this field exists:
+   * `renderTutorial` runs every frame, so marking a gesture "shown" the first time it was asked for
+   * meant the animation appeared for exactly one frame and was then suppressed forever.
+   */
+  private gestureDemo: { kind: string; left: number } | null = null;
   /** How long the current step has been on screen, for advancing the optional ones. */
   private tutorialShownFor = 0;
   private tutorialFadeTimer = 0;
@@ -412,6 +434,28 @@ export class OrekenoidGame {
     this.bindInput();
     this.touch.attach(this.app.canvas);
     this.bindTouchActions();
+    this.audio.onLost = () => this.holds.audioLost();
+    this.awake.attach();
+    this.holds.attach({
+      onHold: () => {
+        // A genuine stop, not a hidden overlay. Every gesture in flight is dropped too, or a finger
+        // that was down when the call arrived would still be steering on the way back.
+        this.paused = true;
+        this.resumeCountdown = 0;
+        this.touch.clear();
+        this.keys.clear();
+      },
+      onResume: () => {
+        // The tap is the gesture the browser wanted, so spend it on the audio context before
+        // anything else -- this is the only moment one is guaranteed to be available.
+        this.audio.revive();
+        this.paused = false;
+        // The same countdown the pause menu uses. A live ball does not wait for a player to find
+        // the paddle again, and coming back from a phone call is exactly when they need the beat.
+        this.resumeCountdown = this.arena && !this.arena.resolving ? 3 : 0;
+      },
+      onOrientation: () => this.reshape(),
+    });
     this.bindInterfaceUI();
     await this.deploymentPreviews.build(this.chassisRoster);
     // The world stays hidden until deployment so the previews read cleanly.
@@ -654,11 +698,42 @@ export class OrekenoidGame {
       this.coach.hide();
       return;
     }
-    this.coach.show({ goal: step.label, why: step.why, keys: step.keys, ...anchor });
+    // Gestures replace keys only when the player is actually using fingers. A hybrid laptop stays
+    // on keys until somebody touches the screen, at which point the prompt switches over.
+    const touching = this.touch.used;
+    // Demonstrated once per distinct gesture, for a few loops, then trusted. After the first drag
+    // the player knows what a drag is, and a game that keeps miming its own controls is a game that
+    // does not trust them.
+    if (touching && step.demo && !this.gesturesShown.has(step.demo)) {
+      if (this.gestureDemo?.kind !== step.demo) {
+        // Three loops of the animation. One is easy to miss while reading the goal line above it.
+        this.gestureDemo = { kind: step.demo, left: 7.2 };
+      }
+    } else if (this.gestureDemo && this.gestureDemo.kind !== step.demo) {
+      // The sequence moved on. A demonstration of the previous rung's gesture is not worth
+      // finishing, and it stays unshown so it can be offered properly when its own rung arrives.
+      this.gestureDemo = null;
+    }
+    const demo = this.gestureDemo?.kind === step.demo ? step.demo : undefined;
+    this.coach.show({
+      goal: step.label,
+      why: step.why,
+      keys: step.keys,
+      gesture: touching ? step.gesture : undefined,
+      demo,
+      ...anchor,
+    });
   }
 
   /** Where the current step's subject is, in world pixels, and how to hang the tag off it. */
   private tutorialAnchor(step: TutorialStep): { x: number; y: number; side?: 1 | -1; ring?: boolean } | null {
+    // Staying on screen beats every other placement rule. On a phone the tag is a large fraction of
+    // the stage width, so hanging it on the "correct" side of a subject near an edge sent it off the
+    // screen and cut the sentence in half. Whichever side has more room gets it.
+    const roomier = (worldX: number, worldY: number): 1 | -1 => {
+      const at = this.camera.worldToScreen(worldX, worldY);
+      return at.x < view.width / 2 ? 1 : -1;
+    };
     const arena = this.arena;
     if (arena) {
       // Inside a claim the tag hangs above the paddle and off to the side, out of the ball's
@@ -671,7 +746,9 @@ export class OrekenoidGame {
       const point = this.world.localToWorld(target.u, target.v, arena);
       // Hung toward the middle of the board, so a paddle at either extreme does not push the tag
       // off the edge of the view.
-      return { x: point.x * CELL, y: point.y * CELL, side: arena.paddle.u > 0 ? -1 : 1, ring: step.id === "serve" };
+      const px = point.x * CELL;
+      const py = point.y * CELL;
+      return { x: px, y: py, side: roomier(px, py), ring: step.id === "serve" };
     }
     // Hung on the side the frame is not, so the prompt never covers the rock it is telling the
     // player to look at. The survey preview is a large bright rectangle out ahead of the drone,
@@ -682,17 +759,22 @@ export class OrekenoidGame {
       // and pointing at the machine instead would be pointing at the wrong noun.
       const frame = this.frameGeometry();
       const reach = (frame.depth / 2 + 1) * CELL;
+      const fx = this.player.x + Math.cos(frame.angle) * reach;
+      const fy = this.player.y + Math.sin(frame.angle) * reach;
       return {
-        x: this.player.x + Math.cos(frame.angle) * reach,
-        y: this.player.y + Math.sin(frame.angle) * reach,
-        side: ahead,
+        x: fx,
+        y: fy,
+        // The frame's own tag still prefers to hang forward, but not off the screen.
+        side: view.layout === "phone" ? roomier(fx, fy) : ahead,
         ring: true,
       };
     }
     return {
       x: this.player.x,
       y: this.player.y,
-      side: ahead === 1 ? -1 : 1,
+      side: view.layout === "phone"
+        ? roomier(this.player.x, this.player.y)
+        : (ahead === 1 ? -1 : 1),
       ring: step.id === "move",
     };
   }
@@ -798,6 +880,7 @@ export class OrekenoidGame {
       endCost: calculateClaimDamage(remaining, this.soakCapacity),
       integrity: this.integrity,
       maxIntegrity: this.maxIntegrity,
+      touch: this.touch.used,
     };
   }
 
@@ -1322,14 +1405,16 @@ export class OrekenoidGame {
     const arena = this.arena;
     if (!arena) return;
     const point = this.world.localToWorld(brick.u, brick.v, arena);
-    this.effects.spawnShards(point.x * CELL, point.y * CELL, colour, count, force, settles);
+    // At least one, always. A burst that rounds to nothing turns "that broke" into silence.
+    const budgeted = Math.max(1, Math.round(count * effectBudget()));
+    this.effects.spawnShards(point.x * CELL, point.y * CELL, colour, budgeted, force, settles);
   }
 
   private dustAtBrick(brick: Brick, colour: number, count: number, force = 1): void {
     const arena = this.arena;
     if (!arena) return;
     const point = this.world.localToWorld(brick.u, brick.v, arena);
-    this.effects.spawnDust(point.x * CELL, point.y * CELL, colour, count, force);
+    this.effects.spawnDust(point.x * CELL, point.y * CELL, colour, Math.max(1, Math.round(count * effectBudget())), force);
   }
 
   private scorchAtBrick(brick: Brick, colour: number): void {
@@ -1351,7 +1436,9 @@ export class OrekenoidGame {
     if (!arena) return;
     const point = this.world.localToWorld(brick.u, brick.v, arena);
     const centre = this.world.localToWorld(0, arena.depth / 2, arena);
-    this.camera.kick((point.x - centre.x) * CELL, (point.y - centre.y) * CELL, magnitude);
+    const scaled = magnitude * motionScale();
+    if (scaled <= 0) return;
+    this.camera.kick((point.x - centre.x) * CELL, (point.y - centre.y) * CELL, scaled);
   }
 
   private ringAtBrick(brick: Brick, colour: number, strength: number): void {
@@ -1476,6 +1563,9 @@ export class OrekenoidGame {
     this.touch.enabled = this.started && !this.craftingOpen && !this.atlasOpen && !this.paused;
     this.touchState = this.touch.read(this.camera);
     this.answerTaps();
+    // Only while a claim is actually running. Holding the lock through the deployment screen or a
+    // pause would be asking to keep somebody's screen on for a game they are not playing.
+    this.awake.set(this.started && !this.paused && this.arena !== null);
     this.renderTouchActions(dt);
     this.touchControls.update(
       dt,
@@ -2034,6 +2124,14 @@ export class OrekenoidGame {
     if (this.hitPause > 0) this.hitPause = Math.max(0, this.hitPause - step * this.simulationRate);
     this.pauseView.showCountdown(this.resumeCountdown);
     this.advanceTutorial(step);
+    if (this.gestureDemo) {
+      this.gestureDemo.left -= step;
+      if (this.gestureDemo.left <= 0) {
+        // Seen. Never offered again, for any rung that uses the same gesture.
+        this.gesturesShown.add(this.gestureDemo.kind);
+        this.gestureDemo = null;
+      }
+    }
     // Re-anchored every frame, because the subject moves: the tag rides the drone through the
     // rock and the paddle across the board, which is the difference between a prompt that belongs
     // to a thing and one that merely appeared near it once.

@@ -1,9 +1,13 @@
 # Orekenoid on phones
 
-## Where it stands
+> **Status: built.** Every phase below is implemented, with ten phone specs and the desktop suite
+> green. The "Built" section records what the plan got wrong and what the work turned up; the phase
+> descriptions are kept as the record of why each piece is shaped the way it is.
 
-The game is unplayable on a phone for two independent reasons, either of which alone would be
-fatal.
+## Where it stood
+
+The game was unplayable on a phone for two independent reasons, either of which alone would have
+been fatal.
 
 **The viewport is a fixed 16:9 letterbox.** `VIEW_WIDTH`/`VIEW_HEIGHT` are `1280`/`720`, the Pixi
 stage is created at that size, and `.viewport` in CSS is locked to the same ratio:
@@ -45,6 +49,29 @@ Settled, so the implementation does not have to relitigate them:
 - **Audio loss is a pause.** When the audio context is lost or suspended, the game pauses and shows
   an obtrusive one-tap dismissal — not the full pause menu, just a tap-to-resume plate. This falls
   out of a rule worth having anyway: losing window context always pauses.
+
+## Built
+
+All eight phases are in, with 10 phone specs and the desktop suite green. What the plan did not
+anticipate, and what the work turned up:
+
+- **The camera zoom was never applied.** `applyTo` set pivot, position and rotation and never
+  scale, so a committed board ran off both edges of the phone. Found by measuring brick positions on
+  the stage after container bounds came back bit-for-bit identical at two different zooms -- the
+  bounds are reported in the board's own units and do not carry the camera scale, which is a trap
+  worth remembering.
+- **Rotation was all-or-nothing against hull collision**, making the fastest gestures the ones most
+  likely to do nothing: a held key produces hundredths of a radian per frame, a thumb flick most of
+  a radian at once. It steps now, the way movement already slid along walls.
+- **`setPointerCapture` throws** for a pointer the browser does not consider active, aborting the
+  handler before the gesture registered.
+- **The gesture demonstration ran for one frame.** `renderTutorial` is called every frame, so
+  marking a gesture shown the first time it was asked for suppressed it immediately. The bookkeeping
+  is time-based now.
+- **`[hidden]` loses to `display: grid`.** The FAST pad stayed on screen out in the mine, where it
+  does nothing, because the UA `display: none` was out-specified.
+- **The deployment screen was a hard blocker** nobody had looked at: two of three chassis off the
+  right edge, DEPLOY unreachable. It gated every phone test that starts a game.
 
 ## Shape of the work
 

@@ -450,6 +450,79 @@ button { color: inherit; font: inherit; }
   .viewport { width: calc(100vw - 8px); height: calc((100vw - 8px) * 9 / 16); }
 }
 
+/* --- The resume plate and the rotate gate ----------------------------------
+   Both are full-cover, both are in the game's own visual language rather than a browser default,
+   and both sit above everything including the touch controls -- they exist precisely because the
+   game is not currently playable, so nothing underneath them should look like it is.
+   -------------------------------------------------------------------------- */
+.resume-plate, .rotate-gate {
+  position: absolute;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: calc(24px + var(--safe-top)) 22px calc(24px + var(--safe-bottom));
+  background: rgb(6 9 10 / .93);
+}
+.resume-plate[hidden], .rotate-gate[hidden] { display: none; }
+
+/* One tap, and the tap target is the whole plate: the player is trying to get back to the game,
+   not to hit a small button. */
+#resumeButton {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  width: 100%;
+  max-width: 420px;
+  padding: 26px 24px;
+  border: 1px solid var(--brass);
+  border-top-width: 2px;
+  background: rgb(14 18 20 / .96);
+  cursor: pointer;
+  text-align: center;
+}
+#resumeButton b { color: var(--ink); font-size: 20px; font-weight: 900; letter-spacing: .16em; }
+#resumeButton span { color: var(--dim); font-size: 13px; line-height: 1.4; }
+#resumeButton i {
+  margin-top: 6px;
+  padding: 11px 22px;
+  background: #b95a32;
+  color: #21160e;
+  font-style: normal;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+#resumeButton:active i { background: var(--ore-hot); }
+
+.rotate-frame {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  max-width: 380px;
+  padding: 30px 26px;
+  border: 1px solid #443d2f;
+  border-top: 2px solid var(--brass);
+  background: rgb(12 16 17 / .96);
+  text-align: center;
+}
+/* A phone standing up. Drawn in CSS because it is two rectangles and an animation, and a real
+   asset for this would be a download the gate exists to avoid needing. */
+.rotate-frame i {
+  width: 44px;
+  height: 74px;
+  border: 2px solid var(--brass);
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 2px rgb(185 154 97 / .18);
+  animation: rotate-hint 2.4s ease-in-out infinite;
+}
+@keyframes rotate-hint {
+  0%, 42% { transform: rotate(-90deg); }
+  62%, 100% { transform: rotate(0deg); }
+}
+.rotate-frame b { color: var(--ink); font-size: 18px; font-weight: 900; letter-spacing: .14em; }
+.rotate-frame span { color: var(--dim); font-size: 13px; line-height: 1.45; }
+
 /* --- The HUD, in portrait ---------------------------------------------------
    Two rules decide all of this.
 
@@ -549,6 +622,9 @@ button { color: inherit; font: inherit; }
   border-color: var(--ore-hot);
   background: rgb(40 22 12 / .92);
 }
+/* `[hidden]` is a UA `display: none`, and the rule above sets `display: grid` with more
+   specificity -- so FAST stayed on screen out in the mine, where it does nothing. */
+.touch-actions button[hidden] { display: none; }
 .touch-actions button i { font-style: normal; font-size: 15px; line-height: 1; }
 .touch-actions button small {
   color: var(--dim);

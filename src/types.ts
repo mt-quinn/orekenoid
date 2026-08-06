@@ -23,6 +23,21 @@ export interface TutorialStep {
   label: string;
   /** One short line on what it is for. Omitted where the goal is self-evident. */
   why?: string;
+  /**
+   * How to do it with a finger.
+   *
+   * Shown in place of `keys` on a touchscreen. Naming keys to somebody holding a phone is worse
+   * than saying nothing: it advertises a control they do not have and hides the one they do.
+   */
+  gesture?: string;
+  /**
+   * Which gesture to *demonstrate*, if any.
+   *
+   * A phrase like "drag on the left" is a description; a thumb visibly performing the drag is an
+   * instruction. Shown once per distinct gesture -- after the first time the player knows what a
+   * drag is, and repeating the animation would be a game that keeps explaining itself.
+   */
+  demo?: "stick" | "swipe" | "tap" | "hold";
   /** The mode this can be performed in, so the prompt never asks for the impossible. */
   where: "survey" | "play";
   /** Shown and then advanced automatically. Worth knowing, not worth blocking on. */

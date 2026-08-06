@@ -59,6 +59,32 @@ export const view: ViewState = {
   safe: { top: 0, right: 0, bottom: 0, left: 0 },
 };
 
+/**
+ * How many particles to actually spawn, as a fraction of what the effect asked for.
+ *
+ * A phone is filling far fewer pixels than a desktop but doing it on a fraction of the GPU, and
+ * shards are the cheapest thing to cut: a burst of five reads as broken rock just as well as a
+ * burst of nine, and nobody counts them. The board's own reaction -- the shove, the spin, the
+ * travelling pulse -- is what actually sells an impact, and none of that is per-particle.
+ */
+export const effectBudget = (): number => (view.layout === "phone" ? 0.55 : 1);
+
+/**
+ * How much screen movement to allow, 0 to 1.
+ *
+ * Two reasons to scale it down. A phone is held 30cm from the face, where a kick that reads as
+ * weight on a monitor reads as a jolt. And `prefers-reduced-motion` is a real accessibility request
+ * that this game can honour almost for free: the whole point of the feedback pass was that the
+ * board's reaction carries the impact and the camera is the last and smallest layer, so removing
+ * the camera movement entirely costs very little of the feel.
+ */
+export function motionScale(): number {
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    return 0;
+  }
+  return view.layout === "phone" ? 0.7 : 1;
+}
+
 /** Handy shorthands, so callers read as geometry rather than as arithmetic. */
 export const centreX = (): number => view.width / 2;
 export const centreY = (): number => view.height / 2;

@@ -30,8 +30,12 @@ export interface CoachPrompt {
   goal: string;
   /** One short line on why it is worth doing. Omitted where the goal speaks for itself. */
   why?: string;
-  /** The keys, small, under the goal. */
+  /** The keys, small, under the goal. Replaced by `gesture` on a touchscreen. */
   keys: string;
+  /** What to do with a finger, shown instead of `keys` when the player is using one. */
+  gesture?: string;
+  /** A thumb performing the gesture, drawn once per distinct gesture. */
+  demo?: "stick" | "swipe" | "tap" | "hold";
   /** World pixel position of the thing being talked about. */
   x: number;
   y: number;
@@ -55,6 +59,8 @@ export class Coach {
   private readonly leader = new Graphics();
   private readonly plate = new Graphics();
   private readonly ring = new Graphics();
+  /** The demonstrating thumb. Separate so it can animate on its own loop. */
+  private readonly ghost = new Graphics();
   private readonly goalText: Text;
   private readonly whyText: Text;
   private readonly keysText: Text;
@@ -71,7 +77,7 @@ export class Coach {
     this.goalText = new Text({ text: "", style: { ...font, fill: 0xffffff, fontSize: 17, fontWeight: "800", letterSpacing: 2 } });
     this.whyText = new Text({ text: "", style: { ...font, fill: DIM, fontSize: 12 } });
     this.keysText = new Text({ text: "", style: { ...font, fill: BRASS, fontSize: 12, fontWeight: "800", letterSpacing: 2 } });
-    this.container.addChild(this.ring, this.leader, this.plate, this.goalText, this.whyText, this.keysText);
+    this.container.addChild(this.ring, this.ghost, this.leader, this.plate, this.goalText, this.whyText, this.keysText);
     this.container.visible = false;
   }
 
@@ -132,7 +138,9 @@ export class Coach {
 
     this.goalText.text = prompt.goal;
     this.whyText.text = prompt.why ?? "";
-    this.keysText.text = prompt.keys;
+    // The gesture wins when there is one, because there is only ever one player and they are
+    // holding exactly one kind of device.
+    this.keysText.text = prompt.gesture ?? prompt.keys;
 
     const side = prompt.side ?? 1;
     const padding = 11;
@@ -173,6 +181,8 @@ export class Coach {
       .circle(0, 0, 3)
       .fill({ color: edge, alpha: 0.9 });
 
+    this.drawGhost(prompt, side);
+
     this.ring.clear();
     if (prompt.ring) {
       const pulse = (Math.sin(this.phase * 3) + 1) / 2;
@@ -182,5 +192,78 @@ export class Coach {
         .circle(0, 0, 18)
         .stroke({ width: 1.5, color: BRASS, alpha: 0.3 });
     }
+  }
+
+  /**
+   * A thumb performing the gesture, on a loop.
+   *
+   * "Drag on the left half" is a description of a gesture; a thumb visibly doing it is an
+   * instruction. This is the part of touch onboarding that words genuinely cannot replace -- there
+   * is no phrasing of "push the stick to move" that teaches as fast as watching it happen once.
+   *
+   * Drawn below the subject rather than over it, so the demonstration never hides the thing being
+   * demonstrated on.
+   */
+  private drawGhost(prompt: CoachPrompt, side: 1 | -1): void {
+    this.ghost.clear();
+    if (!prompt.demo) return;
+    // A slow loop with a pause at the end, so each repetition reads as a separate demonstration
+    // rather than as continuous motion.
+    const CYCLE = 2.4;
+    const t = (this.phase % CYCLE) / CYCLE;
+    // Eased out and back, held at the extremes.
+    const travel = t < 0.55 ? Math.min(1, t / 0.4) : Math.max(0, 1 - (t - 0.55) / 0.2);
+    const eased = travel * travel * (3 - 2 * travel);
+    const baseY = 58;
+    const reach = 46;
+
+    if (prompt.demo === "tap" || prompt.demo === "hold") {
+      // A pad with expanding rings. A hold shows two rings still going out at the end of the cycle,
+      // which is the only visual difference that reads as "keep it down".
+      const held = prompt.demo === "hold";
+      const pressed = held ? Math.min(1, t / 0.25) : (t < 0.3 ? t / 0.3 : 0);
+      for (const ring of held ? [0, 0.45, 0.9] : [0]) {
+        const wave = (t + ring) % 1;
+        this.ghost
+          .circle(0, baseY, 14 + wave * 26)
+          .stroke({ width: 2, color: BRASS, alpha: Math.max(0, 0.4 * (1 - wave)) });
+      }
+      this.ghost
+        .circle(0, baseY, 15 - pressed * 3)
+        .fill({ color: BRASS, alpha: 0.18 + pressed * 0.24 })
+        .stroke({ width: 2, color: BRASS, alpha: 0.6 });
+      return;
+    }
+
+    // A drag. The stick demo shows its gate as well as the thumb, because the gate is the thing
+    // that makes a floating stick legible; a swipe has no gate to show.
+    const from = -reach * side;
+    const at = from + reach * 2 * eased * side;
+    if (prompt.demo === "stick") {
+      this.ghost
+        .circle(from, baseY, 34)
+        .stroke({ width: 2, color: BRASS, alpha: 0.22 })
+        .moveTo(from, baseY)
+        .lineTo(at, baseY)
+        .stroke({ width: 2, color: BRASS, alpha: 0.3 });
+    } else {
+      // A dotted track, so the path is visible before the thumb has travelled it.
+      for (let step = 0; step <= 6; step++) {
+        this.ghost
+          .circle(from + (reach * 2 * (step / 6)) * side, baseY, 2)
+          .fill({ color: BRASS, alpha: 0.22 });
+      }
+    }
+    // A short trail behind the thumb, which is what makes the direction unambiguous at a glance.
+    for (const lag of [0.16, 0.3]) {
+      const back = Math.max(0, eased - lag);
+      this.ghost
+        .circle(from + reach * 2 * back * side, baseY, 13 - lag * 18)
+        .fill({ color: BRASS, alpha: 0.12 });
+    }
+    this.ghost
+      .circle(at, baseY, 15)
+      .fill({ color: BRASS, alpha: 0.26 })
+      .stroke({ width: 2, color: BRASS, alpha: 0.66 });
   }
 }

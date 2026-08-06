@@ -2,7 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` lets the page reach under the notch and the home indicator, which is
+         what makes the safe-area insets meaningful -- without it the browser letterboxes the page
+         inside the safe area and the insets are all zero. `maximum-scale` and `user-scalable=no`
+         stop a double-tap or a two-finger pinch zooming the game mid-drag; both of those gestures
+         belong to the paddle here, not to the browser. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Orekenoid" />
     <meta name="theme-color" content="#080b0c" />
     <title>Orekenoid — Extraction Test</title>
     <link rel="stylesheet" href="/src/style.css" />
@@ -41,6 +53,28 @@
         <div class="toast" id="toast" aria-live="polite"></div>
 
         <div class="resonance" id="resonance" aria-live="polite"></div>
+
+        <!-- Losing context always pauses, and the way back is one plate and one tap. Deliberately
+             not the pause menu: the player did not ask to pause, so they should not be handed a
+             menu of decisions on the way back in. -->
+        <div class="resume-plate" id="resumePlate" hidden>
+          <button type="button" id="resumeButton">
+            <b>SURVEY HELD</b>
+            <span id="resumeReason">The rig stopped when you looked away.</span>
+            <i>TAP TO RESUME</i>
+          </button>
+        </div>
+
+        <!-- The rig runs vertical. A designed gate in the game's own voice rather than a browser
+             default, and nothing behind it is lost -- the expedition is exactly where it was. -->
+        <div class="rotate-gate" id="rotateGate" hidden aria-live="polite">
+          <div class="rotate-frame">
+            <i aria-hidden="true"></i>
+            <b>HOLD THE RIG UPRIGHT</b>
+            <span>The survey column reads top to bottom. Turn the device back and the expedition
+              picks up where you left it.</span>
+          </div>
+        </div>
 
         <!-- Touch actions. Real buttons rather than anything drawn in the canvas: they get 44px
              targets, focus, a pressed state and a screen-reader label for free, and the HUD is

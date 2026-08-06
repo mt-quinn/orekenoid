@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- The drone, edge on, over a claim: the two things the game is. Vector rather than a set of
+       rasters because the whole silhouette is four polygons and a circle, and a single SVG spares
+       the install a folder of PNGs. -->
+  <rect width="512" height="512" fill="#0d0d0a"/>
+  <g fill="none" stroke="#b99a61" stroke-width="14">
+    <rect x="96" y="96" width="320" height="200" rx="4" opacity=".45"/>
+    <path d="M96 96h320M96 296h320" opacity=".7"/>
+  </g>
+  <g fill="#4f6d7a" opacity=".85">
+    <rect x="120" y="120" width="60" height="36" rx="6"/>
+    <rect x="196" y="120" width="60" height="36" rx="6"/>
+    <rect x="272" y="120" width="60" height="36" rx="6"/>
+    <rect x="158" y="172" width="60" height="36" rx="6"/>
+    <rect x="234" y="172" width="60" height="36" rx="6"/>
+    <rect x="310" y="172" width="60" height="36" rx="6"/>
+  </g>
+  <circle cx="330" cy="356" r="18" fill="#eadfc8"/>
+  <path d="M148 400h216l-24 32H172z" fill="#b99a61"/>
+  <rect x="160" y="392" width="192" height="14" rx="7" fill="#eadfc8"/>
+</svg>

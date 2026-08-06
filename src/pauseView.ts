@@ -28,6 +28,8 @@ export interface PauseModel {
   endCost: number;
   integrity: number;
   maxIntegrity: number;
+  /** True when the player is using fingers, which decides which control reference is shown. */
+  touch: boolean;
 }
 
 /**
@@ -62,6 +64,40 @@ const CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string, stri
   {
     group: "ANY TIME",
     rows: [["ESC", "Pause"]],
+  },
+];
+
+/**
+ * The same reference for fingers.
+ *
+ * Kept as a separate table rather than generated from the keyboard one, because the two control
+ * schemes are not a translation of each other: the keyboard has a key per action and touch has
+ * three gestures plus four buttons, so several rows collapse and one -- holding both speed keys --
+ * has no touch equivalent at all.
+ */
+const TOUCH_CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string, string]> }> = [
+  {
+    group: "IN THE MINE",
+    rows: [
+      ["DRAG · LEFT HALF", "Fly the drone"],
+      ["DRAG · RIGHT HALF", "Turn the survey frame"],
+      ["COMMIT", "Claim the framed rock"],
+      ["TAP THE WORLD", "Also commits"],
+      ["ATLAS · FORGE", "Top right. Forge needs an anchor"],
+    ],
+  },
+  {
+    group: "IN A CLAIM",
+    rows: [
+      ["DRAG", "Slide the paddle. It rides above your thumb"],
+      ["DRAG WIDE", "Before serving, angles the launch"],
+      ["TAP  ·  SERVE", "Launch the ball"],
+      ["HOLD FAST", "Runs at ×2, then ×4, then ×8"],
+    ],
+  },
+  {
+    group: "ANY TIME",
+    rows: [["PAUSE", "Top right"]],
   },
 ];
 
@@ -126,7 +162,10 @@ export class PauseView {
     if (!this.body) return;
     this.model = model;
 
-    const controls = CONTROLS.map((section) => `<section class="pause-group">
+    // Whichever device the player is actually holding. Listing keys to somebody on a phone
+    // describes hardware they do not have, and hides the controls they do.
+    const table = model.touch ? TOUCH_CONTROLS : CONTROLS;
+    const controls = table.map((section) => `<section class="pause-group">
       <h3>${section.group}</h3>
       <dl>${section.rows.map(([keys, what]) =>
         `<dt>${keys}</dt><dd>${what}</dd>`).join("")}</dl>

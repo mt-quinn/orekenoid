@@ -188,6 +188,18 @@ export class Camera {
     };
   }
 
+  /** Where a world point lands on the canvas. The inverse of `screenToWorld`, kick excluded. */
+  worldToScreen(worldX: number, worldY: number): Vec2 {
+    const dx = worldX - this.focus.x;
+    const dy = worldY - this.focus.y;
+    const cos = Math.cos(this.rotation);
+    const sin = Math.sin(this.rotation);
+    return {
+      x: view.width / 2 + (dx * cos - dy * sin) * this.zoom,
+      y: view.height / 2 + (dx * sin + dy * cos) * this.zoom,
+    };
+  }
+
   /** Decay the kick. Real seconds, so it feels the same at any frame rate. */
   private settleKick(dt: number): void {
     // Critically-damped-ish: fast enough to be a snap rather than a wobble.
