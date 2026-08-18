@@ -16,6 +16,8 @@ export interface BounderDisplay {
   body: Container;
   plates: Graphics;
   tell: Graphics;
+  /** The airborne form: the arena's ball, in the creature's own colour. */
+  ball: Container;
 }
 
 /**
@@ -31,9 +33,22 @@ export function createBounderDisplay(): BounderDisplay {
   const tell = new Graphics();
   const plates = new Graphics();
   body.addChild(tell, plates);
-  container.addChild(body);
-  return { container, body, plates, tell };
+  // Drawn to match the arena ball exactly -- same glow ring at the same proportion, same solid core --
+  // and only recoloured. A launched Bounder *is* a ball to be returned, and the player should not have
+  // to be told that twice.
+  const radius = BOUNDER.radius * CELL;
+  const ball = new Container();
+  ball.addChild(
+    new Graphics().circle(0, 0, radius * 2.6).fill({ color: SHELL, alpha: 0.14 }),
+    new Graphics().circle(0, 0, radius).fill(SHELL),
+    new Graphics().circle(-radius * 0.28, -radius * 0.3, radius * 0.3).fill({ color: 0xffffff, alpha: 0.22 }),
+  );
+  container.addChild(body, ball);
+  return { container, body, plates, tell, ball };
 }
+
+/** The shell colour, shared by the walking plates and the airborne ball so they read as one animal. */
+const SHELL = 0x6d5b46;
 
 const PLATES = 6;
 
@@ -46,16 +61,23 @@ const PLATES = 6;
  */
 export function drawBounder(display: BounderDisplay, creature: Creature): void {
   const radius = BOUNDER.radius * CELL;
-  const curl = creature.state === "hurl" ? 1
-    : creature.state === "coil" ? Math.min(1, creature.tell)
-      : creature.state === "spent" ? 0.35
-        : 0;
+  // In the air it is a ball and nothing else. It is never drawn part-folded off a surface: the two
+  // forms mean two different things to the player, and a halfway pose means neither.
+  const airborne = creature.state === "hurl";
+  display.ball.visible = airborne;
+  display.body.visible = !airborne;
+  if (airborne) {
+    display.ball.rotation = Math.atan2(creature.vy, creature.vx);
+    display.ball.tint = creature.hitFlash > 0 ? 0xffffff : 0xffffff;
+    return;
+  }
+  const curl = creature.state === "coil" ? Math.min(1, creature.tell)
+    : creature.state === "spent" ? 0.2
+      : 0;
 
-  // Walking, it lies along the surface: the body's long axis follows the tangent, and the plates fan
-  // away from the rock. In the air there is no surface, so it simply spins.
-  display.body.rotation = creature.state === "hurl"
-    ? Math.atan2(creature.vy, creature.vx)
-    : creature.surfaceAngle - Math.PI / 2;
+  // It lies along the surface: the body's long axis follows the tangent, and the plates fan away
+  // from the rock.
+  display.body.rotation = creature.surfaceAngle - Math.PI / 2;
 
   const plates = display.plates;
   plates.clear();
@@ -78,7 +100,7 @@ export function drawBounder(display: BounderDisplay, creature: Creature): void {
     const lift = -radius * 0.1 * (1 - curl);
     plates
       .ellipse(spread, lift, arc * (0.34 + 0.66 * curl), arc)
-      .fill({ color: index % 2 === 0 ? 0x6d5b46 : 0x5b4c3b, alpha: 1 })
+      .fill({ color: index % 2 === 0 ? SHELL : 0x5b4c3b, alpha: 1 })
       .stroke({ width: 1.5, color: 0x2a231c, alpha: 0.85 });
   }
 
@@ -92,10 +114,9 @@ export function drawBounder(display: BounderDisplay, creature: Creature): void {
 /**
  * The tell.
  *
- * Two states worth announcing and they must not look alike. Winding up throws a lane down the heading
- * it has locked, because that lane is the ground to leave. In the air it carries a hot core instead,
- * because by then the lane is no longer a warning -- it is a fact, and what the player needs is to see
- * where the thing *is* so they can turn the paddle to it.
+ * Only the wind-up is announced. It throws a lane down the heading it has locked, because that lane
+ * is the ground to leave. In the air nothing is added: the ball form is the whole message, and a
+ * second layer of glow on top of it would say the same thing twice.
  */
 function drawTell(display: BounderDisplay, creature: Creature, radius: number): void {
   const tell = display.tell;
@@ -119,13 +140,6 @@ function drawTell(display: BounderDisplay, creature: Creature, radius: number): 
         .fill({ color: PALETTE.danger, alpha: 0.1 + heat * 0.18 });
     }
     tell.circle(0, 0, radius * (1.1 + heat * 0.5)).fill({ color: PALETTE.danger, alpha: 0.12 + heat * 0.3 });
-  } else if (creature.state === "hurl") {
-    tell.circle(0, 0, radius * 1.5).fill({ color: PALETTE.danger, alpha: 0.22 });
-    // Brighter once the paddle has sent it back, because that is the one moment the player is waiting
-    // on: a returned Bounder is about to take damage, and it should look like it.
-    if (creature.deflected) {
-      tell.circle(0, 0, radius * 2.1).fill({ color: PALETTE.rail, alpha: 0.2 });
-    }
   }
 }
 

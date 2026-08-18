@@ -20,7 +20,7 @@
 //
 // Pure state machine over a solidity oracle: no Pixi, no world model, no globals.
 
-import { resolveCircle, stepFieldBall, type SolidityOracle } from "./ballField";
+import { resolveCircle, type SolidityOracle } from "./ballField";
 import { hasLineOfSight } from "./sight";
 import type { ResourceId } from "../config";
 
@@ -121,14 +121,6 @@ export interface Creature {
    * approximation of one would be two solvers to keep in agreement.
    */
   age: number;
-  /**
-   * Sent back by the paddle and not yet landed.
-   *
-   * This is what makes the player necessary. An ordinary wall bounce does nothing: if every impact
-   * hurt it, a Bounder would kill itself on the first corridor it crossed and the paddle would be
-   * decoration. Only the impact after a return counts.
-   */
-  deflected: boolean;
   /** What it drops, decided from the ground it spawned in. */
   ores: ResourceId[];
   /**
@@ -179,7 +171,6 @@ export function createBounder(
     hitFlash: 0,
     tell: 0,
     age: 0,
-    deflected: false,
     ores,
     surfaceAngle,
     circulation,
@@ -214,7 +205,6 @@ export function deflectCreature(
   creature.vx = Math.cos(heading) * speed;
   creature.vy = Math.sin(heading) * speed;
   creature.facing = heading;
-  creature.deflected = true;
   // Lifted clear of the face so the next frame is not read as a second contact.
   creature.x += Math.cos(normalAngle) * 0.02;
   creature.y += Math.sin(normalAngle) * 0.02;
@@ -264,7 +254,6 @@ export function stepCreature(
         creature.state = "hurl";
         creature.timer = BOUNDER.hurlSeconds;
         creature.age = 0;
-        creature.deflected = false;
         creature.tell = 1;
         creature.vx = Math.cos(creature.facing) * BOUNDER.hurlSpeed;
         creature.vy = Math.sin(creature.facing) * BOUNDER.hurlSpeed;
@@ -273,30 +262,42 @@ export function stepCreature(
       break;
     }
     case "hurl": {
-      // Stepped by the ball solver itself, so it rebounds off the rock with the pace and the
-      // anti-degenerate clamps a served ball has. That is the point of the creature.
-      const flight = stepFieldBall(creature, world, dt);
-      if (flight.bounces.length && creature.deflected) {
-        creature.deflected = false;
+      // Straight flight, and it ends at the first rock it touches. No rebound: a Bounder is not a
+      // ball that happens to be alive, it is an animal that has thrown itself, and it lands where it
+      // lands. Sticking rather than bouncing is also what makes the exchange legible -- a launch has
+      // exactly one outcome, and the player can see which one it is going to be.
+      const landing = flyUntilContact(creature, world, dt);
+      if (landing) {
+        creature.surfaceAngle = landing.surfaceAngle;
         creature.hp -= 1;
         creature.hitFlash = 0.26;
+        creature.vx = 0;
+        creature.vy = 0;
         step.landed = true;
-        const bounce = flight.bounces[0];
-        creature.vx += bounce.nx * BOUNDER.impactKnockback;
-        creature.vy += bounce.ny * BOUNDER.impactKnockback;
         if (creature.hp <= 0) {
           creature.state = "dead";
           step.killed = true;
           return step;
         }
-      }
-      if (flight.buried || creature.timer <= 0) {
+        // On the ground the instant it arrives, unfolded and stuck to whatever it hit. The beat that
+        // follows is the player's, not the creature's: it has to be back on a surface before it can
+        // wind up again.
         creature.state = "spent";
         creature.timer = BOUNDER.spentSeconds;
         creature.tell = 0;
-        creature.deflected = false;
+        settle(creature, world, landing.surfaceAngle);
+        return withContact(creature, target, step);
       }
-      // The solver has already moved it, so the shared mover below must not move it again.
+      if (creature.timer <= 0) {
+        // Ran out of flight without touching anything -- only possible out over a void. Drop it back
+        // to looking for a surface rather than leaving it curled in mid-air.
+        creature.state = "spent";
+        creature.timer = BOUNDER.spentSeconds;
+        creature.tell = 0;
+        creature.vx = 0;
+        creature.vy = 0;
+      }
+      // Already moved by the flight, so the shared mover below must not move it again.
       return withContact(creature, target, step);
     }
     case "spent": {
@@ -318,6 +319,40 @@ export function stepCreature(
   creature.x = resolved.x;
   creature.y = resolved.y;
   return withContact(creature, target, step);
+}
+
+/**
+ * Advance a launched Bounder until it touches rock.
+ *
+ * Substepped below its own radius so it cannot pass through a wall between frames, and reported as
+ * the direction the rock lies in so the creature can stick to the face it actually met. Returns null
+ * while it is still in the air.
+ */
+function flyUntilContact(
+  creature: Creature,
+  world: SolidityOracle,
+  dt: number,
+): { surfaceAngle: number } | null {
+  const speed = Math.hypot(creature.vx, creature.vy);
+  if (speed < 1e-6) return null;
+  let remaining = dt;
+  let guard = 0;
+  while (remaining > 1e-6 && guard++ < 64) {
+    const slice = Math.min(remaining, (creature.radius * 0.5) / speed);
+    remaining -= slice;
+    const nextX = creature.x + creature.vx * slice;
+    const nextY = creature.y + creature.vy * slice;
+    const resolved = resolveCircle(world, nextX, nextY, creature.radius);
+    if (resolved.hit) {
+      creature.x = resolved.x;
+      creature.y = resolved.y;
+      // The resolver's normal points out of the rock, so the rock is the other way.
+      return { surfaceAngle: Math.atan2(-resolved.ny, -resolved.nx) };
+    }
+    creature.x = nextX;
+    creature.y = nextY;
+  }
+  return null;
 }
 
 /**
@@ -354,6 +389,12 @@ function crawl(creature: Creature, world: SolidityOracle, dt: number): void {
   const resolved = resolveCircle(world, nextX, nextY, creature.radius);
   creature.x = resolved.x;
   creature.y = resolved.y;
+  if (!resolved.hit) return;
+  // Walked into something. That is a concave corner -- the floor at the foot of a wall, most often --
+  // and the face it just met is the one to carry on along. Re-attaching to it here is what turns the
+  // corner; without it a Bounder that landed on a wall above a floor jammed in the join and stayed
+  // there, which looked exactly like the crawl being broken.
+  reattach(creature, world, Math.atan2(-resolved.ny, -resolved.nx), BOUNDER.reattachSweep);
 }
 
 /**
@@ -439,7 +480,6 @@ export function bounceCreature(creature: Creature, nx: number, ny: number): void
     creature.vy -= 2 * dot * uy;
   }
   creature.facing = Math.atan2(creature.vy, creature.vx);
-  creature.deflected = true;
   creature.x += ux * 0.02;
   creature.y += uy * 0.02;
 }

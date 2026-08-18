@@ -64,14 +64,19 @@ circling a free-standing island of rock forever because there is nowhere else fo
 inside its aggro range with line of sight and it curls up, telegraphs, and hurls itself at you under
 the same solver the arena's ball moves under.
 
-That gives one exchange, and the whole fight is in it:
+It never leaves the ground except to launch, and in the air it is drawn as the arena's ball in its own
+shell colour — because that is exactly what it is, and the player should not have to be told twice.
 
-- **Meet it with the front of the paddle** and it goes back out with english on it, costing nothing.
-- **Let it reach anywhere else** — the back, the ends, the flanks — and the hull pays. It still goes
-  back out, so the trade is not wasted, only paid for.
-- Either way it is now marked, and the rock it lands against takes a point off it. **Three of those
-  kills it.** A Bounder that cleanly misses takes nothing from the landing, which is why the paddle is
-  necessary rather than decorative.
+A launch has one outcome, and the whole fight is in it:
+
+- **It reaches the drone anywhere but the paddle's face** and the hull pays.
+- **It meets the face** and goes back out with english on it, costing nothing. The machine is not
+  terrain, so it bounces off it.
+- **It touches rock** — first contact, wherever that is — and it stops dead, sticks, unfolds on the
+  spot, and takes one hit. No rebound. **Three landings kill it.**
+
+So the paddle's job is to turn a hit on you into a hit on the rock, and a Bounder that lands on a wall
+carries on crawling up that wall.
 
 One at a time is a rally you can win standing still. The difficulty is how many are in the air at
 once, which is a property of the room rather than of the creature — and is why there only needs to be

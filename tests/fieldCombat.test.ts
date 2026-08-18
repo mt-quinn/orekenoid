@@ -42,7 +42,6 @@ function hurledAt(combat: FieldCombat, from: { x: number; y: number }, at: { x: 
   const creature = combat.spawn(from.x, from.y);
   creature.state = "hurl";
   creature.timer = BOUNDER.hurlSeconds;
-  creature.deflected = false;
   const angle = Math.atan2(at.y - from.y, at.x - from.x);
   creature.vx = Math.cos(angle) * BOUNDER.hurlSpeed;
   creature.vy = Math.sin(angle) * BOUNDER.hurlSpeed;
@@ -125,7 +124,6 @@ describe("ore", () => {
     // Killed outright: the drops are what is under test, not the fight.
     creature.hp = 0;
     creature.state = "hurl";
-    creature.deflected = true;
     creature.vy = BOUNDER.hurlSpeed;
     const totals = advance(combat, 6, drone);
     expect(totals.pickups.length).toBe(COMBAT.oreDrop);

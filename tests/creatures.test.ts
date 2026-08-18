@@ -200,38 +200,64 @@ describe("the exchange", () => {
     return creature;
   }
 
-  it("takes no damage from rock it merely flew into", () => {
-    // This is the whole reason the paddle matters. A Bounder crossing a corridor would otherwise kill
-    // itself on the far wall and the player would be a spectator.
+  it("sticks to the first rock it touches instead of bouncing off it", () => {
+    // A wall east of the launch. It has to stop dead against it, not rebound.
+    const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
     const creature = airborne();
-    const result = run(creature, world, BOUNDER.hurlSeconds + 0.2, () => null);
-    expect(result.landed).toBe(0);
-    expect(creature.hp).toBe(BOUNDER.hp);
+    // Measured at the landing itself. Left running it walks off again, which is correct and would
+    // make this a test about the crawl.
+    let landings = 0;
+    for (let elapsed = 0; elapsed < 2 && landings === 0; elapsed += DT) {
+      landings += stepCreature(creature, walled, null, DT).landed ? 1 : 0;
+    }
+    expect(landings).toBe(1);
+    expect(creature.state).not.toBe("hurl");
+    // Stopped, and pressed against the wall rather than somewhere back the way it came.
+    expect(Math.hypot(creature.vx, creature.vy)).toBeCloseTo(0, 5);
+    expect(creature.x).toBeGreaterThan(44);
   });
 
-  it("takes a hit from the rock once the paddle has returned it", () => {
+  it("takes exactly one hit for landing, whatever it hit", () => {
+    const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
     const creature = airborne();
-    deflectCreature(creature, -Math.PI / 2, 0, FEEL.englishCurve, FIELD.minOffNormal);
-    expect(creature.deflected).toBe(true);
-    // Sent upward, away from the floor; it has to come off something to land. Give it a ceiling.
-    const boxed: SolidityOracle = { solidAt: (_x, y) => y >= 30 || y <= 24 };
-    const result = run(creature, boxed, 3, () => null);
-    expect(result.landed).toBeGreaterThan(0);
-    expect(creature.hp).toBeLessThan(BOUNDER.hp);
+    run(creature, walled, 2, () => null);
+    expect(creature.hp).toBe(BOUNDER.hp - 1);
   });
 
-  it("dies on the third returned landing, and reports it", () => {
-    const boxed: SolidityOracle = { solidAt: (_x, y) => y >= 30 || y <= 24 };
+  it("holds on to the face it landed against and walks it", () => {
+    // Landing on a vertical wall means its idea of down is now sideways, and the crawl has to work
+    // from there without anything special-casing a wall.
+    const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
+    const creature = airborne();
+    run(creature, walled, 2, () => null);
+    const landedAt = { x: creature.x, y: creature.y };
+    // Past the spent beat it crawls off. Which way is up to the geometry and its own circulation --
+    // landing at the foot of this wall wedges it in the join with the floor, so turning the corner and
+    // walking the floor is the correct outcome, not walking back up the wall. The invariant is that it
+    // is still attached and has gone somewhere.
+    run(creature, walled, BOUNDER.spentSeconds + 2.5, () => null);
+    expect(creature.adrift).toBe(false);
+    expect(Math.hypot(creature.x - landedAt.x, creature.y - landedAt.y)).toBeGreaterThan(0.5);
+    const reach = creature.radius + BOUNDER.probeDepth;
+    expect(walled.solidAt(
+      creature.x + Math.cos(creature.surfaceAngle) * reach,
+      creature.y + Math.sin(creature.surfaceAngle) * reach,
+    )).toBe(true);
+  });
+
+  it("dies on its third landing, and reports it", () => {
+    const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
     const creature = airborne();
     let killed = 0;
-    for (let hit = 0; hit < BOUNDER.hp; hit++) {
+    for (let launch = 0; launch < BOUNDER.hp; launch++) {
       creature.state = "hurl";
       creature.timer = BOUNDER.hurlSeconds;
-      creature.deflected = true;
-      creature.vx = 0;
-      creature.vy = -BOUNDER.hurlSpeed;
+      creature.x = 40;
+      creature.y = 28;
+      creature.vx = BOUNDER.hurlSpeed;
+      creature.vy = 0;
       for (let elapsed = 0; elapsed < 2; elapsed += DT) {
-        const step = stepCreature(creature, boxed, null, DT);
+        const step = stepCreature(creature, walled, null, DT);
         if (step.killed) killed++;
         if (step.landed) break;
       }
@@ -241,12 +267,20 @@ describe("the exchange", () => {
     expect(killed).toBe(1);
   });
 
-  it("is marked for damage by a bounce off the machine, not only by a clean return", () => {
-    // Hitting the back of the paddle costs the hull, but it does not waste the exchange: the rock
-    // still gets it.
+  it("is never curled up while off a surface", () => {
+    // The two forms mean two different things, so a Bounder in the air is a ball and a Bounder on the
+    // ground is an animal -- never a pose in between, and never the animal in flight.
+    const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
     const creature = airborne();
-    bounceCreature(creature, -1, 0);
-    expect(creature.deflected).toBe(true);
+    for (let elapsed = 0; elapsed < 3; elapsed += DT) {
+      stepCreature(creature, walled, null, DT);
+      if (creature.state === "hurl") continue;
+      // Off `hurl` it must be attached: its surface direction leads to rock within a stride.
+      const reach = creature.radius + BOUNDER.probeDepth;
+      const probeX = creature.x + Math.cos(creature.surfaceAngle) * reach;
+      const probeY = creature.y + Math.sin(creature.surfaceAngle) * reach;
+      expect(walled.solidAt(probeX, probeY) || creature.adrift).toBe(true);
+    }
   });
 
   it("returns off the face with english, so the edge bites and the middle does not", () => {
@@ -254,7 +288,6 @@ describe("the exchange", () => {
     deflectCreature(middle, -Math.PI / 2, 0, FEEL.englishCurve, FIELD.minOffNormal);
     const edge = airborne();
     deflectCreature(edge, -Math.PI / 2, 1, FEEL.englishCurve, FIELD.minOffNormal);
-    // Straight back off the middle; swung well off the normal at the edge.
     expect(Math.abs(middle.vx)).toBeLessThan(Math.abs(edge.vx));
     expect(middle.vy).toBeLessThan(0);
   });
@@ -263,14 +296,22 @@ describe("the exchange", () => {
     const creature = createBounder(40, 29, 0, [], Math.PI / 2);
     const before = { vx: creature.vx, vy: creature.vy };
     deflectCreature(creature, 0, 0, FEEL.englishCurve, FIELD.minOffNormal);
-    expect(creature.deflected).toBe(false);
     expect(creature.vx).toBe(before.vx);
     expect(creature.vy).toBe(before.vy);
   });
 
+  it("bounces off the machine, which is not terrain", () => {
+    // Terrain is stuck to; the drone is not. A hit on the hull sends it back out to find rock.
+    const creature = airborne();
+    creature.vx = -BOUNDER.hurlSpeed;
+    creature.vy = 0;
+    bounceCreature(creature, 1, 0);
+    expect(creature.vx).toBeGreaterThan(0);
+    expect(creature.state).toBe("hurl");
+  });
+
   it("only reports contact while it is actually in the air", () => {
     const creature = createBounder(40, 30 - BOUNDER.radius - BOUNDER.ride, 0, [], Math.PI / 2);
-    // Standing on the drone's toes does nothing: walking into one is not the threat.
     const step = stepCreature(creature, world, { x: creature.x, y: creature.y }, DT);
     expect(step.struck).toBe(false);
   });
