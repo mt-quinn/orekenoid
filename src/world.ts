@@ -23,6 +23,13 @@ function identityPriority(cell: Cell): number {
   return definition.hp > 1 ? 1 : 0;
 }
 
+/** A brick's address on the paddle-local lattice. Both `FramedBrick` and the arena's own bricks satisfy it. */
+export interface LatticeCell {
+  u: number;
+  v: number;
+  persistent?: boolean;
+}
+
 export interface FramedBrick {
   cell: Cell;
   sourceCells: Cell[];
@@ -272,6 +279,16 @@ export class WorldModel {
    * along the machine's long axis (the direction its paddle face spans), and
    * `halfThickness` across it.
    */
+  /**
+   * Is this point inside the world at all?
+   *
+   * A half-cell margin, so the hull cannot be flush against the outermost row -- which would leave
+   * half the drone drawn over a void that no longer has terrain behind it.
+   */
+  withinBounds(cellX: number, cellY: number): boolean {
+    return cellX >= 0.5 && cellY >= 0.5 && cellX <= WORLD_COLS - 1.5 && cellY <= WORLD_ROWS - 1.5;
+  }
+
   isHullOpen(x: number, y: number, heading: number, halfLength: number, halfThickness: number): boolean {
     // The hull's long axis in world space. This matches the drone's drawn rotation
     // and `FrameGeometry`'s `side` vector, so the hitbox and the survey frame agree.
@@ -292,6 +309,16 @@ export class WorldModel {
         const across = -halfThickness + (j / thicknessSteps) * halfThickness * 2;
         const cellX = x / CELL + alongX * along + acrossX * across;
         const cellY = y / CELL + alongY * along + acrossY * across;
+        // The edge of the world is a wall, whatever has been dug out of it.
+        //
+        // `solidAt` reports a cell that does not exist as not solid, which is the right answer for
+        // sampling a claim -- outside the map there is simply nothing to cut -- and exactly the wrong
+        // one here, where it meant the border stopped the drone only for as long as the rock in front
+        // of it did. Excavate to the boundary and the machine flew straight out into nothing.
+        //
+        // Handled at the hull rather than in `solidAt` so the two questions stay separate: a frame
+        // may hang off the edge of the world, and the drone may not.
+        if (!this.withinBounds(cellX, cellY)) return false;
         if (this.solidAt(cellX, cellY)) return false;
       }
     }
@@ -466,7 +493,15 @@ export class WorldModel {
   }
 
   /**
-   * Clear everything a resolved claim consumed, leaving landmarks standing.
+   * Clear what a resolved claim actually broke, leaving landmarks -- and anything still
+   * standing -- as terrain.
+   *
+   * `standing` is the lattice addresses of bricks that survived the claim. Those cells are
+   * never cut and never exhausted: the rock and the ore under them go back into the world
+   * exactly as they were, so ending a claim early costs the hull its unresolved load and
+   * nothing else. Everything the ball did reach is cut here as before, which also cleans up
+   * the sub-brick slivers coverage sampling refused to raise a brick for -- the arena showed
+   * those as empty air, so the world must agree.
    *
    * Cuts are applied unconditionally rather than skipping any footprint that touches
    * persistent material. Skipping was the obvious reading of "landmarks survive claim
@@ -477,8 +512,16 @@ export class WorldModel {
    * solid however many cuts cover it -- the flag protects the landmark, not the
    * footprint around it.
    */
-  exhaustFrame(frame: FrameGeometry): void {
+  exhaustFrame(frame: FrameGeometry, standing: readonly LatticeCell[] = []): void {
+    // Landmark bricks are dropped rather than spared, even though an arena keeps them permanently
+    // alive. Sparing their lattice square would abandon any footprint straddling a landmark and
+    // ordinary rock -- the shard-leaving bug this function was fixed for once already. They need no
+    // sparing: `solidAt` short-circuits on `persistent`, so the landmark survives its own cut.
+    const spared = new Set(
+      standing.filter((brick) => !brick.persistent).map((brick) => this.latticeKey(frame, brick)),
+    );
     for (let row = 0; row < frame.depth; row++) for (let column = 0; column < frame.width; column++) {
+      if (spared.has(`${column},${row}`)) continue;
       const u = -frame.width / 2 + 0.5 + column;
       const v = row + 0.5;
       this.removeFootprint(
@@ -486,14 +529,22 @@ export class WorldModel {
         true,
       );
     }
-    // The paddle's own lane, half a cell deep, so no lip is left along the near edge.
+    // A half-cell lane past the deepest row, so no sub-brick lip is left along the far boundary
+    // where coverage sampling refused to raise a brick. Skipped under a column whose deepest brick
+    // is still standing, since cutting there would hollow a slot behind rock the player kept.
     for (let column = 0; column < frame.width; column++) {
+      if (spared.has(`${column},${frame.depth - 1}`)) continue;
       const u = -frame.width / 2 + 0.5 + column;
       this.removeFootprint(
         { center: this.localToWorld(u, frame.depth + 0.25, frame), halfWidth: 0.5, halfHeight: 0.25, angle: frame.angle },
         true,
       );
     }
+  }
+
+  /** Lattice address of a brick, recovered from the paddle-local coordinates it was built at. */
+  private latticeKey(frame: FrameGeometry, brick: LatticeCell): string {
+    return `${Math.round(brick.u + frame.width / 2 - 0.5)},${Math.round(brick.v - 0.5)}`;
   }
 
   /**

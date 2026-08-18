@@ -25,6 +25,11 @@ import { collectCascade, initialRegrowthBudget, spawnMembrane, stepMembranes, st
 import { BLAST_CHARGE_BRICKS, Economy, FABRICATIONS, STATIONS_BY_ID, STATION_IDS, type StationId, type VerbId } from "./economy";
 import { materialOf } from "./materials";
 import { ballSpeed, createBall, stepBall, type BallStepEvents } from "./physics";
+import { COMBAT, FieldCombat, rechargeSecondsFor } from "./combat/fieldCombat";
+import { DOUSER, type CreatureKind } from "./combat/creatures";
+import { FIELD } from "./combat/ballField";
+import { LightField, type LightSource } from "./light/field";
+import { LightMask } from "./view/lightMask";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
@@ -43,6 +48,7 @@ import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
+import { BayView } from "./bayView";
 import { TouchControls } from "./view/touchControls";
 import { Gate, Pulse, Shudder } from "./view/feel";
 import { effectBudget, measure as measureView, motionScale, syncLayout, view } from "./viewport";
@@ -83,6 +89,15 @@ const AUTOSAVE_SECONDS = 20;
 
 /** How far the drone reveals the map around itself, in cells. */
 const DISCOVERY_RADIUS = 9;
+
+/**
+ * How far the drone's own lamp reaches, in cells.
+ *
+ * A shade under the Atlas discovery radius on purpose. The map records slightly more than the eye
+ * can see at any instant, which is the difference between a map and a window -- and it means the
+ * player is always working at the edge of their own light rather than at the edge of their map.
+ */
+const LAMP_RADIUS = 8;
 
 /** Cornerstones grant verbs. Nothing else in the game does. */
 const CORNERSTONE_VERBS: Record<string, VerbId> = {
@@ -125,6 +140,13 @@ export class OrekenoidGame {
   readonly touchControls = new TouchControls();
   /** Holds the game when the world interrupts it: backgrounded, unfocused, sideways, muted. */
   readonly holds = new Holds();
+  /**
+   * The Refit Bay as a list, for touch.
+   *
+   * A second presentation of the same model rather than a replacement: the gantry is untouched and
+   * still what a desktop gets. Which one opens is decided by `usesListBay` alone.
+   */
+  readonly bayView = new BayView();
   /** How long the hull has been against rock, in seconds. Zero means clear. */
   private contactHeld = 0;
   /** Rate limit for the grinding texture, so leaning on a wall is not a jackhammer. */
@@ -311,6 +333,28 @@ export class OrekenoidGame {
   drone: Container;
   /** Drawn world features, kept so the few that animate can be advanced each frame. */
   featureMarks: FeatureMark[] = [];
+  /**
+   * The caverns themselves: balls in flight, and whatever is coming at the drone.
+   *
+   * Only ever advanced in survey mode. Inside a claim the drone is not in the world -- it is the
+   * paddle on a board -- so nothing out here has anything to charge at.
+   */
+  readonly combat: FieldCombat;
+  /** What the drone can see right now, and what it remembers seeing. */
+  readonly light: LightField;
+  private lightMask!: LightMask;
+  /** Rate limit on rebound sparks, so a ball rattling down a corridor does not strobe. */
+  private bounceCooldown = 0;
+  /** Grace after a ram, so one charge costs one hit rather than one hit per frame of contact. */
+  private ramCooldown = 0;
+  /**
+   * How much of the lamp is left, 0..1.
+   *
+   * Driven down while a Douser is on the hull and eased back once it is off. Eased rather than
+   * switched because the light going out is the event -- if it snapped the player would read it as
+   * a rendering glitch rather than as something being done to them.
+   */
+  lampScale = 1;
 
 
   constructor(seedLabel: string = DEFAULT_SEED) {
@@ -327,6 +371,8 @@ export class OrekenoidGame {
     this.effects = new Effects(this.effectLayer);
     this.effectLayer.addChild(this.crumbleEdge);
     this.deploymentPreviews = new DeploymentPreviews(this.world, this.terrain);
+    this.combat = new FieldCombat(this.world, this.world.generated.seed);
+    this.light = new LightField(this.world);
     this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.framePreview.addChild(this.frameWash, this.frameGrid, this.frameScan, this.frameReturns);
     this.frameScan.filters = [new BlurFilter({ strength: 5, quality: 2 })];
@@ -455,7 +501,14 @@ export class OrekenoidGame {
     this.app.canvas.setAttribute("aria-label", "Orekanoid");
     // Above the world and the bay: these are the player's own hands, and nothing occludes them.
     this.app.stage.addChild(this.worldRoot, this.gantry.container, this.touchControls.container);
-    this.worldRoot.addChild(this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer, this.actorLayer, this.framePreview, this.coach.container);
+    this.lightMask = new LightMask();
+    // Over everything that is *in* the mine, under everything that is an instrument. The survey
+    // frame and the coach are read-outs rather than objects in the world, and going dark must never
+    // take an instrument off the player.
+    this.worldRoot.addChild(
+      this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer,
+      this.actorLayer, this.lightMask.container, this.framePreview, this.coach.container,
+    );
     this.terrainLayer.addChild(this.terrain.container);
     buildFarGeology(this.farLayer);
     // Build the opening neighbourhood synchronously so the first frame is complete.
@@ -463,7 +516,7 @@ export class OrekenoidGame {
     this.terrain.pump(24);
     buildLandmarks(this.landmarkLayer, this.world);
     this.featureMarks = buildFeatureMarks(this.featureLayer, this.world.generated.rooms.features, this.world);
-    this.actorLayer.addChild(this.drone);
+    this.actorLayer.addChild(this.combat.container, this.drone);
     this.bindInput();
     this.touch.attach(this.app.canvas);
     this.bindTouchActions();
@@ -648,6 +701,13 @@ export class OrekenoidGame {
           if (!this.can("commit")) { this.refuseControl(); return; }
           this.establishArena();
         }
+        // Same key that serves a claim, because it means the same thing in both rooms: send the
+        // ball. The emitter sits at the drone's nose, so the ball leaves along the survey heading
+        // and the aim keys are already the aim keys.
+        if (event.code === "Space") this.fireFieldBall();
+        // The same key that seeds a rail inside a claim: in both rooms it is the second thing you
+        // can do with the ball, once you have already learned the first.
+        if (event.code === "KeyR") this.recallFieldBall();
       } else if (this.arena) {
         if (event.code === "Space") {
           if (!this.can("serve")) { this.refuseControl(); return; }
@@ -943,8 +1003,9 @@ export class OrekenoidGame {
    * End the claim where it stands.
    *
    * Resolved exactly as a loss is, through the same path, so the material still standing loads the
-   * hull and the frame is exhausted -- walking away early is a decision with the ordinary price,
-   * not an escape from it. The menu has already shown the player that price.
+   * hull -- walking away early is a decision with the ordinary price, not an escape from it. The
+   * menu has already shown the player that price. The rock itself is not part of that price: what
+   * the ball never reached goes back into the world, and can be claimed again.
    */
   private endClaimNow(): void {
     if (!this.arena || this.arena.resolving) return;
@@ -972,7 +1033,11 @@ export class OrekenoidGame {
     // rather than at nothing. The player is asking "what now"; answering with a blank screen is
     // the failure the old panel made every time it opened.
     this.forgeSelection = this.craftingOpen ? this.leastBuiltStation() : null;
-    this.gantry.setOpen(this.craftingOpen);
+    // One or the other, never both: the list is a full-screen panel and the gantry dims the world
+    // behind it, so leaving the gantry armed underneath would leave a phone player looking at a list
+    // over a blacked-out mine.
+    if (this.usesListBay) this.bayView.setOpen(this.craftingOpen);
+    else this.gantry.setOpen(this.craftingOpen);
     this.renderCrafting();
     this.updateUI();
   }
@@ -1041,8 +1106,22 @@ export class OrekenoidGame {
   }
 
   /** Redraw the bay, which is always rendered against live economy state. */
+  /**
+   * Whether the bay should be a list rather than the drawn gantry.
+   *
+   * Keyed to the phone layout, not merely to having touched the screen: a tablet is wide enough for
+   * the gantry to work and should keep it, and a laptop with a touchscreen certainly should.
+   */
+  private get usesListBay(): boolean {
+    return view.layout === "phone";
+  }
+
   private renderCrafting(): void {
     if (!this.craftingOpen) return;
+    if (this.usesListBay) {
+      this.bayView.render(this.gantryModel());
+      return;
+    }
     this.gantry.render(this.gantryModel(), {
       onSelect: (station) => {
         if (station === this.forgeSelection) return;
@@ -1158,6 +1237,10 @@ export class OrekenoidGame {
     // stake -- a frame aimed entirely at nothing.
     const sampled = this.world.framedBricks(frame);
     if (!sampled.length) { this.showToast("NO MATERIAL IN FRAME"); return; }
+    // The emitter takes its ball back before the claim starts. The drone is about to stop being a
+    // thing in the caverns and start being the paddle on a board, and a ball left rattling around
+    // out there would have nobody to come home to.
+    this.combat.recall();
     const bricks: Brick[] = [];
     let resources = 0;
     for (const { cell, sourceCells, u, v, footprint, persistent } of sampled) {
@@ -1550,6 +1633,11 @@ export class OrekenoidGame {
     if (!arena || arena.resolving) return;
     arena.resolving = true;
     const remaining = arena.bricks.filter((brick) => brick.alive && brick.liable);
+    // Everything still up, liable or not. Only what the ball actually broke is cut out of the
+    // world; the rest is handed back as terrain, so an abandoned claim is a claim postponed
+    // rather than a seam destroyed.
+    // Landmark bricks come along and are dropped by `exhaustFrame`, which owns that rule.
+    const standing = arena.bricks.filter((brick) => brick.alive);
     arena.damageTaken = calculateClaimDamage(remaining.length, this.soakCapacity);
     this.integrity = Math.max(0, this.integrity - arena.damageTaken);
     this.dying = this.integrity <= 0;
@@ -1563,7 +1651,7 @@ export class OrekenoidGame {
       remaining.map((brick) => ({ u: brick.u, v: brick.v, colour: materialOf(brick.kind).edge })),
       this.soakCapacity,
     );
-    this.world.exhaustFrame(arena);
+    this.world.exhaustFrame(arena, standing);
     if (reason === "clear") {
       this.showToast(`CLAIM CLEARED · ${arena.collected} SECURED`);
     } else if (arena.damageTaken > 0) {
@@ -1656,6 +1744,7 @@ export class OrekenoidGame {
       else this.showToast("LOCAL PLAYFIELD STABILIZED");
       this.updateUI();
     }
+    this.updateLight();
     this.camera.applyTo(this.worldRoot);
     this.updateCrumble(dt);
     this.updateDisplays(dt);
@@ -1827,6 +1916,33 @@ export class OrekenoidGame {
     );
   }
 
+  /**
+   * Rebuild the light, then push it to the mask.
+   *
+   * Survey only. Inside a claim the camera is pinned to a board that has its own lighting logic in
+   * the brick art, and dropping a cavern shadow across it would be darkening a room the drone is
+   * not standing in.
+   */
+  private updateLight(): void {
+    const inWorld = this.started && this.mode === "survey";
+    this.lightMask.container.visible = inWorld;
+    if (!inWorld) return;
+    const sources: LightSource[] = [{
+      x: this.player.x / CELL,
+      y: this.player.y / CELL,
+      radius: LAMP_RADIUS * this.lampScale,
+      strength: this.lampScale > 0.5 ? 1 : 0.75,
+    }];
+    sources.push(...this.combat.lights());
+    this.light.compute(sources);
+    // The upload is bounded to what the camera can actually show, plus a margin for the rotation
+    // the survey frame allows.
+    const zoom = this.camera.zoom || 1;
+    const halfWidth = view.width / (CELL * zoom) * 0.5 + 3;
+    const halfHeight = view.height / (CELL * zoom) * 0.5 + 3;
+    this.lightMask.update(this.light, this.cameraFocus.x / CELL, this.cameraFocus.y / CELL, halfWidth, halfHeight);
+  }
+
   private updateSurvey(dt: number): void {
     // Arrows mirror WASD out here. Inside a claim the horizontal pair moves the paddle and the
     // vertical pair drives the simulation speed, so the mirroring is deliberately mode-local.
@@ -1905,7 +2021,133 @@ export class OrekenoidGame {
     // The map records where the drone has been, not what the generator produced.
     this.world.markDiscovered(this.player.x / CELL, this.player.y / CELL, DISCOVERY_RADIUS);
     this.tryBank();
+    this.updateCombat(dt);
     this.renderFramePreview();
+  }
+
+  /**
+   * Send a ball out along the drone's heading.
+   *
+   * Launched a nose-length ahead of the hull rather than from its centre, or the ball is born
+   * inside the machine and spends its first frames rebounding off the plating it came out of.
+   */
+  private fireFieldBall(): void {
+    if (!this.combat.canFire()) {
+      this.audio.play(SOUNDS.markRefused);
+      // The number, not just a refusal noise. "Not yet" is a different message from "not ever",
+      // and the player needs to know which one they are being given.
+      if (this.combat.rechargeRemaining > 0) {
+        this.showToast(`EMITTER CHARGING · ${this.combat.rechargeRemaining.toFixed(1)}s`);
+      }
+      return;
+    }
+    const heading = this.player.heading - Math.PI / 2;
+    const muzzle = this.chassis.paddleWidth * 0.5 + FIELD.radius + 0.35;
+    const x = this.player.x / CELL + Math.cos(heading) * muzzle;
+    const y = this.player.y / CELL + Math.sin(heading) * muzzle;
+    if (this.combat.fire(x, y, heading)) this.audio.play(SOUNDS.fieldFire);
+    else this.audio.play(SOUNDS.markRefused);
+  }
+
+  /**
+   * Advance the caverns and answer what happened in them.
+   *
+   * The module reports events and this applies them, so damage, sound and the save stay in the one
+   * place that owns them. Bounces are rate-limited: a ball rattling down a corridor produces them
+   * several times a second, and one spark per rebound is a strobe.
+   */
+  private updateCombat(dt: number): void {
+    // Read every frame rather than latched at fit time, so walking out of the bay with a new
+    // emitter is felt on the very next volley.
+    this.combat.rechargeSeconds = rechargeSecondsFor(this.economy.stationGrades(this.chassis.id).emitter ?? 0);
+    const drone = { x: this.player.x / CELL, y: this.player.y / CELL, radius: COMBAT.droneHitRadius };
+    const events = this.combat.update(dt, drone, (x, y) => this.light.isLit(x, y));
+    this.bounceCooldown = Math.max(0, this.bounceCooldown - dt);
+    this.ramCooldown = Math.max(0, this.ramCooldown - dt);
+
+    if (events.bounces.length && this.bounceCooldown <= 0) {
+      const bounce = events.bounces[0];
+      this.bounceCooldown = 0.06;
+      this.audio.play(SOUNDS.fieldBounce);
+      this.effects.spawnShards(bounce.x * CELL, bounce.y * CELL, PALETTE.rail, 2, 0.5, false);
+    }
+    for (const lost of events.ballsLost) {
+      this.audio.play(SOUNDS.ballReclaimed);
+      this.effects.spawnRing(lost.x * CELL, lost.y * CELL, PALETTE.rail, 0.4);
+    }
+    for (const hit of events.hits) {
+      this.audio.play(hit.killed ? SOUNDS.creatureKilled : SOUNDS.creatureHit);
+      this.effects.spawnShards(hit.x * CELL, hit.y * CELL, PALETTE.danger, hit.killed ? 10 : 4, hit.killed ? 1.4 : 0.7, false);
+      if (hit.killed) this.effects.spawnRing(hit.x * CELL, hit.y * CELL, PALETTE.danger, 0.8);
+    }
+    for (const commit of events.commits) {
+      this.audio.play(SOUNDS.creatureTell);
+      this.effects.spawnRing(commit.x * CELL, commit.y * CELL, PALETTE.danger, 0.5);
+    }
+    for (const slam of events.slams) {
+      this.audio.play(SOUNDS.creatureSlam);
+      this.effects.spawnDust(slam.x * CELL, slam.y * CELL, 0x9a9282, 5, 1.1);
+    }
+    for (const ram of events.rams) this.takeFieldDamage(ram.damage, ram.x, ram.y);
+    for (const hit of events.globHits) {
+      this.takeFieldDamage(hit.damage, hit.x, hit.y);
+      this.effects.spawnShards(hit.x * CELL, hit.y * CELL, PALETTE.spore, 6, 0.9, false);
+    }
+    for (const spent of events.globsSpent) {
+      this.audio.play(SOUNDS.fieldBounce);
+      this.effects.spawnShards(spent.x * CELL, spent.y * CELL, PALETTE.spore, 3, 0.6, false);
+    }
+    if (events.recharged) this.audio.play(SOUNDS.sequentialBall);
+
+    // The lamp. One Douser is enough to take it; more do not take it faster, because the state the
+    // player has to read is binary -- the light is being held down, or it is coming back.
+    const smothered = events.smotherers > 0;
+    if (smothered && this.lampScale > DOUSER.smotherTo) {
+      if (this.lampScale === 1) this.audio.play(SOUNDS.creatureSmother);
+      this.lampScale = Math.max(DOUSER.smotherTo, this.lampScale - DOUSER.smotherRate * dt);
+    } else if (!smothered && this.lampScale < 1) {
+      this.lampScale = Math.min(1, this.lampScale + DOUSER.recoverRate * dt);
+    }
+  }
+
+  /**
+   * Take the ball back and start the recharge early.
+   *
+   * Refused when there is nothing out, rather than silently starting a recharge from nothing --
+   * a key that punishes being pressed at the wrong moment by disarming you is a key nobody presses.
+   */
+  private recallFieldBall(): void {
+    if (this.combat.liveBalls === 0) {
+      this.audio.play(SOUNDS.markRefused);
+      return;
+    }
+    this.combat.recall();
+    this.audio.play(SOUNDS.ballReclaimed);
+    this.updateUI();
+  }
+
+  /**
+   * A creature reached the hull.
+   *
+   * Armour is subtracted the same way a claim's unresolved load is, so plating means one thing in
+   * both rooms -- but never all the way to nothing, because a threat that a well-plated drone can
+   * simply stand in front of is not a threat, it is scenery.
+   */
+  private takeFieldDamage(amount: number, x: number, y: number): void {
+    if (this.dying || this.ramCooldown > 0) return;
+    this.ramCooldown = 0.6;
+    const damage = Math.max(1, amount - Math.floor(this.soakCapacity / 4));
+    this.integrity = Math.max(0, this.integrity - damage);
+    this.audio.play(SOUNDS.creatureRam);
+    this.effects.spawnRing(x * CELL, y * CELL, PALETTE.danger, 1.3);
+    this.effects.spawnShards(this.player.x, this.player.y, PALETTE.danger, 7, 1.2, false);
+    this.showToast(`HULL STRUCK · ${damage} HEALTH LOST`);
+    if (this.integrity <= 0) {
+      this.dying = true;
+      this.die();
+    }
+    this.requestSave();
+    this.updateUI();
   }
 
   private updatePlay(dt: number): void {
@@ -2417,6 +2659,9 @@ export class OrekenoidGame {
       soakCapacity: this.soakCapacity,
       liveBalls: arena?.balls.length ?? 0,
       spareBalls: arena?.spareBalls ?? 0,
+      emitter: this.mode === "survey"
+        ? { ready: this.combat.canFire(), progress: this.combat.chargeProgress, out: this.combat.liveBalls > 0 }
+        : null,
       cargo: [...this.economy.resources.entries()],
       cargoAtRisk: this.economy.carriedTotal > 0,
       cargoPulse: this.cargoPulse.value,
@@ -2463,6 +2708,9 @@ export class OrekenoidGame {
       }
       return [
         this.hasCommitted ? "" : "<b>WASD</b> move <b>Q / E</b> aim <b>F</b> commit",
+        // Recall is only named once there is a ball out to recall, so the line teaches the two
+        // verbs in the order the player can actually use them.
+        this.combat.liveBalls > 0 ? "<b>R</b> recall" : "<b>SPACE</b> fire",
         this.atAnchor() ? "<b>C</b> forge" : "",
         "<b>M</b> atlas",
       ].filter(Boolean).join(" ");
@@ -2618,6 +2866,11 @@ export class OrekenoidGame {
    */
   private die(): void {
     this.deaths++;
+    // The caverns are left behind with the wreck. Anything that was hunting the drone does not
+    // follow it home to the lander.
+    this.combat.clear();
+    this.ramCooldown = 0;
+    this.lampScale = 1;
     const lost = this.economy.loseCarried();
     this.player.x = this.world.start.x * CELL;
     this.player.y = this.world.start.y * CELL;
@@ -2871,6 +3124,15 @@ export class OrekenoidGame {
 
   private bindInterfaceUI(): void {
     this.atlasView.bind();
+    this.bayView.bind({
+      onFit: (station) => {
+        this.upgradeStation(station);
+        // Re-rendered straight away rather than waiting on the fit animation, which the list does
+        // not show: on this path the only feedback that the fit landed is the card changing.
+        this.renderCrafting();
+      },
+      onClose: () => { if (this.craftingOpen) this.toggleCrafting(); },
+    });
     this.pauseView.bind({
       onResume: () => this.togglePause(),
       onSaveNow: () => { this.saveNow(); },
@@ -2963,7 +3225,18 @@ export class OrekenoidGame {
           craftingOpen: game.craftingOpen, cameraTransition: game.cameraTransition,
           region: game.world.readRegion(game.player.x / CELL, game.player.y / CELL),
           chunks: game.terrain.chunkCount, report: game.world.generated.report,
+          combat: {
+            balls: game.combat.liveBalls,
+            lamp: game.lampScale,
+            creatures: game.combat.roster.map((creature) => ({
+              x: creature.x, y: creature.y, hp: creature.hp, state: creature.state,
+            })),
+          },
         };
+      },
+      /** Put a creature exactly where a test wants one, rather than waiting for the spawner. */
+      spawnCreature(x: number, y: number, facing = 0, kind: CreatureKind = "grinder") {
+        return game.combat.spawn(x, y, facing, kind);
       },
       warpTo(x: number, y: number) {
         game.player.x = x * CELL;

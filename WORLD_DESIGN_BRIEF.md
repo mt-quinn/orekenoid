@@ -4,7 +4,7 @@
 
 Orekenoid is an exploration game in which **choosing the ground is as important as playing the shot**.
 
-The player roams a continuous underground world as a paddle. At any exposed face they may frame a rectangular claim. Committing reveals that claim's exact contents and begins a Breakout attempt with the balls available for that arena. Excavation persists; when the final ball is lost, every uncollected resource in the claim is exhausted forever.
+The player roams a continuous underground world as a paddle. At any exposed face they may frame a rectangular claim. Committing reveals that claim's exact contents and begins a Breakout attempt with the balls available for that arena. Excavation persists; when the final ball is lost, the material the ball broke is gone and everything still standing returns to the terrain with its ore intact, at the cost of the unresolved load striking the hull.
 
 Every system below must improve at least one of four pleasures:
 

@@ -212,6 +212,24 @@ button { color: inherit; font: inherit; }
 .pips i { width: 9px; height: 9px; border-radius: 50%; background: var(--ink); }
 .pips i.spare { background: none; border: 1.5px solid var(--faint); width: 8px; height: 8px; }
 
+/* --- The emitter's cavern charge ------------------------------------------
+   Only out in the caverns: inside a claim the ball belongs to the claim, and the BALLS pips
+   already say how many are left. Three states, because armed, in-flight and reloading are three
+   different things to be in the middle of and the bar has to be readable at a glance from the
+   corner of the eye. */
+.stat.emitter[data-trivial="true"] { display: none; }
+.viewport[data-mode="play"] .stat.emitter { display: none; }
+.charge { width: 62px; height: 7px; border: 1.5px solid var(--faint); border-radius: 4px; overflow: hidden; }
+.charge i { display: block; height: 100%; width: var(--v, 0%); background: var(--ink); }
+.stat.emitter[data-state="charging"] .charge i { background: var(--faint); transition: width .09s linear; }
+/* Armed reads as a full, solid bar; nothing is more legible than the thing being simply full. */
+.stat.emitter[data-state="ready"] .charge { border-color: var(--ink); }
+.stat.emitter[data-state="ready"] .charge i { width: 100%; }
+/* A ball in flight is the one state where the bar is empty and that is *good* news, so it is drawn
+   as an outline holding nothing rather than as a bar that has run down. */
+.stat.emitter[data-state="out"] .charge i { width: 0; }
+.stat.emitter[data-state="out"] .charge { border-style: dashed; border-color: var(--ink); }
+
 /* --- Cargo --------------------------------------------------------------- */
 .cargo { display: flex; flex-wrap: wrap; align-content: end; gap: 4px 12px; grid-column: 1; text-shadow: 0 2px 8px var(--void); }
 .cargo::before {
@@ -480,6 +498,124 @@ button { color: inherit; font: inherit; }
    own colour on the board, and tinting the readout as well would say the same thing twice. */
 .cargo.caught { transform: scale(1.06); filter: brightness(1.22); }
 .cargo { transition: transform .09s ease-out, filter .09s ease-out; transform-origin: left center; }
+
+/* --- The Refit Bay, as a list ----------------------------------------------
+   Touch only. The gantry -- the drone hanging on its rig with six labelled places on it -- is
+   untouched and is still what a desktop gets; this is the same six stations as cards, because a
+   diagram scaled to a third of its authored size is neither readable nor hittable with a thumb.
+
+   Same plating, brass cap and stencil caps as the pause panel, so the two read as parts of one
+   machine rather than as two different apps.
+   -------------------------------------------------------------------------- */
+.bay {
+  position: absolute;
+  z-index: 13;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  padding: calc(12px + var(--safe-top)) 12px calc(12px + var(--safe-bottom));
+  background:
+    repeating-linear-gradient(24deg, transparent 0 53px, rgb(185 154 97 / .022) 54px, transparent 55px 91px),
+    linear-gradient(#1a1a14 0, #141510 46%, #0e0f0b 100%);
+}
+.bay[hidden] { display: none; }
+.bay::before {
+  content: "";
+  position: absolute; top: 0; right: 0; left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #6d5c3a, var(--brass) 22%, #e2caa0 50%, var(--brass) 78%, #6d5c3a);
+}
+
+.bay-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bay-title { display: grid; gap: 2px; }
+.bay-title b { color: #f2e7d0; font-size: 21px; font-weight: 900; letter-spacing: .2em; }
+.bay-title small { color: var(--brass); font-size: 10px; font-weight: 900; letter-spacing: .18em; }
+#bayClose {
+  flex: 0 0 auto;
+  min-width: 46px; min-height: 46px;
+  border: 1px solid rgb(185 154 97 / .5);
+  background: rgb(10 14 16 / .82);
+  color: var(--ink);
+  font-size: 17px;
+  cursor: pointer;
+  transition: transform .06s ease, border-color .06s ease, background .06s ease;
+}
+#bayClose:active { transform: scale(.93); border-color: var(--ore-hot); background: rgb(40 22 12 / .92); }
+
+/* The three figures a fit is judged against, so the player is not choosing blind. */
+.bay-stats { display: flex; gap: 8px; }
+.bay-stat {
+  flex: 1;
+  display: grid; gap: 2px; justify-items: center;
+  padding: 7px 4px;
+  border: 1px solid #332e24;
+  background: rgb(0 0 0 / .3);
+}
+.bay-stat small { color: var(--faint); font-size: 8px; font-weight: 900; letter-spacing: .16em; }
+.bay-stat b { color: var(--paper); font-size: 16px; font-weight: 900; font-variant-numeric: tabular-nums; }
+
+.bay-list {
+  min-height: 0;
+  display: grid;
+  gap: 9px;
+  align-content: start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The body kills touch-action wholesale to stop pull-to-refresh, so scrolling is re-enabled here. */
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.bay-card {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px 12px;
+  border: 1px solid #3a352a;
+  border-left: 3px solid var(--brass);
+  background: linear-gradient(rgb(30 30 24 / .8), rgb(20 21 16 / .8));
+}
+.bay-card.done { border-left-color: #3a352a; opacity: .62; }
+.bay-card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.bay-card > header b { color: var(--ink); font-size: 14px; font-weight: 900; letter-spacing: .14em; }
+.bay-card > header i { color: var(--faint); font-style: normal; font-size: 11px; font-weight: 900; }
+.bay-fitted { margin: 0; color: var(--dim); font-size: 11px; letter-spacing: .06em; }
+.bay-next { margin: 0; color: var(--brass); font-size: 12px; font-weight: 900; letter-spacing: .12em; }
+/* The literal transition -- "ARMOR 20 → 36" -- which is the whole reason this is worth reading. */
+.bay-detail { margin: 0; color: #cbbd9f; font-size: 13px; line-height: 1.3; }
+.bay-max { margin: 0; color: var(--faint); font-size: 11px; font-weight: 900; letter-spacing: .16em; }
+
+.bay-costs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.bay-cost {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 7px;
+  background: rgb(0 0 0 / .32);
+  color: var(--dim);
+  font-size: 11px; font-weight: 700; letter-spacing: .06em;
+}
+.bay-cost i { width: 8px; height: 8px; }
+.bay-cost b { color: var(--paper); font-variant-numeric: tabular-nums; }
+/* Short of the material: the chip says which one, so the player knows what to go and mine. */
+.bay-cost.short b { color: var(--ore-hot); }
+.bay-cost small { color: var(--ore-hot); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+
+.bay-card button {
+  min-height: 46px;
+  margin-top: 4px;
+  border: 1px solid #e1a263;
+  background: #b95a32;
+  color: #21160e;
+  font-size: 14px; font-weight: 900; letter-spacing: .14em;
+  cursor: pointer;
+  transition: transform .06s ease, background .1s ease;
+}
+.bay-card button:active:not([disabled]) { transform: translateY(2px); background: var(--ore-hot); }
+.bay-card button[disabled] {
+  border-color: #4a4335;
+  background: rgb(0 0 0 / .3);
+  color: var(--faint);
+  cursor: default;
+}
 
 /* --- The resume plate and the rotate gate ----------------------------------
    Both are full-cover, both are in the game's own visual language rather than a browser default,

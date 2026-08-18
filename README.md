@@ -53,6 +53,37 @@ There is no separate roaming or framing mode. The equipped paddle's fixed survey
 
 Before deployment, the FTUE teaches survey, commitment, and unresolved-load damage, then requires one starting-paddle choice: the balanced Surveyor, fast narrow Needle, or broad resilient Bastion. That chassis is locked for the deployment; there is no mid-run hot swapping.
 
+### The caverns
+
+Roaming is no longer a commute. The drone carries a lamp, the mine is dark beyond it, and things
+live out there.
+
+- `Space`: fire the ball into the cavern. It rebounds off rock at the same pace and with the same
+  feel as an arena volley, and it lights the room as it flies.
+- `R`: recall it, taking the recharge early. A shot that has gone somewhere useless costs the same
+  as one that has finished, so pulling it back is a decision rather than a wait.
+
+The ball is a charge, not an inventory. One is out at a time; when it is lost, recalled, or runs out
+of life, the emitter builds another, and how long that takes is the **emitter station's grade**. That
+gap is the combat progression: attacking lights the room, reloading blinds you.
+
+Light is binary and hard-edged, cast by recursive shadowcasting from solid cells. Ground is **lit**
+(drawn in full, with whatever is standing in it), **remembered** (dim geometry, no promises about
+what is there now), or **unseen** (black). Excavation therefore carves sightlines — a claim you cut
+last hour is a window.
+
+Three creatures, differentiated by what they take from you rather than by how they die. All three
+die the same way: hit them with the ball, enough times.
+
+| Creature | Takes | How it reads |
+|---|---|---|
+| **Grinder** | Standing still | Locks its aim, paints the lane in red, and charges. Dodge and it slams into rock, which is the window to hit it. |
+| **Spitter** | Free positioning | Holds its range, never closes, and lobs slow globs. Globs die on rock and to the ball. |
+| **Douser** | Your light | Ignores the hull, latches on, and smothers the lamp. Shaking it off means banking the ball back into your own machine. |
+
+The rule the dark cannot break: **every attack is its own light source.** Darkness hides where
+something is, never what it is about to do.
+
 ### The Atlas
 
 Press `M`. The whole mine fits one screen: 240 × 144 cells at 5 px each, so there is nothing to pan.
@@ -77,7 +108,7 @@ Claims can be committed at any angle. Terrain is coverage-sampled into a clean p
 - `R`: place the rail seed, once per claim, before the serve (requires the Root Choir)
 - `B`: detonate a blast charge, cutting surviving load
 
-A claim gives two balls by default; the Twin Engine raises that to three. The claim ends when its final ball is lost, and unsecured resources in its footprint are exhausted. Resources are only banked if the drop is caught, so yield and risk are the same decision.
+A claim gives two balls by default; the Twin Engine raises that to three. The claim ends when its final ball is lost. Only material the ball actually broke is cut out of the world — anything still standing goes back into the terrain with its ore intact, so an abandoned claim is postponed rather than destroyed. What is still standing does load the hull on the way out, which is the price of walking away. Resources are only banked if the drop is caught, so yield and risk are the same decision.
 
 ### The three province rules
 

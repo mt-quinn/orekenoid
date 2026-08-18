@@ -62,6 +62,24 @@
 
         <div class="resonance" id="resonance" aria-live="polite"></div>
 
+        <!-- The Refit Bay, for fingers.
+             The gantry is a picture of the drone with six labelled places on it, drawn in the canvas
+             and laid out against a 16:9 field. On a phone it is unreadable and unhittable, so touch
+             gets a plain list of the same six stations instead: what each one is, what fitting it
+             would do, what it costs, and a way out. Same economy, same fits -- only the presentation
+             is different. -->
+        <section class="bay" id="bay" aria-label="Refit Bay" hidden>
+          <header class="bay-head">
+            <div class="bay-title">
+              <b>REFIT BAY</b>
+              <small id="bayChassis"></small>
+            </div>
+            <button id="bayClose" type="button" aria-label="Leave the Refit Bay">✕</button>
+          </header>
+          <div class="bay-stats" id="bayStats"></div>
+          <div class="bay-list" id="bayList"></div>
+        </section>
+
         <!-- Losing context always pauses, and the way back is one plate and one tap. Deliberately
              not the pause menu: the player did not ask to pause, so they should not be handed a
              menu of decisions on the way back in. -->
@@ -104,6 +122,10 @@
           <div class="bank-notice" id="bankNotice"></div>
           <div class="hints" id="instructions"></div>
           <div class="stakes">
+            <div class="stat emitter" id="emitterStat" data-trivial="true">
+              <span>EMITTER</span>
+              <div class="charge"><i></i></div>
+            </div>
             <div class="stat balls" id="ballsStat">
               <span>BALLS</span>
               <div class="pips" id="ballPips"></div>

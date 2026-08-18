@@ -49,6 +49,72 @@ describe("continuous-angle claim remeshing", () => {
     expect(checked).toBeGreaterThan(1000);
   });
 
+  it("leaves standing bricks as terrain and cuts only what was broken", () => {
+    const world = new WorldModel();
+    const frame: FrameGeometry = { origin: { x: 24, y: 14 }, angle: Math.PI / 2 + 0.18, width: 11, depth: 11 };
+    const bricks = world.framedBricks(frame).filter((brick) => !brick.persistent);
+    expect(bricks.length).toBeGreaterThan(20);
+    // Half the board broken, half abandoned -- the shape of ending a claim early.
+    const broken = bricks.filter((_, index) => index % 2 === 0);
+    const standing = bricks.filter((_, index) => index % 2 === 1);
+    for (const brick of broken) world.removeFootprint(brick.footprint, false, brick.persistent);
+    world.exhaustFrame(frame, standing);
+
+    for (const brick of standing) {
+      expect(world.solidAt(brick.footprint.center.x, brick.footprint.center.y)).toBe(true);
+      // Ore under abandoned rock is claimable again, not spent. Only cells still solid at their
+      // own centre count: a source cell shared with a broken neighbour was genuinely dug out, and
+      // its ore left with the rock.
+      for (const cell of brick.sourceCells) {
+        if (!world.solidAt(cell.x + 0.5, cell.y + 0.5)) continue;
+        expect(cell.exhausted).toBe(false);
+      }
+    }
+    for (const brick of broken) {
+      expect(world.solidAt(brick.footprint.center.x, brick.footprint.center.y)).toBe(false);
+    }
+  });
+
+  it("leaves no ordinary shards around a landmark when bricks are spared", () => {
+    const world = new WorldModel();
+    const frame: FrameGeometry = { origin: { x: 24, y: 14 }, angle: Math.PI / 2, width: 11, depth: 11 };
+    const bricks = world.framedBricks(frame);
+    expect(bricks.some((brick) => brick.persistent)).toBe(true);
+    // Only the far half is abandoned, so the spared set neighbours cut ground on the lattice.
+    // Landmark bricks are handed in exactly as an arena hands them over, permanently alive.
+    // `exhaustFrame` must drop them rather than spare their squares.
+    const standing = bricks.filter((brick) => brick.persistent || brick.v > frame.depth / 2);
+    expect(standing.some((brick) => brick.persistent)).toBe(true);
+    world.exhaustFrame(frame, standing);
+
+    const spared = new Set(standing.filter((brick) => !brick.persistent).map((brick) => `${Math.round(brick.u + frame.width / 2 - 0.5)},${Math.round(brick.v - 0.5)}`));
+    let checked = 0;
+    for (let row = 0; row < frame.depth; row++) for (let column = 0; column < frame.width; column++) {
+      if (spared.has(`${column},${row}`)) continue;
+      // Inside this lattice square only, with a margin so a boundary sample cannot be attributed
+      // to the spared neighbour next door.
+      for (let dv = 0.15; dv < 1; dv += 0.2) for (let du = 0.15; du < 1; du += 0.2) {
+        const point = world.localToWorld(-frame.width / 2 + column + du, row + dv, frame);
+        // Generator contract 7: landmarks survive claim resolution. Ordinary rock inside a square
+        // the player broke through must not, even when a landmark shares the square.
+        if (world.cellAt(point.x, point.y)?.persistent) continue;
+        checked++;
+        expect(world.solidAt(point.x, point.y)).toBe(false);
+      }
+    }
+    expect(checked).toBeGreaterThan(500);
+  });
+
+  it("still clears the whole frame when nothing is left standing", () => {
+    const world = new WorldModel();
+    const frame: FrameGeometry = { origin: { x: 24, y: 14 }, angle: Math.PI / 2 + 0.18, width: 11, depth: 11 };
+    world.exhaustFrame(frame, []);
+    for (const brick of world.framedBricks(frame)) {
+      if (brick.persistent) continue;
+      expect(world.solidAt(brick.footprint.center.x, brick.footprint.center.y)).toBe(false);
+    }
+  });
+
   it("keeps persistent landmarks solid through a full exhaustion", () => {
     const world = new WorldModel();
     const frame: FrameGeometry = { origin: { x: 24, y: 14 }, angle: Math.PI / 2, width: 11, depth: 11 };
@@ -170,5 +236,54 @@ describe("claims at the edge of the world", () => {
     };
     expect(world.frameHasMaterial(beyond)).toBe(false);
     expect(world.framedBricks(beyond)).toHaveLength(0);
+  });
+});
+
+describe("the edge of the world is a wall", () => {
+  // A frame may hang off the map -- outside it there is simply nothing to cut. The drone may not:
+  // digging a hole to the boundary used to let it fly straight out into nothing, because the hull
+  // check only ever asked whether a cell was solid and a cell that does not exist is not solid.
+  it("refuses a hull pose outside the world even where nothing is solid", () => {
+    const world = new WorldModel();
+    const halfLength = 2;
+    const halfThickness = 0.4;
+
+    // Well outside every boundary. Nothing out here is solid, so before the fix all four fitted.
+    const outside: Array<[number, number]> = [
+      [-8 * CELL, (WORLD_ROWS / 2) * CELL],
+      [(WORLD_COLS + 8) * CELL, (WORLD_ROWS / 2) * CELL],
+      [(WORLD_COLS / 2) * CELL, -8 * CELL],
+      [(WORLD_COLS / 2) * CELL, (WORLD_ROWS + 8) * CELL],
+    ];
+    for (const [x, y] of outside) {
+      expect(world.isHullOpen(x, y, 0, halfLength, halfThickness)).toBe(false);
+    }
+  });
+
+  it("refuses a pose that only partly leaves the world", () => {
+    const world = new WorldModel();
+    // Centre just inside the last column, but long enough that the nose crosses the boundary.
+    const x = (WORLD_COLS - 1) * CELL;
+    const y = (WORLD_ROWS / 2) * CELL;
+    expect(world.isHullOpen(x, y, 0, 3, 0.4)).toBe(false);
+  });
+
+  it("still allows ordinary open ground away from the border", () => {
+    const world = new WorldModel();
+    // The landing is carved open by the generator, so the drone must fit where it spawns.
+    const start = world.start;
+    expect(world.isHullOpen(start.x * CELL, start.y * CELL, Math.PI / 2, 1.5, 0.4)).toBe(true);
+  });
+
+  it("keeps claim sampling unaffected, since a frame may still overhang", () => {
+    const world = new WorldModel();
+    const frame: FrameGeometry = {
+      origin: { x: WORLD_COLS - 3, y: WORLD_ROWS / 2 },
+      angle: 0,
+      width: 11,
+      depth: 11,
+    };
+    // The border being impassable to the hull must not make it impassable to a survey frame.
+    expect(world.frameHasMaterial(frame)).toBe(true);
   });
 });

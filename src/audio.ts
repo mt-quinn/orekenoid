@@ -177,6 +177,24 @@ export const SOUNDS = {
   forgeOutOfRange: { frequency: 240, duration: 0.12, volume: 0.03, end: 180 },
   cannotForge: { frequency: 88, duration: 0.16, volume: 0.03, end: 60 },
 
+  // --- Cavern combat. -------------------------------------------------------
+  // Untuned: written against the existing vocabulary and never listened to, like the fitting
+  // sequence's three tones, and flagged here for the hand-applied audio pass.
+  //
+  // The tell rises where every other threat in the game falls, because it is the one sound that is
+  // a warning rather than a consequence -- it has to pull the head up, not push it down.
+  fieldFire: { frequency: 190, duration: 0.06, volume: 0.028, end: 330 },
+  fieldBounce: { frequency: 300, duration: 0.022, volume: 0.009, end: 250, spread: 0.09 },
+  creatureHit: { frequency: 200, duration: 0.05, volume: 0.028, end: 130, spread: 0.07 },
+  creatureKilled: { frequency: 130, duration: 0.22, volume: 0.045, end: 52, spread: 0.04 },
+  creatureTell: { frequency: 220, duration: 0.26, volume: 0.03, end: 470 },
+  creatureSlam: { frequency: 84, duration: 0.2, volume: 0.05, end: 40, spread: 0.05 },
+  creatureRam: { frequency: 104, duration: 0.24, volume: 0.055, end: 44 },
+  ballReclaimed: { frequency: 260, duration: 0.13, volume: 0.022, end: 150 },
+  // The lamp going under. Falls further and slower than anything else in this block, because it is
+  // the only one of these events the player cannot answer by moving.
+  creatureSmother: { frequency: 150, duration: 0.55, volume: 0.045, end: 34 },
+
   // --- The hull against rock. -----------------------------------------------
   // Both fall, because both are the machine being stopped rather than doing something. The knock
   // carries body; the scrape is deliberately thin and quiet, since it repeats for as long as the
