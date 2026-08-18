@@ -86,6 +86,7 @@ export class WorldModel {
   private readonly cutsByCell = new Map<string, OrientedFootprint[]>();
   /** Listeners notified when a cut changes terrain, so rendering can stay incremental. */
   private readonly cutListeners: Array<(footprint: OrientedFootprint) => void> = [];
+  private readonly growListeners: Array<(cellX: number, cellY: number) => void> = [];
   readonly start: { x: number; y: number };
   /**
    * Ordered mutation log. Replaying this over a freshly generated world of the
@@ -172,6 +173,17 @@ export class WorldModel {
     this.cutListeners.push(listener);
   }
 
+  /**
+   * Notified when regrowth puts rock back.
+   *
+   * Separate from `onCut` because the two need opposite treatment: a cut is composited into the
+   * terrain raster as an erase, where growth has to make the raster be rebuilt from current state.
+   * Handing growth to the cut listeners would erase the very rock that just appeared.
+   */
+  onGrow(listener: (cellX: number, cellY: number) => void): void {
+    this.growListeners.push(listener);
+  }
+
   // --- Region queries -----------------------------------------------------
 
   provinceAt(x: number, y: number): ProvinceId {
@@ -213,6 +225,33 @@ export class WorldModel {
     const v = dx * sine - dy * cosine;
     return Math.abs(u) <= footprint.halfWidth + 1e-7 && Math.abs(v) <= footprint.halfHeight + 1e-7;
   }
+
+  /**
+   * Does rock stop something here?
+   *
+   * The rock *as drawn*, which is the only answer a player can act on. This used to be `solidAt` --
+   * exact per cell -- while the terrain is drawn from an organic contour that pulls inside the cell
+   * grid by up to half a cell. Buried inside a rock mass that gap is unreachable and invisible, so it
+   * cost nothing. Excavate around it and it becomes both: the reported symptom was slate that had
+   * vanished but still stopped the drone, and slate because slate is non-liable and is exactly what a
+   * player leaves standing as a wall.
+   *
+   * `solidAt` stays exactly as it was and stays authoritative for the *model* -- what a claim
+   * remeshes into bricks, what a cut removes, what regrowth may restore. Those want the grid. Only
+   * things with a physical presence in the world ask this instead.
+   */
+  blocksAt(x: number, y: number): boolean {
+    return this.visualSolidAt(x, y);
+  }
+
+  /**
+   * The same question as an oracle, for the modules that take one.
+   *
+   * The ball solver, the creatures and line of sight are all handed this rather than the model's own
+   * `solidAt`, so everything that occupies space in the mine agrees with everything that is drawn in
+   * it -- and with the shadows, which are traced from the same silhouette.
+   */
+  readonly drawn = { solidAt: (x: number, y: number) => this.visualSolidAt(x, y) };
 
   solidAt(x: number, y: number): boolean {
     const cell = this.cellAt(x, y);
@@ -277,6 +316,24 @@ export class WorldModel {
     // that edge-lighting samples straddle it and smear into soft clouds.
     const wobble = sfbm(this.generated.seed + 8821, x * 1.15, y * 1.15, 3) * 0.1;
     return field + wobble - 0.5;
+  }
+
+  /**
+   * The signed field the terrain is actually *drawn* from.
+   *
+   * `visualFieldAt` is geology alone: cuts are deliberately not in it, so the organic boundary stays
+   * put while excavation is applied as exact rectangles over the top. That is right for the renderer,
+   * which does both. It was wrong for the shadow contour, which traced the geology field and therefore
+   * cast shadows out of rock the player had already dug away -- excavated space stayed black, and
+   * anything left standing in it read as an invisible blocker with a shadow attached.
+   *
+   * Negative inside any cut, so a tracer following this follows the silhouette on screen.
+   */
+  drawnFieldAt(x: number, y: number): number {
+    if (this.cellAt(x, y)?.persistent) return 1;
+    const cuts = this.cutsByCell.get(`${Math.floor(x)},${Math.floor(y)}`);
+    if (cuts?.some((cut) => this.pointInFootprint(x, y, cut))) return -1;
+    return this.visualFieldAt(x, y);
   }
 
   /**
@@ -356,7 +413,7 @@ export class WorldModel {
         // Handled at the hull rather than in `solidAt` so the two questions stay separate: a frame
         // may hang off the edge of the world, and the drone may not.
         if (!this.withinBounds(cellX, cellY)) return false;
-        if (this.solidAt(cellX, cellY)) return false;
+        if (this.blocksAt(cellX, cellY)) return false;
       }
     }
     return true;
@@ -507,11 +564,16 @@ export class WorldModel {
     if (this.solidAt(x + 0.5, y + 0.5)) return false;
     const definition = materialOf(kind);
     cell.solid = true;
+    // The geology field too, not just the gameplay flag. `visualFieldAt` reads `baseSolid`, so rock
+    // restored without it is rock that blocks and is never drawn -- the same defect slate had, and one
+    // this function would otherwise keep producing every time a Rootwarren cell grew back.
+    cell.baseSolid = true;
     cell.kind = kind;
     cell.hp = definition.hp;
     cell.maxHp = definition.hp;
     this.cutsByCell.delete(`${x},${y}`);
     if (this.recording) this.history.push({ t: "grow", x, y, k: kind });
+    for (const listener of this.growListeners) listener(x, y);
     return true;
   }
 

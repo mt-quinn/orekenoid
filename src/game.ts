@@ -360,7 +360,9 @@ export class OrekenoidGame {
     this.effects = new Effects(this.effectLayer);
     this.effectLayer.addChild(this.crumbleEdge);
     this.deploymentPreviews = new DeploymentPreviews(this.world, this.terrain);
-    this.combat = new FieldCombat(this.world, this.world.generated.seed);
+    // Handed the drawn rock, not the model's grid: a Bounder crawls the surface the player can see,
+    // and a hurl rebounds off the wall the player can see.
+    this.combat = new FieldCombat(this.world.drawn, this.world.generated.seed);
     this.combat.oreTableFor = (x, y) => this.oreTableAt(x, y);
     this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.framePreview.addChild(this.frameWash, this.frameGrid, this.frameScan, this.frameReturns);
@@ -493,6 +495,12 @@ export class OrekenoidGame {
     this.shadows = new ShadowLayer(this.world, this.app.renderer);
     // Excavation changes the silhouette, and the silhouette is what casts. Regrowth does not come
     // through here, which is what the trace lifetime is a backstop for.
+    // Regrowth is the opposite of a cut and needs the opposite handling: the raster has no "un-erase"
+    // to composite, so the chunk is thrown away and drawn again from current state.
+    this.world.onGrow((cellX, cellY) => {
+      this.terrain.invalidateAt(cellX, cellY);
+      this.shadows.invalidate(cellX - 1, cellY - 1, cellX + 1, cellY + 1);
+    });
     this.world.onCut((footprint) => {
       const reach = Math.hypot(footprint.halfWidth, footprint.halfHeight) + 1;
       this.shadows.invalidate(
@@ -695,6 +703,10 @@ export class OrekenoidGame {
         return;
       }
       if (this.mode === "survey") {
+        // Diagnostic. Stand next to something wrong and press it: dumps the true state of every cell
+        // around the drone, so a bug that only shows up in play can be captured where it happens
+        // instead of guessed at from a save that does not contain it.
+        if (event.code === "Backquote") { this.probeAround(); return; }
         if (event.code === "Enter" || event.code === "KeyF") {
           if (!this.can("commit")) { this.refuseControl(); return; }
           this.establishArena();
@@ -2113,6 +2125,45 @@ export class OrekenoidGame {
   }
 
   /**
+   * Dump the ground around the drone: what blocks, what is drawn, and what is on the canvas.
+   *
+   * The three can disagree, and when they do no amount of reading one of them explains the other --
+   * the model can hold rock the raster has erased, and the raster can hold rock the model has cut.
+   * Reported per cell with the flags that decide each answer.
+   */
+  private probeAround(): void {
+    const centreX = Math.floor(this.player.x / CELL);
+    const centreY = Math.floor(this.player.y / CELL);
+    const rows: string[] = [];
+    for (let dy = -4; dy <= 4; dy++) {
+      for (let dx = -4; dx <= 4; dx++) {
+        const cx = centreX + dx;
+        const cy = centreY + dy;
+        const cell = this.world.cellAt(cx + 0.5, cy + 0.5);
+        if (!cell) continue;
+        const blocks = this.world.blocksAt(cx + 0.5, cy + 0.5);
+        const drawn = this.world.visualSolidAt(cx + 0.5, cy + 0.5);
+        const alpha = this.terrain.alphaAt(cx + 0.5, cy + 0.5);
+        const painted = alpha >= 40;
+        // Only the disagreements: everything consistent is noise here.
+        if (blocks === drawn && drawn === painted) continue;
+        rows.push(`${cx},${cy} ${cell.kind} blocks=${blocks} drawn=${drawn} canvasAlpha=${alpha}`
+          + ` solid=${cell.solid} baseSolid=${cell.baseSolid} worked=${cell.worked}`
+          + ` exhausted=${cell.exhausted} persistent=${cell.persistent}`
+          + ` field=${this.world.visualFieldAt(cx + 0.5, cy + 0.5).toFixed(3)}`
+          + ` drawnField=${this.world.drawnFieldAt(cx + 0.5, cy + 0.5).toFixed(3)}`);
+      }
+    }
+    const header = `PROBE at cell ${centreX},${centreY} heading ${this.player.heading.toFixed(4)}`
+      + ` mode=${this.mode} disagreements=${rows.length}`;
+    const report = [header, ...rows].join("\n");
+    // eslint-disable-next-line no-console
+    console.log(report);
+    void navigator.clipboard?.writeText(report).catch(() => undefined);
+    this.showToast(rows.length ? `PROBE · ${rows.length} MISMATCHED CELLS · COPIED` : "PROBE · ALL CONSISTENT");
+  }
+
+  /**
    * Can the drone see this point?
    *
    * Three questions at once, all of them the lighting: within reach, in front of the paddle, and with
@@ -2123,7 +2174,7 @@ export class OrekenoidGame {
     if (Math.hypot(x - drone.x, y - drone.y) > LAMP_REACH) return false;
     const forward = drone.heading - Math.PI / 2;
     if ((x - drone.x) * Math.cos(forward) + (y - drone.y) * Math.sin(forward) <= 0) return false;
-    return visibleFrom(this.world, drone.x, drone.y, x, y);
+    return visibleFrom(this.world.drawn, drone.x, drone.y, x, y);
   }
 
   /**
@@ -3264,6 +3315,16 @@ export class OrekenoidGame {
       setSpawning(on: boolean) {
         game.combat.spawning = on;
         if (!on) game.combat.clear();
+      },
+      /** What the terrain canvas actually has at a cell, against what the model claims. */
+      rasterAt(x: number, y: number) {
+        return {
+          alpha: game.terrain.alphaAt(x, y),
+          drawn: game.world.visualSolidAt(x, y),
+          blocks: game.world.blocksAt(x, y),
+          solid: game.world.solidAt(x, y),
+          kind: game.world.cellAt(x, y)?.kind ?? null,
+        };
       },
       warpTo(x: number, y: number) {
         game.player.x = x * CELL;

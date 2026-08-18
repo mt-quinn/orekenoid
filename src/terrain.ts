@@ -113,6 +113,57 @@ export class ChunkedTerrain {
     this.container.removeChildren();
   }
 
+  /**
+   * Throw away the chunk covering a cell so it rasterises again from current world state.
+   *
+   * Cuts are composited in incrementally, which is what keeps excavation cheap. Growth cannot be:
+   * there is no "un-erase" to composite, so the only honest answer is to rebuild. Rare enough that
+   * rebuilding one chunk is nothing, and the lazy builder picks it up on the next frame.
+   */
+  invalidateAt(cellX: number, cellY: number): void {
+    const cx = Math.floor(cellX / CHUNK_CELLS);
+    const cy = Math.floor(cellY / CHUNK_CELLS);
+    const key = this.key(cx, cy);
+    const chunk = this.chunks.get(key);
+    if (!chunk) return;
+    chunk.sprite.destroy();
+    chunk.texture.destroy(true);
+    this.chunks.delete(key);
+    this.queue.push({ cx, cy });
+  }
+
+  /**
+   * Alpha of the live chunk canvas at a world cell, 0..255, or -1 when no chunk is built there.
+   *
+   * Diagnostic. Chunks are rasterised once and then composited into, so "what the world model says"
+   * and "what is actually on the canvas" can drift apart -- and when they do, no amount of reading the
+   * model will show it. This reads the pixels.
+   */
+  alphaAt(cellX: number, cellY: number): number {
+    const cx = Math.floor(cellX / CHUNK_CELLS);
+    const cy = Math.floor(cellY / CHUNK_CELLS);
+    const chunk = this.chunks.get(this.key(cx, cy));
+    if (!chunk) return -1;
+    const context = chunk.canvas.getContext("2d");
+    if (!context) return -1;
+    const px = Math.floor((cellX - cx * CHUNK_CELLS) * PIXELS_PER_CELL);
+    const py = Math.floor((cellY - cy * CHUNK_CELLS) * PIXELS_PER_CELL);
+    if (px < 0 || py < 0 || px >= chunk.canvas.width || py >= chunk.canvas.height) return -1;
+    return context.getImageData(px, py, 1, 1).data[3];
+  }
+
+  /** RGBA of the live chunk canvas at a world cell. Diagnostic. */
+  colourAt(cellX: number, cellY: number): number[] {
+    const cx = Math.floor(cellX / CHUNK_CELLS);
+    const cy = Math.floor(cellY / CHUNK_CELLS);
+    const chunk = this.chunks.get(this.key(cx, cy));
+    const context = chunk?.canvas.getContext("2d");
+    if (!chunk || !context) return [-1, -1, -1, -1];
+    const px = Math.floor((cellX - cx * CHUNK_CELLS) * PIXELS_PER_CELL);
+    const py = Math.floor((cellY - cy * CHUNK_CELLS) * PIXELS_PER_CELL);
+    return [...context.getImageData(px, py, 1, 1).data];
+  }
+
   get chunkCount(): number {
     return this.chunks.size;
   }

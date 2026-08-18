@@ -126,6 +126,19 @@ describe("continuous-angle claim remeshing", () => {
   });
 });
 
+/**
+ * Set a cell's solidity for a hand-built test world.
+ *
+ * Both flags, and that is the point. `solid` is what the model answers with and `baseSolid` is what
+ * the terrain is *drawn* from -- and traversal now follows the drawing, so a fixture that carves only
+ * one of them carves a passage the drone cannot see and therefore will not enter.
+ */
+function carve(world: WorldModel, x: number, y: number, solid: boolean): void {
+  const cell = world.cells[y][x];
+  cell.solid = solid;
+  cell.baseSolid = solid;
+}
+
 describe("drone hull", () => {
   // Surveyor: 3.1 cells of paddle plus 13px of nose each side, and 10px of
   // half-thickness. So ~3.7 cells long and ~0.48 across -- a 7.7:1 hull.
@@ -142,13 +155,13 @@ describe("drone hull", () => {
   function slotWorld(gapRows: number) {
     const world = new WorldModel(DEFAULT_SEED);
     for (let y = 20; y < 40; y++) {
-      for (let x = 60; x < 90; x++) world.cells[y][x].solid = false;
+      for (let x = 60; x < 90; x++) carve(world, x, y, false);
     }
     const top = 30.5 - gapRows / 2;
     const bottom = 30.5 + gapRows / 2;
     for (let y = 20; y < 40; y++) {
       if (y + 0.5 >= top && y + 0.5 <= bottom) continue;
-      world.cells[y][75].solid = true;
+      carve(world, 75, y, true);
     }
     return world;
   }
@@ -174,8 +187,8 @@ describe("drone hull", () => {
 
   it("never tunnels a solid one-cell wall, at any heading", () => {
     const world = new WorldModel(DEFAULT_SEED);
-    for (let y = 20; y < 40; y++) for (let x = 60; x < 90; x++) world.cells[y][x].solid = false;
-    for (let y = 20; y < 40; y++) world.cells[y][75].solid = true;
+    for (let y = 20; y < 40; y++) for (let x = 60; x < 90; x++) carve(world, x, y, false);
+    for (let y = 20; y < 40; y++) carve(world, 75, y, true);
     // A sampler stepping a full cell or more would slip between samples at some
     // angles and report a straddled wall as clear.
     for (let step = 0; step < 64; step++) {
@@ -285,5 +298,63 @@ describe("the edge of the world is a wall", () => {
     };
     // The border being impassable to the hull must not make it impassable to a survey frame.
     expect(world.frameHasMaterial(frame)).toBe(true);
+  });
+});
+
+describe("what blocks is what is drawn", () => {
+  /**
+   * The bug this exists for: slate.
+   *
+   * Collision was exact per cell while the terrain is drawn from an organic contour that pulls inside
+   * the cell grid by up to half a cell. Buried in a rock mass that gap is unreachable and invisible.
+   * Excavate around it and it becomes both -- and slate is what is left standing, because it is
+   * non-liable and players deliberately leave it as a wall. The result was rock that had vanished but
+   * still stopped the drone.
+   */
+  it("never blocks the drone with rock it has not drawn", () => {
+    const world = new WorldModel();
+    // A frame with slate in it, cleared of everything else, as a player leaving a slate bank would.
+    let chosen: { frame: FrameGeometry; slate: ReturnType<WorldModel["framedBricks"]> } | null = null;
+    for (let y = 12; y < 130 && !chosen; y += 3) {
+      for (let x = 12; x < 220 && !chosen; x += 3) {
+        const frame: FrameGeometry = { origin: { x, y }, angle: Math.PI / 2, width: 7, depth: 15 };
+        const bricks = world.framedBricks(frame);
+        const slate = bricks.filter((brick) => brick.cell.kind === "slate");
+        if (slate.length >= 4 && bricks.length > 20) chosen = { frame, slate };
+      }
+    }
+    expect(chosen, "the world should contain a slate bank").not.toBeNull();
+    const { frame, slate } = chosen!;
+
+    for (const brick of world.framedBricks(frame)) {
+      if (brick.cell.kind === "slate") continue;
+      world.removeFootprint(brick.footprint, false, brick.persistent);
+    }
+    world.exhaustFrame(frame, slate);
+
+    // Every point in the claim: if it stops the drone, it must be visible.
+    let blockedAndUndrawn = 0;
+    for (let v = 0.05; v < frame.depth; v += 0.1) {
+      for (let u = -frame.width / 2 + 0.05; u < frame.width / 2; u += 0.1) {
+        const point = world.localToWorld(u, v, frame);
+        if (world.blocksAt(point.x, point.y) && !world.visualSolidAt(point.x, point.y)) blockedAndUndrawn++;
+      }
+    }
+    expect(blockedAndUndrawn).toBe(0);
+  });
+
+  it("still blocks the drone with rock it has drawn", () => {
+    // The other half, and the reason this cannot be fixed by simply blocking less: a slate bank left
+    // standing is a wall, and it has to still be one.
+    const world = new WorldModel();
+    let solidPoints = 0;
+    for (let y = 20; y < 60; y += 0.5) {
+      for (let x = 20; x < 60; x += 0.5) {
+        if (!world.visualSolidAt(x, y)) continue;
+        solidPoints++;
+        expect(world.blocksAt(x, y)).toBe(true);
+      }
+    }
+    expect(solidPoints).toBeGreaterThan(200);
   });
 });

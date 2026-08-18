@@ -49,7 +49,14 @@ export const CONTOUR = {
 
 /** Anything that can report the signed visual field and whether a point is drawn as rock. */
 export interface VisualField {
-  visualFieldAt(x: number, y: number): number;
+  /**
+   * The signed field the terrain is drawn from, cuts included.
+   *
+   * Not `visualFieldAt`, which is geology alone. Tracing that cast shadows out of rock the player had
+   * excavated: the field still said "solid" everywhere inside a resolved claim, so the hole stayed
+   * black and anything left standing in it read as an invisible blocker with a shadow attached.
+   */
+  drawnFieldAt(x: number, y: number): number;
   visualSolidAt(x: number, y: number): boolean;
   cutsInRegion(minX: number, minY: number, maxX: number, maxY: number): OrientedFootprint[];
 }
@@ -66,8 +73,9 @@ function crossing(a: number, b: number): number {
 /**
  * Give a geology face its outward normal by asking which side the air is on.
  *
- * Geology only. The field this samples does not include excavation, so it cannot orient the edge of
- * a cut -- see `cutEdges`, which knows the answer without asking.
+ * The field includes excavation now, so this orients a cut boundary correctly too -- but `cutEdges`
+ * still adds those boundaries from their own geometry, because sampling a straight line at sub-cell
+ * resolution would blunt the one edge in the world that is meant to be sharp.
  *
  * Derived by sampling rather than from winding order. Marching squares can be made to emit
  * consistently wound segments, but only by being careful in sixteen places instead of one, and the
@@ -81,7 +89,7 @@ function orient(world: VisualField, occluder: Occluder): Occluder {
   const length = Math.hypot(nx, ny) || 1;
   nx /= length;
   ny /= length;
-  if (world.visualFieldAt(midX + nx * CONTOUR.normalProbe, midY + ny * CONTOUR.normalProbe) > 0) {
+  if (world.drawnFieldAt(midX + nx * CONTOUR.normalProbe, midY + ny * CONTOUR.normalProbe) > 0) {
     nx = -nx;
     ny = -ny;
   }
@@ -112,14 +120,14 @@ export function traceVisualContour(
   let top = new Float32Array(columns);
   let bottom = new Float32Array(columns);
   for (let column = 0; column < columns; column++) {
-    top[column] = world.visualFieldAt(minX + column * step, minY);
+    top[column] = world.drawnFieldAt(minX + column * step, minY);
   }
 
   for (let row = 1; row < rows; row++) {
     const y0 = minY + (row - 1) * step;
     const y1 = minY + row * step;
     for (let column = 0; column < columns; column++) {
-      bottom[column] = world.visualFieldAt(minX + column * step, y1);
+      bottom[column] = world.drawnFieldAt(minX + column * step, y1);
     }
 
     for (let column = 1; column < columns; column++) {

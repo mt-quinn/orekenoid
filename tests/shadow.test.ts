@@ -20,14 +20,16 @@ function disc(centreX: number, centreY: number, radius: number, cuts: OrientedFo
     return Math.abs(u) <= cut.halfWidth && Math.abs(v) <= cut.halfHeight;
   });
   return {
-    visualFieldAt: field,
+    // The field the tracer follows already has excavation in it, which is the whole point: a contour
+    // traced from geology alone casts shadows out of rock that has been dug away.
+    drawnFieldAt: (x, y) => (inCut(x, y) ? -1 : field(x, y)),
     visualSolidAt: (x, y) => field(x, y) > 0 && !inCut(x, y),
     cutsInRegion: () => cuts,
   };
 }
 
 const EMPTY: VisualField = {
-  visualFieldAt: () => -1,
+  drawnFieldAt: () => -1,
   visualSolidAt: () => false,
   cutsInRegion: () => [],
 };
