@@ -170,3 +170,80 @@ describe("what the drawn rock hides", () => {
     expect(far).toBe(3);
   });
 });
+
+/**
+ * A convex polygon as a signed field: positive inside, negative outside, zero on the boundary.
+ *
+ * Straight edges meeting at a chosen angle are the point. A disc has curvature everywhere but a
+ * corner nowhere, and the corner is what broke.
+ */
+function wedge(points: Array<[number, number]>): VisualField {
+  const field = (x: number, y: number) => {
+    let inward = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const [ax, ay] = points[i];
+      const [bx, by] = points[(i + 1) % points.length];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const length = Math.hypot(dx, dy);
+      // Wound anticlockwise, so the inside is to the left of every edge.
+      inward = Math.min(inward, ((x - ax) * dy - (y - ay) * dx) / length);
+    }
+    return inward;
+  };
+  return {
+    drawnFieldAt: field,
+    visualSolidAt: (x, y) => field(x, y) > 0,
+    cutsInRegion: () => [],
+  };
+}
+
+describe("sharp corners", () => {
+  /** Is this point hidden from the eye by the traced silhouette? */
+  const hiddenBy = (faces: Occluder[], eyeX: number, eyeY: number, x: number, y: number) =>
+    faces.some((face) => {
+      const quad = shadowQuad(face, eyeX, eyeY, 300);
+      return quad ? inside(quad, x, y) : false;
+    });
+
+  // Apexes from a blunt right angle down to a needle. A chord across a corner has its midpoint
+  // outside the rock, and the sharper the corner the further outside it sits -- which used to delete
+  // the face and open a wedge of light straight through solid ground.
+  for (const halfSpan of [10, 5, 2, 1]) {
+    it(`casts from an apex ${halfSpan} cells across`, () => {
+      const world = wedge([[60, 60], [85, 60 + halfSpan], [85, 60 - halfSpan]]);
+      const faces = traceVisualContour(world, 45, 40, 100, 80);
+      // Every point straight behind the wedge, along the axis the apex points down.
+      for (const x of [70, 80, 90, 110]) {
+        expect(hiddenBy(faces, 40, 60, x, 60)).toBe(true);
+      }
+    });
+  }
+
+  it("keeps every face a real crossing produced", () => {
+    // Nothing is filtered from a traced contour, so a chain's chords still meet end to end and the
+    // quads they cast share edges rather than leaving slivers between them.
+    const world = wedge([[60, 60], [85, 61], [85, 59]]);
+    const faces = traceVisualContour(world, 45, 40, 100, 80);
+    const ends = new Map<string, number>();
+    for (const face of faces) {
+      for (const key of [`${face.x1.toFixed(4)},${face.y1.toFixed(4)}`, `${face.x2.toFixed(4)},${face.y2.toFixed(4)}`]) {
+        ends.set(key, (ends.get(key) ?? 0) + 1);
+      }
+    }
+    // An endpoint shared by exactly one face is a loose end: the run stopped there. On a closed
+    // silhouette wholly inside the traced region there should be at most the two the loop was cut at.
+    const loose = [...ends.values()].filter((count) => count === 1).length;
+    expect(loose).toBeLessThanOrEqual(2);
+  });
+
+  it("points every normal out of the wedge, corners included", () => {
+    const world = wedge([[60, 60], [85, 62], [85, 58]]);
+    for (const face of traceVisualContour(world, 45, 40, 100, 80)) {
+      const midX = (face.x1 + face.x2) / 2;
+      const midY = (face.y1 + face.y2) / 2;
+      // A step along the normal must leave the rock, and a step against it must not.
+      expect(world.visualSolidAt(midX + face.nx * 0.5, midY + face.ny * 0.5)).toBe(false);
+    }
+  });
+});

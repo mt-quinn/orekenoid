@@ -121,6 +121,14 @@ export interface Creature {
    * approximation of one would be two solvers to keep in agreement.
    */
   age: number;
+  /**
+   * Met by the machine on this flight and not yet landed.
+   *
+   * The rock alone never hurts it. If landing always cost a hit point, three dodges would kill one on
+   * their own and the paddle would be optional -- so the paddle is what makes a landing count, whether
+   * it met the face cleanly or clipped the hull on the way past.
+   */
+  deflected: boolean;
   /** What it drops, decided from the ground it spawned in. */
   ores: ResourceId[];
   /**
@@ -171,6 +179,7 @@ export function createBounder(
     hitFlash: 0,
     tell: 0,
     age: 0,
+    deflected: false,
     ores,
     surfaceAngle,
     circulation,
@@ -205,6 +214,7 @@ export function deflectCreature(
   creature.vx = Math.cos(heading) * speed;
   creature.vy = Math.sin(heading) * speed;
   creature.facing = heading;
+  creature.deflected = true;
   // Lifted clear of the face so the next frame is not read as a second contact.
   creature.x += Math.cos(normalAngle) * 0.02;
   creature.y += Math.sin(normalAngle) * 0.02;
@@ -254,6 +264,7 @@ export function stepCreature(
         creature.state = "hurl";
         creature.timer = BOUNDER.hurlSeconds;
         creature.age = 0;
+        creature.deflected = false;
         creature.tell = 1;
         creature.vx = Math.cos(creature.facing) * BOUNDER.hurlSpeed;
         creature.vy = Math.sin(creature.facing) * BOUNDER.hurlSpeed;
@@ -269,11 +280,17 @@ export function stepCreature(
       const landing = flyUntilContact(creature, world, dt);
       if (landing) {
         creature.surfaceAngle = landing.surfaceAngle;
-        creature.hp -= 1;
-        creature.hitFlash = 0.26;
         creature.vx = 0;
         creature.vy = 0;
-        step.landed = true;
+        // The rock is where it stops, not what hurts it. Only a flight the machine touched costs a
+        // hit point: otherwise a Bounder kills itself on the first wall it throws itself at, three
+        // dodges finish one, and the paddle stops mattering.
+        if (creature.deflected) {
+          creature.deflected = false;
+          creature.hp -= 1;
+          creature.hitFlash = 0.26;
+          step.landed = true;
+        }
         if (creature.hp <= 0) {
           creature.state = "dead";
           step.killed = true;
@@ -480,6 +497,7 @@ export function bounceCreature(creature: Creature, nx: number, ny: number): void
     creature.vy -= 2 * dot * uy;
   }
   creature.facing = Math.atan2(creature.vy, creature.vx);
+  creature.deflected = true;
   creature.x += ux * 0.02;
   creature.y += uy * 0.02;
 }

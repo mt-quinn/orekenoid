@@ -71,11 +71,17 @@ function crossing(a: number, b: number): number {
 }
 
 /**
- * Give a geology face its outward normal by asking which side the air is on.
+ * Give a raw sub-cell face its outward normal by comparing the field either side of it.
  *
- * The field includes excavation now, so this orients a cut boundary correctly too -- but `cutEdges`
- * still adds those boundaries from their own geometry, because sampling a straight line at sub-cell
- * resolution would blunt the one edge in the world that is meant to be sharp.
+ * Only ever called on the fragments marching squares emits, never on a simplified chord, and that
+ * distinction is the whole point. A fragment's midpoint sits *on* the traced boundary, so a short
+ * probe to either side straddles it and the comparison is meaningful. A chord's midpoint does not:
+ * across a sharp convex corner the chord cuts the corner off and its midpoint is already outside the
+ * rock, so both probes land in open air, and a test that asked "is this side solid?" got the answer
+ * "no" from both and picked a normal by accident.
+ *
+ * Compared rather than thresholded for the same reason. Which side reads *more* solid is a question
+ * that still has a right answer when neither side is solid at all.
  *
  * Derived by sampling rather than from winding order. Marching squares can be made to emit
  * consistently wound segments, but only by being careful in sixteen places instead of one, and the
@@ -89,7 +95,9 @@ function orient(world: VisualField, occluder: Occluder): Occluder {
   const length = Math.hypot(nx, ny) || 1;
   nx /= length;
   ny /= length;
-  if (world.drawnFieldAt(midX + nx * CONTOUR.normalProbe, midY + ny * CONTOUR.normalProbe) > 0) {
+  const ahead = world.drawnFieldAt(midX + nx * CONTOUR.normalProbe, midY + ny * CONTOUR.normalProbe);
+  const behind = world.drawnFieldAt(midX - nx * CONTOUR.normalProbe, midY - ny * CONTOUR.normalProbe);
+  if (ahead > behind) {
     nx = -nx;
     ny = -ny;
   }
@@ -163,11 +171,14 @@ export function traceVisualContour(
     bottom = swap;
   }
 
-  // Chained into polylines and simplified before anything is oriented, so the tolerance is applied
-  // to the curve as a whole rather than to each sub-cell fragment in isolation.
-  const geology = simplifyChains(result)
-    .map((occluder) => orient(world, occluder))
-    .filter((occluder) => insideRock(world, occluder));
+  // Oriented while the fragments are still fragments, then chained and simplified carrying those
+  // normals along. The tolerance is still applied to the curve as a whole -- simplification has not
+  // moved, only the point at which the field is asked which way is out.
+  //
+  // Nothing is filtered out here, and that is deliberate. Every fragment is a zero crossing of the
+  // same field the terrain is drawn from, so it is a face the player can see; dropping one cannot
+  // remove a shadow that should not be there, it can only punch a wedge of light through solid rock.
+  const geology = simplifyChains(result.map((occluder) => orient(world, occluder)));
 
   return [...geology, ...cutEdges(world, minX, minY, maxX, maxY)];
 }
@@ -176,11 +187,24 @@ export function traceVisualContour(
 const pointKey = (x: number, y: number) => `${Math.round(x * 4096)},${Math.round(y * 4096)}`;
 
 /**
+ * One traced run: points in order, with the normal of the raw fragment between each pair.
+ *
+ * The normals travel with the run because they cannot be recovered afterwards. Once a chord has
+ * replaced twenty fragments there is no longer a point on it to probe the field at.
+ */
+interface Run {
+  points: Array<{ x: number; y: number }>;
+  normals: Array<{ nx: number; ny: number }>;
+}
+
+/**
  * Join the fragments into runs, then drop the points that were only describing a straight line.
  *
  * Marching squares emits each segment independently, but neighbouring squares share their crossing
  * points exactly -- both compute it from the same pair of field samples -- so the fragments chain
- * without any tolerance on the join.
+ * without any tolerance on the join. Chaining is also what keeps the result watertight: a chord's
+ * endpoints are points of the original run, so consecutive chords still meet exactly, and the
+ * extruder gives two faces that share an endpoint two quads that share an edge.
  */
 function simplifyChains(segments: readonly Occluder[]): Occluder[] {
   const ends = new Map<string, number[]>();
@@ -195,17 +219,18 @@ function simplifyChains(segments: readonly Occluder[]): Occluder[] {
   const used = new Array<boolean>(segments.length).fill(false);
   const result: Occluder[] = [];
 
-  const walk = (start: number): Array<{ x: number; y: number }> => {
+  const walk = (start: number): Run => {
     used[start] = true;
-    const chain = [
-      { x: segments[start].x1, y: segments[start].y1 },
-      { x: segments[start].x2, y: segments[start].y2 },
-    ];
+    const head = segments[start];
+    const run: Run = {
+      points: [{ x: head.x1, y: head.y1 }, { x: head.x2, y: head.y2 }],
+      normals: [{ nx: head.nx, ny: head.ny }],
+    };
     // Extend from the tail, then from the head, so an open run is captured whole whichever fragment
     // the walk happened to begin at.
     for (const forward of [true, false]) {
       for (;;) {
-        const tip = forward ? chain[chain.length - 1] : chain[0];
+        const tip = forward ? run.points[run.points.length - 1] : run.points[0];
         const candidates = ends.get(pointKey(tip.x, tip.y)) ?? [];
         const next = candidates.find((index) => !used[index]);
         if (next === undefined) break;
@@ -213,28 +238,54 @@ function simplifyChains(segments: readonly Occluder[]): Occluder[] {
         const segment = segments[next];
         const sameAsTip = pointKey(segment.x1, segment.y1) === pointKey(tip.x, tip.y);
         const far = sameAsTip ? { x: segment.x2, y: segment.y2 } : { x: segment.x1, y: segment.y1 };
-        if (forward) chain.push(far);
-        else chain.unshift(far);
+        if (forward) {
+          run.points.push(far);
+          run.normals.push({ nx: segment.nx, ny: segment.ny });
+        } else {
+          run.points.unshift(far);
+          run.normals.unshift({ nx: segment.nx, ny: segment.ny });
+        }
       }
     }
-    return chain;
+    return run;
   };
 
   for (let index = 0; index < segments.length; index++) {
     if (used[index]) continue;
-    const simplified = simplifyRun(walk(index));
-    for (let step = 1; step < simplified.length; step++) {
-      const a = simplified[step - 1];
-      const b = simplified[step];
-      if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-9) continue;
-      result.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, nx: 0, ny: 0 });
+    const run = walk(index);
+    const keep = keptIndices(run.points);
+    for (let step = 1; step < keep.length; step++) {
+      const a = run.points[keep[step - 1]];
+      const b = run.points[keep[step]];
+      const length = Math.hypot(b.x - a.x, b.y - a.y);
+      if (length < 1e-9) continue;
+      // The chord's own perpendicular, given the side the fragments it replaced agreed on. Taking the
+      // perpendicular rather than the averaged normal keeps the normal square to the face that is
+      // actually being extruded; taking the side from the fragments is what makes it right at a
+      // corner, where the chord has no surface under its midpoint to ask.
+      let sumX = 0;
+      let sumY = 0;
+      for (let edge = keep[step - 1]; edge < keep[step]; edge++) {
+        sumX += run.normals[edge].nx;
+        sumY += run.normals[edge].ny;
+      }
+      let nx = -(b.y - a.y) / length;
+      let ny = (b.x - a.x) / length;
+      if (nx * sumX + ny * sumY < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      result.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, nx, ny });
     }
   }
   return result;
 }
 
 /**
- * Simplify one run, splitting it first if it closes on itself.
+ * Which points of a run survive simplification, as indices, splitting it first if it closes on itself.
+ *
+ * Indices rather than points because the caller needs to know which fragments each surviving chord
+ * stands in for, so it can ask them which way is out.
  *
  * A closed loop -- an isolated pillar, which the mine is full of -- has its first and last point in
  * the same place, so Douglas-Peucker measures every deviation against a zero-length baseline, finds
@@ -242,44 +293,49 @@ function simplifyChains(segments: readonly Occluder[]): Occluder[] {
  * silently cast no shadow whatsoever. Cutting the loop at its most distant point gives two open runs
  * with real baselines.
  */
-function simplifyRun(chain: ReadonlyArray<{ x: number; y: number }>): Array<{ x: number; y: number }> {
-  const closed = chain.length > 3
-    && pointKey(chain[0].x, chain[0].y) === pointKey(chain[chain.length - 1].x, chain[chain.length - 1].y);
-  if (!closed) return douglasPeucker(chain, CONTOUR.simplifyTolerance);
+function keptIndices(points: ReadonlyArray<{ x: number; y: number }>): number[] {
+  const last = points.length - 1;
+  if (points.length < 2) return points.length ? [0] : [];
+  const closed = points.length > 3
+    && pointKey(points[0].x, points[0].y) === pointKey(points[last].x, points[last].y);
+  if (!closed) return douglasPeucker(points, 0, last, CONTOUR.simplifyTolerance);
 
   let split = 1;
   let farthest = -1;
-  for (let index = 1; index < chain.length - 1; index++) {
-    const distance = Math.hypot(chain[index].x - chain[0].x, chain[index].y - chain[0].y);
+  for (let index = 1; index < last; index++) {
+    const distance = Math.hypot(points[index].x - points[0].x, points[index].y - points[0].y);
     if (distance > farthest) {
       farthest = distance;
       split = index;
     }
   }
-  const first = douglasPeucker(chain.slice(0, split + 1), CONTOUR.simplifyTolerance);
-  const second = douglasPeucker(chain.slice(split), CONTOUR.simplifyTolerance);
+  const first = douglasPeucker(points, 0, split, CONTOUR.simplifyTolerance);
+  const second = douglasPeucker(points, split, last, CONTOUR.simplifyTolerance);
   return [...first, ...second.slice(1)];
 }
 
-/** Iterative Douglas-Peucker. Recursion would be fine but a long cave wall is a deep chain. */
+/**
+ * Iterative Douglas-Peucker over an index range, returning the indices it keeps.
+ *
+ * Recursion would be fine but a long cave wall is a deep chain.
+ */
 function douglasPeucker(
   points: ReadonlyArray<{ x: number; y: number }>,
+  from: number,
+  to: number,
   tolerance: number,
-): Array<{ x: number; y: number }> {
-  if (points.length < 3) return [...points];
+): number[] {
   const keep = new Array<boolean>(points.length).fill(false);
-  keep[0] = true;
-  keep[points.length - 1] = true;
-  const stack: Array<[number, number]> = [[0, points.length - 1]];
+  keep[from] = true;
+  keep[to] = true;
+  const stack: Array<[number, number]> = [[from, to]];
   while (stack.length) {
     const [first, last] = stack.pop()!;
     if (last <= first + 1) continue;
     const ax = points[first].x;
     const ay = points[first].y;
-    const bx = points[last].x;
-    const by = points[last].y;
-    const dx = bx - ax;
-    const dy = by - ay;
+    const dx = points[last].x - ax;
+    const dy = points[last].y - ay;
     const length = Math.hypot(dx, dy) || 1e-9;
     let worst = -1;
     let worstIndex = first;
@@ -297,7 +353,9 @@ function douglasPeucker(
       stack.push([first, worstIndex], [worstIndex, last]);
     }
   }
-  return points.filter((_, index) => keep[index]);
+  const indices: number[] = [];
+  for (let index = from; index <= to; index++) if (keep[index]) indices.push(index);
+  return indices;
 }
 
 /**

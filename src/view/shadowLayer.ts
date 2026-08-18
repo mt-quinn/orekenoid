@@ -88,6 +88,16 @@ export class ShadowLayer {
    * Takes the world rect that changed and drops only the chunks it touches, plus their neighbours --
    * a cut near a chunk edge moves a contour that the adjacent chunk traced part of.
    */
+  /** Chunks in view that have no traced contour yet. Diagnostic: each one leaks light. */
+  untracedChunks = 0;
+
+  /** Every cached traced face, for diagnostics. */
+  get tracedFaces(): Occluder[] {
+    const all: Occluder[] = [];
+    for (const faces of this.tracedChunks.values()) for (const face of faces) all.push(face);
+    return all;
+  }
+
   /** The composited mask, for diagnostics: white where lit, dark where not. */
   get maskTexture(): RenderTexture {
     return this.texture;
@@ -220,12 +230,13 @@ export class ShadowLayer {
     const faces: Occluder[] = [];
     let budget = SHADOW.traceBudget;
     let total = 0;
+    let untraced = 0;
     for (let cy = top; cy <= bottom; cy++) {
       for (let cx = left; cx <= right; cx++) {
         const key = `${cx},${cy}`;
         let traced = this.tracedChunks.get(key);
         if (!traced) {
-          if (budget <= 0) continue;
+          if (budget <= 0) { untraced++; continue; }
           budget--;
           // Exact chunk bounds, no overlap. The sample step divides the chunk evenly, so adjacent
           // chunks share their seam sample line exactly: the contour is contiguous across the join
@@ -244,6 +255,7 @@ export class ShadowLayer {
       }
     }
     this.lastTracedFaces = total;
+    this.untracedChunks = untraced;
     return faces;
   }
 

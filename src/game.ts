@@ -27,8 +27,8 @@ import { materialOf } from "./materials";
 import { ballSpeed, createBall, stepBall, type BallStepEvents } from "./physics";
 import { FieldCombat } from "./combat/fieldCombat";
 import { metalForBand } from "./worldgen/assign";
-import { ShadowLayer } from "./view/shadowLayer";
-import { visibleFrom } from "./light/shadow";
+import { SHADOW, ShadowLayer } from "./view/shadowLayer";
+import { shadowQuad, visibleFrom } from "./light/shadow";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
@@ -2130,6 +2130,99 @@ export class OrekenoidGame {
    * Reported per cell with the flags that decide each answer.
    */
   /** The probe's findings as data, so a test can assert what the key reports. */
+  /**
+   * Why one leaked point leaked.
+   *
+   * Walks the ray to the first drawn rock it crosses and asks what the shadow geometry had to say
+   * about that crossing: whether there was a traced face near it at all, whether the nearest one was
+   * turned away and culled, and whether any face near it cast a quad that covered the point.
+   */
+  private classifyLeak(eyeX: number, eyeY: number, x: number, y: number): Record<string, unknown> {
+    const dx = x - eyeX;
+    const dy = y - eyeY;
+    const span = Math.hypot(dx, dy);
+    let hitX = x;
+    let hitY = y;
+    let hitAt = span;
+    for (let t = 0; t <= span; t += 0.05) {
+      const px = eyeX + (dx / span) * t;
+      const py = eyeY + (dy / span) * t;
+      if (this.world.blocksAt(px, py)) { hitX = px; hitY = py; hitAt = t; break; }
+    }
+    let nearest = Infinity;
+    let culled = false;
+    let covered = false;
+    for (const face of this.shadows.tracedFaces) {
+      const midX = (face.x1 + face.x2) / 2;
+      const midY = (face.y1 + face.y2) / 2;
+      const distance = Math.hypot(midX - hitX, midY - hitY);
+      if (distance < nearest) {
+        nearest = distance;
+        // Turned away from the eye is exactly what `shadowQuad` culls on.
+        culled = (eyeX - midX) * face.nx + (eyeY - midY) * face.ny <= 0;
+      }
+      if (distance < 2.5 && !covered) {
+        const quad = shadowQuad(face, eyeX, eyeY, SHADOW.reach);
+        if (quad && pointInQuad(quad, x, y)) covered = true;
+      }
+    }
+    return {
+      hitAt: Number(hitAt.toFixed(2)),
+      nearestFace: Number(nearest.toFixed(2)),
+      culled,
+      covered,
+    };
+  }
+
+  /**
+   * Where the drawn mask and honest line of sight disagree.
+   *
+   * A leak is ground the mask left lit that the rock in front of it should have hidden. The shadow
+   * geometry is an approximation of the silhouette -- traced, simplified, cached per chunk -- and this
+   * is how to find out where the approximation is lying, rather than guessing at it from a screenshot.
+   */
+  lightAudit(step = 0.5): { sampled: number; eye: { x: number; y: number }; leaks: Array<Record<string, unknown>> } {
+    const eyeArena = this.arena;
+    const eye = eyeArena
+      ? this.world.localToWorld(eyeArena.paddle.u, 0.2, eyeArena)
+      : { x: this.player.x / CELL, y: this.player.y / CELL };
+    const forward = (eyeArena ? eyeArena.angle : this.player.heading) - Math.PI / 2;
+    const zoom = this.camera.zoom || 1;
+    const reach = Math.hypot(view.width, view.height) * 0.5 / (CELL * zoom) + 3;
+    const focusX = this.camera.focus.x / CELL;
+    const focusY = this.camera.focus.y / CELL;
+
+    const mask = this.app.renderer.extract.pixels(this.shadows.maskTexture);
+    const originX = (focusX - reach) * CELL;
+    const originY = (focusY - reach) * CELL;
+    const scaleX = mask.width / (reach * 2 * CELL);
+    const scaleY = mask.height / (reach * 2 * CELL);
+
+    const leaks: Array<Record<string, unknown>> = [];
+    let sampled = 0;
+    for (let y = focusY - reach; y <= focusY + reach; y += step) {
+      for (let x = focusX - reach; x <= focusX + reach; x += step) {
+        const u = Math.floor((x * CELL - originX) * scaleX);
+        const v = Math.floor((y * CELL - originY) * scaleY);
+        if (u < 0 || v < 0 || u >= mask.width || v >= mask.height) continue;
+        sampled++;
+        const lit = mask.pixels[(v * mask.width + u) * 4] > 200;
+        if (!lit) continue;
+        // In front of the face at all? The half-plane cap is not an approximation, so a disagreement
+        // there would be a different bug and is not what this is looking for.
+        const ahead = (x - eye.x) * Math.cos(forward) + (y - eye.y) * Math.sin(forward);
+        if (ahead <= 0) continue;
+        if (visibleFrom(this.world.drawn, eye.x, eye.y, x, y)) continue;
+        leaks.push({
+          x: Number(x.toFixed(2)), y: Number(y.toFixed(2)), solid: this.world.blocksAt(x, y),
+          eyeDistance: Number(Math.hypot(x - eye.x, y - eye.y).toFixed(2)),
+          ...this.classifyLeak(eye.x, eye.y, x, y),
+        });
+      }
+    }
+    return { sampled, eye: { x: Number(eye.x.toFixed(2)), y: Number(eye.y.toFixed(2)) }, leaks };
+  }
+
   probeReport(centreX: number, centreY: number): { ghosts: number; rows: string[] } {
     const rows: string[] = [];
     let ghosts = 0;
@@ -3328,8 +3421,15 @@ export class OrekenoidGame {
         }
         return { left: mean(0.02, 0.45), right: mean(0.55, 0.98), lit, dark };
       },
+      lightAudit(step?: number) {
+        return game.lightAudit(step);
+      },
       probeReport(x: number, y: number) {
         return game.probeReport(x, y);
+      },
+      /** Chunks on screen with no shadow contour yet -- each one lets light through rock. */
+      get untracedChunks() {
+        return game.shadows.untracedChunks;
       },
       /** Is the shadow layer being drawn at all? */
       get shadowsVisible() {
@@ -3349,6 +3449,33 @@ export class OrekenoidGame {
           solid: game.world.solidAt(x, y),
           kind: game.world.cellAt(x, y)?.kind ?? null,
         };
+      },
+      /**
+       * Somewhere near here that is open in the *drawn* world, or null.
+       *
+       * Warping blind put the lamp inside rock, where line of sight fails for everything and an audit
+       * reads the whole viewport as a leak. Anything measuring the shadows has to stand in the open
+       * first.
+       */
+      openNear(x: number, y: number) {
+        const clear = (px: number, py: number) => {
+          if (game.world.blocksAt(px, py)) return false;
+          for (let i = 0; i < 8; i++) {
+            const angle = (i / 8) * Math.PI * 2;
+            if (game.world.blocksAt(px + Math.cos(angle) * 0.8, py + Math.sin(angle) * 0.8)) return false;
+          }
+          return true;
+        };
+        if (clear(x, y)) return { x, y };
+        for (let radius = 0.5; radius <= 18; radius += 0.5) {
+          for (let i = 0; i < 32; i++) {
+            const angle = (i / 32) * Math.PI * 2;
+            const px = x + Math.cos(angle) * radius;
+            const py = y + Math.sin(angle) * radius;
+            if (clear(px, py)) return { x: Number(px.toFixed(2)), y: Number(py.toFixed(2)) };
+          }
+        }
+        return null;
       },
       warpTo(x: number, y: number) {
         game.player.x = x * CELL;
@@ -3475,4 +3602,18 @@ export class OrekenoidGame {
       },
     };
   }
+}
+
+/** Even-odd point-in-polygon over a flat `[x, y, ...]` ring, for the leak classifier. */
+function pointInQuad(polygon: number[], x: number, y: number): boolean {
+  let hit = false;
+  const count = polygon.length / 2;
+  for (let i = 0, j = count - 1; i < count; j = i++) {
+    const xi = polygon[i * 2];
+    const yi = polygon[i * 2 + 1];
+    const xj = polygon[j * 2];
+    const yj = polygon[j * 2 + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
 }

@@ -68,7 +68,9 @@ export function drawBounder(display: BounderDisplay, creature: Creature): void {
   display.body.visible = !airborne;
   if (airborne) {
     display.ball.rotation = Math.atan2(creature.vy, creature.vx);
-    display.ball.tint = creature.hitFlash > 0 ? 0xffffff : 0xffffff;
+    // Brighter once the machine has touched it, because that is the one thing the player is waiting
+    // to see: this one is going to land hurt.
+    display.ball.alpha = creature.deflected ? 1 : 0.82;
     return;
   }
   const curl = creature.state === "coil" ? Math.min(1, creature.tell)

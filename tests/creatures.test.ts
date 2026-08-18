@@ -204,23 +204,34 @@ describe("the exchange", () => {
     // A wall east of the launch. It has to stop dead against it, not rebound.
     const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
     const creature = airborne();
-    // Measured at the landing itself. Left running it walks off again, which is correct and would
-    // make this a test about the crawl.
-    let landings = 0;
-    for (let elapsed = 0; elapsed < 2 && landings === 0; elapsed += DT) {
-      landings += stepCreature(creature, walled, null, DT).landed ? 1 : 0;
+    // Measured at the moment it leaves the air. Left running it walks off again, which is correct and
+    // would make this a test about the crawl.
+    for (let elapsed = 0; elapsed < 2 && creature.state === "hurl"; elapsed += DT) {
+      stepCreature(creature, walled, null, DT);
     }
-    expect(landings).toBe(1);
     expect(creature.state).not.toBe("hurl");
     // Stopped, and pressed against the wall rather than somewhere back the way it came.
     expect(Math.hypot(creature.vx, creature.vy)).toBeCloseTo(0, 5);
     expect(creature.x).toBeGreaterThan(44);
   });
 
-  it("takes exactly one hit for landing, whatever it hit", () => {
+  it("takes nothing from a landing the machine never touched", () => {
+    // The rock is where it stops, not what hurts it. If every landing cost a hit point, three dodges
+    // would kill one on their own and the paddle would be decoration.
     const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
     const creature = airborne();
-    run(creature, walled, 2, () => null);
+    const result = run(creature, walled, 2, () => null);
+    expect(result.landed).toBe(0);
+    expect(creature.hp).toBe(BOUNDER.hp);
+  });
+
+  it("takes one hit for a landing the paddle sent it into", () => {
+    const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
+    const creature = airborne();
+    deflectCreature(creature, 0, 0, FEEL.englishCurve, FIELD.minOffNormal);
+    expect(creature.deflected).toBe(true);
+    const result = run(creature, walled, 2, () => null);
+    expect(result.landed).toBe(1);
     expect(creature.hp).toBe(BOUNDER.hp - 1);
   });
 
@@ -245,13 +256,14 @@ describe("the exchange", () => {
     )).toBe(true);
   });
 
-  it("dies on its third landing, and reports it", () => {
+  it("dies on the third landing the machine sent it into, and reports it", () => {
     const walled: SolidityOracle = { solidAt: (x, y) => y >= 30 || x >= 46 };
     const creature = airborne();
     let killed = 0;
     for (let launch = 0; launch < BOUNDER.hp; launch++) {
       creature.state = "hurl";
       creature.timer = BOUNDER.hurlSeconds;
+      creature.deflected = true;
       creature.x = 40;
       creature.y = 28;
       creature.vx = BOUNDER.hurlSpeed;
