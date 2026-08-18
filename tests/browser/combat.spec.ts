@@ -265,3 +265,53 @@ test("the drawn world behind the paddle is dark", async ({ page }) => {
   const facingWest = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.shadowMask());
   expect(facingWest.left, "in front of the face once turned").toBeGreaterThan(facingWest.right + 60);
 });
+
+test("a claim is lit, and the cavern around it is not", async ({ page }) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await intoCaverns(page);
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.setSpawning(false));
+
+  await page.keyboard.press("KeyF");
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__.state.arena),
+    null, { timeout: 15_000 });
+  await page.waitForFunction(() => !(window as unknown as Win).__OREKENOID__.state.cameraTransition,
+    null, { timeout: 25_000 });
+  await page.waitForTimeout(500);
+
+  // The regression this exists for: committing a claim used to switch the dark off entirely, which
+  // lit the whole mine and was the most jarring transition in the game.
+  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.shadowsVisible)).toBe(true);
+
+  const mask = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.shadowMask());
+  // Both states present: the board and whatever it opens onto are lit, and the rock around it is not.
+  // Either extreme means the mask has stopped meaning anything -- all lit is the old bug, all dark
+  // would have taken the board with it.
+  expect(mask.lit, "some of the world is lit").toBeGreaterThan(0);
+  expect(mask.dark, "some of the world is not").toBeGreaterThan(0);
+  expect(mask.dark / (mask.lit + mask.dark), "a real share of it is dark").toBeGreaterThan(0.1);
+  expect(errors).toEqual([]);
+});
+
+test("the dark covers the screen corners through a rotated view", async ({ page }) => {
+  test.setTimeout(180_000);
+  await intoCaverns(page);
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.setSpawning(false));
+  await page.keyboard.press("KeyF");
+  await page.waitForFunction(() => !(window as unknown as Win).__OREKENOID__.state.cameraTransition,
+    null, { timeout: 25_000 });
+
+  // Held at 45 degrees, the worst case: the mask is a world-space rect, so a region sized off the
+  // viewport's width and height rather than its diagonal leaves the corners of a turned view
+  // unmasked and the dark visibly clips to a box.
+  await page.evaluate(() => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    const pin = () => { hook.game.camera.rotation = Math.PI / 4; requestAnimationFrame(pin); };
+    pin();
+  });
+  await page.waitForTimeout(700);
+  const mask = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.shadowMask());
+  expect(mask.lit).toBeGreaterThan(0);
+  expect(mask.dark).toBeGreaterThan(0);
+});

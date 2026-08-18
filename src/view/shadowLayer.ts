@@ -58,6 +58,8 @@ export class ShadowLayer {
   /** World-space shadow geometry. Never added to the stage -- only rendered into the texture. */
   private readonly geometry = new Graphics();
   private readonly cap = new Graphics();
+  /** Drawn last and in white: ground that is lit whatever the geometry says. */
+  private readonly exempt = new Graphics();
   private readonly offscreen = new Container();
   private texture: RenderTexture;
   private readonly sprite: Sprite;
@@ -72,7 +74,7 @@ export class ShadowLayer {
   lastTracedFaces = 0;
 
   constructor(private readonly world: VisualField, private readonly renderer: Renderer) {
-    this.offscreen.addChild(this.geometry, this.cap);
+    this.offscreen.addChild(this.geometry, this.cap, this.exempt);
     this.texture = RenderTexture.create({ width: 2, height: 2 });
     this.sprite = new Sprite(this.texture);
     // Multiply, so the texture darkens what is already drawn rather than painting over it.
@@ -141,6 +143,16 @@ export class ShadowLayer {
     halfHeight: number,
     /** Direction the paddle's face points, in radians. Everything behind it is unlit. */
     forward: number,
+    /**
+     * Ground to light regardless, as a flat ring of world-pixel points, or null.
+     *
+     * This is the claim's own board. A paddle at the near edge of a fresh claim is looking directly
+     * into solid rock, so cast honestly the board would be almost entirely black -- and the board is
+     * the play space. Lighting it is not a cheat about the geometry, it is a statement that the
+     * excavation is lit while it is being worked; the rock *around* it still goes dark, and light
+     * still spills out wherever the claim genuinely opens onto cavern the paddle can see.
+     */
+    exempt: number[] | null,
   ): void {
     const geometry = this.geometry;
     geometry.clear();
@@ -171,6 +183,8 @@ export class ShadowLayer {
       geometry.poly(points).fill({ color: 0x000000, alpha: 1 });
     }
     this.drawFacing(eyeX, eyeY, forward);
+    this.exempt.clear();
+    if (exempt && exempt.length >= 6) this.exempt.poly(exempt).fill({ color: 0xffffff, alpha: 1 });
 
     // Squeeze the visible world rect into the texture. Rotation is deliberately not handled: this
     // layer only runs in survey, where the camera never rotates.

@@ -1906,27 +1906,57 @@ export class OrekenoidGame {
   /**
    * Rebuild the shadows.
    *
-   * Survey only. Inside a claim the camera is pinned to a board that has its own lighting logic in
-   * the brick art, and dropping a cavern shadow across it would be darkening a room the drone is
-   * not standing in.
+   * Runs in a claim as well as out in the caverns. It used to be survey-only, which meant committing
+   * a claim switched the dark off and lit the whole mine -- the most jarring transition in the game,
+   * and a reversal of the one rule the lighting has.
    *
-   * There is no memory of ground already walked drawn into the world: what the drone cannot see is
-   * black. The mine's memory is the Atlas, which is what the Atlas is for.
+   * There is no memory of ground already walked drawn into the world: what cannot be seen is black.
+   * The mine's memory is the Atlas, which is what the Atlas is for.
    */
   private updateLight(): void {
-    const inWorld = this.started && this.mode === "survey";
+    const inWorld = this.started && (this.mode === "survey" || this.mode === "play");
     this.shadows.container.visible = inWorld;
     if (!inWorld) return;
-    const eyeX = this.player.x / CELL;
-    const eyeY = this.player.y / CELL;
+
+    // Whose lamp, and which way it faces. Out in the caverns it is the drone's. Inside a claim it is
+    // the same lamp on the same machine, now sitting at the near edge of the board and facing into it,
+    // because the paddle *is* the drone's working face.
+    const arena = this.arena;
+    const eye = arena
+      ? this.world.localToWorld(arena.paddle.u, 0.2, arena)
+      : { x: this.player.x / CELL, y: this.player.y / CELL };
+    const forward = (arena ? arena.angle : this.player.heading) - Math.PI / 2;
+
+    // A square region sized off the viewport's *diagonal*, because committing a claim rotates the
+    // camera into paddle-down play. The mask is a world-space rect that turns with the world, so
+    // rotation does not skew it -- it only leaves the corners of a turned view uncovered, and the dark
+    // would visibly clip to a box through the whole transition.
     const zoom = this.camera.zoom || 1;
-    const halfWidth = view.width / (CELL * zoom) * 0.5 + 3;
-    const halfHeight = view.height / (CELL * zoom) * 0.5 + 3;
+    const reach = Math.hypot(view.width, view.height) * 0.5 / (CELL * zoom) + 3;
     this.shadows.resize(view.width, view.height);
     this.shadows.update(
-      eyeX, eyeY, this.cameraFocus.x / CELL, this.cameraFocus.y / CELL,
-      halfWidth, halfHeight, this.player.heading - Math.PI / 2,
+      eye.x, eye.y, this.camera.focus.x / CELL, this.camera.focus.y / CELL,
+      reach, reach, forward, this.boardOutline(),
     );
+  }
+
+  /**
+   * The claim's board, as a world-pixel ring, or null when there is no claim.
+   *
+   * A shade wider than the frame on every side, so shadow never creeps in over the outermost bricks --
+   * they are part of the board and have to stay as readable as the rest of it.
+   */
+  private boardOutline(): number[] | null {
+    const arena = this.arena;
+    if (!arena) return null;
+    const margin = 0.6;
+    const half = arena.width / 2 + margin;
+    return [
+      this.world.localToWorld(-half, -margin, arena),
+      this.world.localToWorld(half, -margin, arena),
+      this.world.localToWorld(half, arena.depth + margin, arena),
+      this.world.localToWorld(-half, arena.depth + margin, arena),
+    ].flatMap((corner) => [corner.x * CELL, corner.y * CELL]);
   }
 
   private updateSurvey(dt: number): void {
@@ -3216,7 +3246,19 @@ export class OrekenoidGame {
           }
           return count ? Math.round(total / count) : 0;
         };
-        return { left: mean(0.02, 0.45), right: mean(0.55, 0.98) };
+        let lit = 0;
+        let dark = 0;
+        for (let y = 0; y < height; y += 4) {
+          for (let x = 0; x < width; x += 4) {
+            if (data[(y * width + x) * 4] > 200) lit++;
+            else dark++;
+          }
+        }
+        return { left: mean(0.02, 0.45), right: mean(0.55, 0.98), lit, dark };
+      },
+      /** Is the shadow layer being drawn at all? */
+      get shadowsVisible() {
+        return game.shadows.container.visible;
       },
       /** Hold the ambient spawner, so a test can measure one exchange rather than the whole mine. */
       setSpawning(on: boolean) {

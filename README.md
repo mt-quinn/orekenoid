@@ -94,6 +94,12 @@ silhouette of a chamber you are standing in the dark half of stays readable. **C
 they are hidden outright, because one at a third brightness is one you can still see. That is the
 whole trade the layer makes.
 
+The dark does not switch off for a claim. Inside one the eye moves to the paddle, sitting at the near
+edge of the board and facing into it, so the same lamp lights the same way. The board itself is exempt
+and always lit — it is the play space, and a paddle looking into fresh rock would otherwise black it
+out — but the cavern around it goes dark, and light spills out wherever the claim genuinely opens onto
+ground the paddle can see.
+
 ### The Atlas
 
 Press `M`. The whole mine fits one screen: 240 × 144 cells at 5 px each, so there is nothing to pan.
