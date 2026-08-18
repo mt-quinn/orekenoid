@@ -67,10 +67,15 @@ The ball is a charge, not an inventory. One is out at a time; when it is lost, r
 of life, the emitter builds another, and how long that takes is the **emitter station's grade**. That
 gap is the combat progression: attacking lights the room, reloading blinds you.
 
-Light is binary and hard-edged, cast by recursive shadowcasting from solid cells. Ground is **lit**
-(drawn in full, with whatever is standing in it), **remembered** (dim geometry, no promises about
-what is there now), or **unseen** (black). Excavation therefore carves sightlines — a claim you cut
-last hour is a window.
+Darkness is Teleglitch's, and works the way Teleglitch's does: **black polygons extruded from wall
+faces away from the drone.** There is no lamp and no radius. A corridor is visible all the way down
+it, and what hides a thing is never how far off it is, only what is standing in between — so you are
+hidden from by *shape*, and excavation carves sightlines. A claim you cut last hour is a window.
+
+Shadow is opaque: what the drone cannot see is black, with no memory of it drawn into the world. The
+mine's memory is the Atlas, which is what the Atlas is for. The one thing that ever imposes a
+distance is a **Douser** on the hull, which closes sight down to a few cells — the radius is the
+emergency, never the everyday.
 
 Three creatures, differentiated by what they take from you rather than by how they die. All three
 die the same way: hit them with the ball, enough times.
@@ -79,7 +84,7 @@ die the same way: hit them with the ball, enough times.
 |---|---|---|
 | **Grinder** | Standing still | Locks its aim, paints the lane in red, and charges. Dodge and it slams into rock, which is the window to hit it. |
 | **Spitter** | Free positioning | Holds its range, never closes, and lobs slow globs. Globs die on rock and to the ball. |
-| **Douser** | Your light | Ignores the hull, latches on, and smothers the lamp. Shaking it off means banking the ball back into your own machine. |
+| **Douser** | Your light | Ignores the hull, latches on, and closes your sight to a few cells. Shaking it off means banking the ball back into your own machine. |
 
 The rule the dark cannot break: **every attack is its own light source.** Darkness hides where
 something is, never what it is about to do.

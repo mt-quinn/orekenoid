@@ -21,7 +21,6 @@ import {
   type Creature, type CreatureKind,
 } from "./creatures";
 import { hasLineOfSight } from "./sight";
-import type { LightSource } from "../light/field";
 import {
   createCreatureDisplay,
   createFieldBallDisplay,
@@ -85,12 +84,10 @@ export const COMBAT = {
    * precision.
    */
   droneHitRadius: 0.8,
-  /** How far a ball in flight lights the rock around it. */
-  ballLightRadius: 6.5,
-  /** How far a creature's own tell carries. Smaller than the ball: it reveals itself, not the room. */
-  tellLightRadius: 4.5,
-  /** A glob in flight lights its own way, so an incoming shot is always visible. */
-  globLightRadius: 3.4,
+  /** Largest simulation bite. Above this a fast ball can step past something it should have hit. */
+  maxStep: 0.033,
+  /** Most real time one frame may consume, so a stalled tab drops time instead of catching up. */
+  maxCatchUp: 0.25,
 } as const;
 
 /**
@@ -250,16 +247,30 @@ export class FieldCombat {
   ): CombatEvents {
     const events = noEvents();
     if (dt <= 0) return events;
-    const step = Math.min(0.033, dt);
-    if (this.recharge > 0) {
-      this.recharge = Math.max(0, this.recharge - step);
-      if (this.recharge === 0) events.recharged = true;
-    }
 
-    this.updateBalls(step, events);
-    this.updateCreatures(step, drone, events, isLit);
-    this.updateGlobs(step, drone, events);
-    if (drone) this.maintainPopulation(step, drone);
+    // Substepped, not clamped.
+    //
+    // A single `min(0.033, dt)` keeps the integration stable and quietly runs the whole simulation
+    // in slow motion on any machine that cannot hold 30fps: at 13fps a frame is 77ms, only 33ms of
+    // it gets simulated, and everything with a clock -- the recharge above all -- takes twice as
+    // long in wall-clock seconds as the number the player was shown. Consuming the full frame in
+    // stable-sized bites keeps game time and real time the same thing.
+    //
+    // The total is capped so returning to a stalled tab catches up by dropping time rather than by
+    // teleporting every creature through a second of movement at once.
+    let remaining = Math.min(dt, COMBAT.maxCatchUp);
+    while (remaining > 1e-6) {
+      const step = Math.min(COMBAT.maxStep, remaining);
+      remaining -= step;
+      if (this.recharge > 0) {
+        this.recharge = Math.max(0, this.recharge - step);
+        if (this.recharge === 0) events.recharged = true;
+      }
+      this.updateBalls(step, events);
+      this.updateCreatures(step, drone, events, isLit);
+      this.updateGlobs(step, drone, events);
+      if (drone) this.maintainPopulation(step, drone);
+    }
     return events;
   }
 
@@ -411,46 +422,6 @@ export class FieldCombat {
       return;
     }
     if (fallback) this.spawn(fallback.x, fallback.y, this.random() * Math.PI * 2, this.rollKind());
-  }
-
-  /**
-   * What this module is currently putting light into the world.
-   *
-   * The ball is a moving lamp, which is the rhythm the whole system runs on: attacking lights the
-   * room, reloading blinds you. A creature mid-tell lights itself, because the one rule combat in
-   * the dark cannot break is that every attack is its own light source -- the dark may hide where
-   * something is, never what it is about to do.
-   */
-  lights(): LightSource[] {
-    const sources: LightSource[] = [];
-    for (const entry of this.balls) {
-      sources.push({ x: entry.ball.x, y: entry.ball.y, radius: COMBAT.ballLightRadius, strength: 0.92 });
-    }
-    for (const glob of this.globs) {
-      sources.push({ x: glob.x, y: glob.y, radius: COMBAT.globLightRadius, strength: 0.6 });
-    }
-    for (const entry of this.creatures) {
-      const creature = entry.creature;
-      // A Douser glows whenever it is closing or latched, and a latched one is the only light the
-      // player has left -- which is the joke, and the reason it is the scariest thing in the mine.
-      if (creature.kind === "douser" && (creature.state === "charge" || creature.state === "latched")) {
-        sources.push({
-          x: creature.x, y: creature.y,
-          radius: COMBAT.tellLightRadius * (0.4 + creature.tell * 0.6),
-          strength: 0.5,
-        });
-        continue;
-      }
-      if (creature.state !== "wind" && creature.state !== "charge") continue;
-      const heat = creature.state === "charge" ? 1 : 0.35 + creature.tell * 0.65;
-      sources.push({
-        x: creature.x,
-        y: creature.y,
-        radius: COMBAT.tellLightRadius * heat,
-        strength: 0.55 * heat,
-      });
-    }
-    return sources;
   }
 
   /** Draw a species from the weighted mix. */

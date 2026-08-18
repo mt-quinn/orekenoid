@@ -28,8 +28,8 @@ import { ballSpeed, createBall, stepBall, type BallStepEvents } from "./physics"
 import { COMBAT, FieldCombat, rechargeSecondsFor } from "./combat/fieldCombat";
 import { DOUSER, type CreatureKind } from "./combat/creatures";
 import { FIELD } from "./combat/ballField";
-import { LightField, type LightSource } from "./light/field";
-import { LightMask } from "./view/lightMask";
+import { ShadowLayer } from "./view/shadowLayer";
+import { visibleFrom } from "./light/shadow";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
@@ -91,13 +91,15 @@ const AUTOSAVE_SECONDS = 20;
 const DISCOVERY_RADIUS = 9;
 
 /**
- * How far the drone's own lamp reaches, in cells.
+ * How far sight reaches with the lamp intact, in cells.
  *
- * A shade under the Atlas discovery radius on purpose. The map records slightly more than the eye
- * can see at any instant, which is the difference between a map and a window -- and it means the
- * player is always working at the edge of their own light rather than at the edge of their map.
+ * Past the corner of the viewport at every framing, so in ordinary play it is not a limit at all
+ * and only geometry hides anything. It exists as the number a Douser drags down.
  */
-const LAMP_RADIUS = 8;
+const UNSMOTHERED_REACH = 46;
+
+/** What a Douser on the hull leaves the drone with. */
+const SMOTHERED_REACH = 3.4;
 
 /** Cornerstones grant verbs. Nothing else in the game does. */
 const CORNERSTONE_VERBS: Record<string, VerbId> = {
@@ -340,9 +342,7 @@ export class OrekenoidGame {
    * paddle on a board -- so nothing out here has anything to charge at.
    */
   readonly combat: FieldCombat;
-  /** What the drone can see right now, and what it remembers seeing. */
-  readonly light: LightField;
-  private lightMask!: LightMask;
+  private shadows!: ShadowLayer;
   /** Rate limit on rebound sparks, so a ball rattling down a corridor does not strobe. */
   private bounceCooldown = 0;
   /** Grace after a ram, so one charge costs one hit rather than one hit per frame of contact. */
@@ -372,7 +372,6 @@ export class OrekenoidGame {
     this.effectLayer.addChild(this.crumbleEdge);
     this.deploymentPreviews = new DeploymentPreviews(this.world, this.terrain);
     this.combat = new FieldCombat(this.world, this.world.generated.seed);
-    this.light = new LightField(this.world);
     this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.framePreview.addChild(this.frameWash, this.frameGrid, this.frameScan, this.frameReturns);
     this.frameScan.filters = [new BlurFilter({ strength: 5, quality: 2 })];
@@ -501,13 +500,13 @@ export class OrekenoidGame {
     this.app.canvas.setAttribute("aria-label", "Orekanoid");
     // Above the world and the bay: these are the player's own hands, and nothing occludes them.
     this.app.stage.addChild(this.worldRoot, this.gantry.container, this.touchControls.container);
-    this.lightMask = new LightMask();
+    this.shadows = new ShadowLayer(this.world);
     // Over everything that is *in* the mine, under everything that is an instrument. The survey
     // frame and the coach are read-outs rather than objects in the world, and going dark must never
     // take an instrument off the player.
     this.worldRoot.addChild(
       this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer,
-      this.actorLayer, this.lightMask.container, this.framePreview, this.coach.container,
+      this.actorLayer, this.shadows.container, this.framePreview, this.coach.container,
     );
     this.terrainLayer.addChild(this.terrain.container);
     buildFarGeology(this.farLayer);
@@ -1917,30 +1916,40 @@ export class OrekenoidGame {
   }
 
   /**
-   * Rebuild the light, then push it to the mask.
+   * Rebuild the shadows.
    *
    * Survey only. Inside a claim the camera is pinned to a board that has its own lighting logic in
    * the brick art, and dropping a cavern shadow across it would be darkening a room the drone is
    * not standing in.
+   *
+   * There is no memory of ground already walked drawn into the world: what the drone cannot see is
+   * black. The mine's memory is the Atlas, which is what the Atlas is for.
    */
   private updateLight(): void {
     const inWorld = this.started && this.mode === "survey";
-    this.lightMask.container.visible = inWorld;
+    this.shadows.container.visible = inWorld;
     if (!inWorld) return;
-    const sources: LightSource[] = [{
-      x: this.player.x / CELL,
-      y: this.player.y / CELL,
-      radius: LAMP_RADIUS * this.lampScale,
-      strength: this.lampScale > 0.5 ? 1 : 0.75,
-    }];
-    sources.push(...this.combat.lights());
-    this.light.compute(sources);
-    // The upload is bounded to what the camera can actually show, plus a margin for the rotation
-    // the survey frame allows.
+    const eyeX = this.player.x / CELL;
+    const eyeY = this.player.y / CELL;
     const zoom = this.camera.zoom || 1;
     const halfWidth = view.width / (CELL * zoom) * 0.5 + 3;
     const halfHeight = view.height / (CELL * zoom) * 0.5 + 3;
-    this.lightMask.update(this.light, this.cameraFocus.x / CELL, this.cameraFocus.y / CELL, halfWidth, halfHeight);
+    this.shadows.update(eyeX, eyeY, this.cameraFocus.x / CELL, this.cameraFocus.y / CELL, halfWidth, halfHeight);
+    this.shadows.setLampCap(this.lampReach());
+  }
+
+  /**
+   * How far the drone can see, in cells, before the dark closes in regardless of geometry.
+   *
+   * Normally past the far side of the screen, which is to say: no limit at all, and sight is
+   * decided entirely by what is standing in the way. A Douser on the hull drags it down to a few
+   * cells, and *that* is what the creature takes -- the radius exists as the emergency, not as the
+   * everyday. Building the everyday out of a radius was the mistake this replaces: it made the mine
+   * a lantern game, where you are hidden from by distance, instead of a game where you are hidden
+   * from by shape.
+   */
+  private lampReach(): number {
+    return SMOTHERED_REACH + (UNSMOTHERED_REACH - SMOTHERED_REACH) * this.lampScale;
   }
 
   private updateSurvey(dt: number): void {
@@ -2045,8 +2054,12 @@ export class OrekenoidGame {
     const muzzle = this.chassis.paddleWidth * 0.5 + FIELD.radius + 0.35;
     const x = this.player.x / CELL + Math.cos(heading) * muzzle;
     const y = this.player.y / CELL + Math.sin(heading) * muzzle;
-    if (this.combat.fire(x, y, heading)) this.audio.play(SOUNDS.fieldFire);
-    else this.audio.play(SOUNDS.markRefused);
+    if (this.combat.fire(x, y, heading)) {
+      this.audio.play(SOUNDS.fieldFire);
+      this.updateUI();
+    } else {
+      this.audio.play(SOUNDS.markRefused);
+    }
   }
 
   /**
@@ -2061,7 +2074,10 @@ export class OrekenoidGame {
     // emitter is felt on the very next volley.
     this.combat.rechargeSeconds = rechargeSecondsFor(this.economy.stationGrades(this.chassis.id).emitter ?? 0);
     const drone = { x: this.player.x / CELL, y: this.player.y / CELL, radius: COMBAT.droneHitRadius };
-    const events = this.combat.update(dt, drone, (x, y) => this.light.isLit(x, y));
+    const reach = this.lampReach();
+    const events = this.combat.update(dt, drone, (x, y) => (
+      Math.hypot(x - drone.x, y - drone.y) <= reach && visibleFrom(this.world, drone.x, drone.y, x, y)
+    ));
     this.bounceCooldown = Math.max(0, this.bounceCooldown - dt);
     this.ramCooldown = Math.max(0, this.ramCooldown - dt);
 
@@ -2097,7 +2113,14 @@ export class OrekenoidGame {
       this.audio.play(SOUNDS.fieldBounce);
       this.effects.spawnShards(spent.x * CELL, spent.y * CELL, PALETTE.spore, 3, 0.6, false);
     }
-    if (events.recharged) this.audio.play(SOUNDS.sequentialBall);
+    if (events.recharged) {
+      this.audio.play(SOUNDS.sequentialBall);
+      // The HUD is drawn on events rather than every frame, and the emitter coming back up is an
+      // event nothing else announces. Without this the readout sat on CHARGING until some unrelated
+      // thing -- a toast, a hit, banking -- happened to refresh it, so a ready emitter could read as
+      // a dead one for as long as the mine stayed quiet.
+      this.updateUI();
+    }
 
     // The lamp. One Douser is enough to take it; more do not take it faster, because the state the
     // player has to read is binary -- the light is being held down, or it is coming back.

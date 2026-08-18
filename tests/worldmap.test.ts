@@ -7,7 +7,11 @@ import { BASE_LAYERS, largestComponent, rasterizeWorld, reachableFromLanding } f
 const SEEDS = ["bounceworld-01", "seed-two", "seed-three"];
 
 describe("world inspector raster", () => {
-  it("paints every cell opaquely, on every layer", () => {
+  // Rasterising every base layer of a full 240x144 world is genuinely several seconds of work, and
+  // it sat a hair under the 5s default -- so it passed alone and failed intermittently in a full
+  // suite, which is the worst way for a test to be slow. Given room rather than made faster,
+  // because the scan is the assertion: anything less than every cell would not be the same test.
+  it("paints every cell opaquely, on every layer", { timeout: 30_000 }, () => {
     // A transparent or missing pixel would read as void and quietly misrepresent the world,
     // which is the one thing an inspection tool must never do.
     const world = generateWorld("bounceworld-01");

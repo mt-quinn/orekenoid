@@ -15,6 +15,38 @@ function advance(combat: FieldCombat, seconds: number, drone = { x: 60, y: 60, r
   return events;
 }
 
+describe("simulation time", () => {
+  it("keeps game time honest on a machine that cannot hold the frame rate", () => {
+    // The bug this guards: clamping a long frame to one 33ms step instead of consuming it runs the
+    // whole simulation in slow motion, so a recharge the player was told is 1.5s takes over three
+    // real seconds at 13fps. Two runs of the same wall-clock duration, one at 60fps and one at
+    // 13fps, must spend the same amount of the recharge.
+    const fast = new FieldCombat(OPEN, 20);
+    const slow = new FieldCombat(OPEN, 20);
+    for (const combat of [fast, slow]) {
+      combat.rechargeSeconds = 1.5;
+      combat.fire(60, 60, 0);
+      combat.recall();
+    }
+    const drone = { x: 60, y: 60, radius: 0.8 };
+    // Exact step counts rather than an accumulating `elapsed < 1`, which floating point turns into
+    // a fourteenth frame for the slow run and makes the test disagree with itself.
+    for (let frame = 0; frame < 60; frame++) fast.update(1 / 60, drone);
+    for (let frame = 0; frame < 13; frame++) slow.update(1 / 13, drone);
+    expect(slow.rechargeRemaining).toBeCloseTo(fast.rechargeRemaining, 1);
+  });
+
+  it("drops time rather than catching up after a long stall", () => {
+    const combat = new FieldCombat(OPEN, 21);
+    combat.rechargeSeconds = 10;
+    combat.fire(60, 60, 0);
+    combat.recall();
+    // Coming back to a tab that was hidden for a minute must not run a minute of simulation.
+    combat.update(60, { x: 60, y: 60, radius: 0.8 });
+    expect(combat.rechargeRemaining).toBeGreaterThan(9.5);
+  });
+});
+
 describe("the emitter charge", () => {
   it("grades the recharge from the fitted emitter, and clamps outside the ladder", () => {
     expect(rechargeSecondsFor(0)).toBe(EMITTER_RECHARGE[0]);
