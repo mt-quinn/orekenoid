@@ -63,8 +63,12 @@ describe("generator contract", () => {
   it.each(SEEDS)("places every guaranteed Landing feature [%s]", (seed) => {
     const world = generateWorld(seed);
     expect(world.report.missingLandingFeatures).toEqual([]);
-    expect(world.landingFeatures).toHaveLength(8);
-    expect(world.landingFeatures.map((feature) => feature.id)).toContain("bank");
+    // Six, not eight. Three of the old features were teaching faces indistinguishable from ordinary
+    // rock, and the door they were sat behind did not exist.
+    expect(world.landingFeatures).toHaveLength(6);
+    for (const id of ["refitBay", "bank", "theSeal", "theIsland", "overloadFace", "theDrop"]) {
+      expect(world.landingFeatures.map((feature) => feature.id)).toContain(id);
+    }
   });
 
   it.each(SEEDS)("carries a claimable rare reagent seam in every ecotone [%s]", (seed) => {
@@ -184,11 +188,14 @@ describe("generator contract", () => {
     }
   });
 
-  it("puts the Banked Face's slate on non-liable, iron-bearing stone", () => {
+  it("puts the island's slate on non-liable, iron-bearing stone", () => {
+    // The Banked Face taught this and nobody could tell it apart from the rock around it. The lesson
+    // moved to the ore island in the Gallery, which is the same lesson attached to something the player
+    // has a reason to look at: slate is the best iron here and costs nothing to leave behind.
     const world = generateWorld("bounceworld-01");
     let slate = 0;
-    for (let y = 12; y <= 26; y++) {
-      for (let x = 26; x <= 38; x++) {
+    for (let y = 20; y <= 30; y++) {
+      for (let x = 44; x <= 58; x++) {
         const cell = world.cells[y][x];
         // Carved-out cells keep their material kind but hold nothing.
         if (cell.kind !== "slate" || !cell.solid) continue;
@@ -203,9 +210,11 @@ describe("generator contract", () => {
 
   it("exposes required nodes and cornerstone sites for navigation", () => {
     const world = generateWorld("bounceworld-01");
-    expect(REQUIRED_NODES.length).toBeGreaterThanOrEqual(6);
+    // Five. The survey-stakes node used to carve a cave at (36,21), which the hand-drawn Gallery now
+    // occupies -- the stakes stand in the Gallery, so the node had nothing left to guarantee.
+    expect(REQUIRED_NODES.length).toBeGreaterThanOrEqual(5);
     expect(world.cornerstones).toHaveLength(3);
     expect(bandAt(world.start.y)).toBe(1);
-    expect(LANDING_FEATURES.map((feature) => feature.id)).toContain("bankedFace");
+    expect(LANDING_FEATURES.map((feature) => feature.id)).toContain("theSeal");
   });
 });

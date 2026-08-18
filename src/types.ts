@@ -11,7 +11,17 @@ export interface Vec2 { x: number; y: number }
  * there is no separate list of what is available.
  */
 export interface TutorialStep {
-  id: "move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas" | "bank";
+  id: "move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas" | "bank" | "face" | "liability";
+  /**
+   * Other controls this rung hands over at the same time.
+   *
+   * Turning the frame and committing it are one act -- you cannot fit a frame to a diagonal without
+   * doing both -- and so are aiming a serve and serving it, since the aim only does anything before
+   * the ball is live. Split across two rungs each, the sequence asked for a keystroke twice to teach
+   * one idea, which is most of why nine rungs felt like nine things to remember. `also` lets one rung
+   * own both controls without the input gate and the prompt drifting apart.
+   */
+  also?: Array<"move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas" | "bank" | "face" | "liability">;
   keys: string;
   /**
    * The imperative, in the player's terms rather than the machine's.

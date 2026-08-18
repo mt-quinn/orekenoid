@@ -13,7 +13,7 @@ import { CELL, PALETTE, PROVINCE_PALETTE, WORLD_COLS, WORLD_ROWS } from "../conf
 import { flatPoints } from "../maths";
 import type { FrameGeometry, Vec2 } from "../types";
 import type { WorldModel } from "../world";
-import { BANK } from "../worldgen/landmarks";
+import { BANK, BAY_RECT } from "../worldgen/landmarks";
 
 /**
  * The floor of the mine, behind the terrain.
@@ -92,20 +92,29 @@ function drawHomeBeacon(layer: Container): void {
   glow.filters = [new BlurFilter({ strength: 36, quality: 3 })];
   layer.addChild(glow);
 
-  // A landing pad rather than concentric geology: squared off, with approach marks on the four
-  // sides, so up close it reads as somewhere built.
+  // Drawn to the bay's own rect, because the bay is a place and not a decoration.
+  //
+  // This used to be three concentric squares up to thirteen cells across, centred on the bank rather
+  // than on the recess -- so the drawn bay and the bay disagreed about both size and position, and the
+  // part that looked most like somewhere to fly into was solid rock. Now the art is derived from the
+  // same map cells that make the floor, so the two cannot drift apart again.
   const pad = new Graphics();
+  const left = BAY_RECT.x * CELL;
+  const top = BAY_RECT.y * CELL;
+  const width = BAY_RECT.width * CELL;
+  const height = BAY_RECT.height * CELL;
   for (let ring = 0; ring < 3; ring++) {
-    const radius = (3.2 + ring * 1.6) * CELL;
-    pad.rect(x - radius, y - radius, radius * 2, radius * 2)
-      .stroke({ width: 2, color: colour, alpha: 0.13 - ring * 0.03 });
+    const inset = ring * 0.34 * CELL;
+    pad.rect(left + inset, top + inset, width - inset * 2, height - inset * 2)
+      .stroke({ width: 2, color: colour, alpha: 0.2 - ring * 0.05 });
   }
-  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-    const inner = 2.1 * CELL;
-    const outer = 3.1 * CELL;
-    pad.moveTo(x + dx * inner, y + dy * inner)
-      .lineTo(x + dx * outer, y + dy * outer)
-      .stroke({ width: 3, color: colour, alpha: 0.3 });
+  // Approach marks on the open side only. The other three are wall, and a mark drawn into rock is an
+  // invitation to fly at it.
+  for (let step = 1; step < BAY_RECT.height; step++) {
+    const markY = top + step * CELL;
+    pad.moveTo(left + width, markY)
+      .lineTo(left + width + 0.7 * CELL, markY)
+      .stroke({ width: 3, color: colour, alpha: 0.26 });
   }
   pad.label = "landmark-refitBay";
   layer.addChild(pad);
@@ -115,7 +124,7 @@ function drawHomeBeacon(layer: Container): void {
     style: { fill: colour, fontSize: 24, fontWeight: "800", letterSpacing: 4 },
   });
   marker.anchor.set(0.5);
-  marker.position.set(x, (BANK.y - 5.5) * CELL);
+  marker.position.set(left + width / 2, (BAY_RECT.y - 1.4) * CELL);
   marker.alpha = 0.5;
   layer.addChild(marker);
 }

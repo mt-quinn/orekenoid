@@ -9,7 +9,8 @@ import { materialOf } from "../materials";
 import type { Cell } from "../types";
 import { facetAxisAt, materialFor, resourceFor } from "./assign";
 import { carveCaves, carveCorridor, openComponents, type CaveField, type OpenComponent } from "./caves";
-import { CORNERSTONES, LANDING, LANDING_FEATURES, REQUIRED_NODES, stampCornerstones, stampLanding } from "./landmarks";
+import { CORNERSTONES, LANDING, LANDING_FEATURES, REQUIRED_NODES, stampCornerstones } from "./landmarks";
+import { DROP, LANDING_REGION, stampLandingArea } from "./landing";
 import { bandAt, sampleRegion, type RegionSample } from "./regions";
 import { hashString, Rng } from "./rng";
 import { stampRooms, type RoomStampReport } from "./rooms";
@@ -64,7 +65,10 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
   const caves = carveCaves(seed, rng, REQUIRED_NODES.map((node) => ({ ...node })));
 
   // The Drop: an authored descent from the Landing into Band II.
-  carveCorridor(caves.open, LANDING.x, LANDING.y + 4, LANDING.x, 38, 2.1);
+  // Down from the foot of the authored shaft, not down from the Berth. The Landing seals itself and
+  // the Seal is the only way out of it, so a corridor dropped out of the Berth would be a second door
+  // nobody authored -- and the shaft below the Gallery would end in rock.
+  carveCorridor(caves.open, DROP.x, LANDING_REGION.y + LANDING_REGION.height - 2, DROP.x, 52, 2.1);
 
   // --- Classify and assign ------------------------------------------------
   const samples: RegionSample[][] = [];
@@ -112,7 +116,7 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
   const bandDensity = measureBandDensity(cells);
 
   // --- Stamp authored territory -------------------------------------------
-  stampLanding(cells, caves.open);
+  stampLandingArea(cells, caves.open);
   stampCornerstones(cells, caves.open);
 
   // --- Stamp rooms --------------------------------------------------------
@@ -121,7 +125,8 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
   // the repair passes, so a room that pinches a route shut gets reconnected rather
   // than orphaning part of the world.
   const structures = new StructureMap();
-  structures.reserve({ x: LANDING.x - 18, y: LANDING.y - 14, width: 40, height: 32 });
+  // The whole authored rectangle, so no room can land inside the hand-drawn opening.
+  structures.reserve({ ...LANDING_REGION });
   for (const site of CORNERSTONES) {
     structures.reserve({ x: site.x - 12, y: site.y - 10, width: 24, height: 20 });
   }
@@ -139,6 +144,19 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
   // carve anywhere they need to and would otherwise open a seam or a cache and hand the
   // player its reward for nothing.
   const protectedCells = new Set<number>();
+  // The hand-drawn Landing, protected from the repair passes below.
+  //
+  // Not decoration: the repairs carve wherever they like and `syncCellsFromOpen` then applies that
+  // openness to every unprotected cell, so a repair route would run straight through the Berth wall --
+  // and the re-stamp immediately afterwards would seal it again and strand whatever the route had just
+  // connected. That is what put 235 cells beyond reach on one seed. Protected, the repair has to find a
+  // way round the authored rectangle, which is the only kind of answer that survives the next stamp.
+  for (let y = LANDING_REGION.y; y < LANDING_REGION.y + LANDING_REGION.height; y++) {
+    for (let x = LANDING_REGION.x; x < LANDING_REGION.x + LANDING_REGION.width; x++) {
+      if (x < 0 || y < 0 || x >= WORLD_COLS || y >= WORLD_ROWS) continue;
+      protectedCells.add(cellIndex(x, y));
+    }
+  }
   for (const feature of rooms.features) {
     if (feature.marker !== "seam" && feature.marker !== "cache") continue;
     for (let oy = -1; oy <= 1; oy++) {
@@ -165,7 +183,7 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
   // world but left the report describing the damaged one, so `missingLandingFeatures`
   // named a feature that was present by the time anyone could look at it. Verification
   // has to run on the world that ships.
-  stampLanding(cells, caves.open);
+  stampLandingArea(cells, caves.open);
   stampCornerstones(cells, caves.open);
   // And mirror it into the openness grid. The stamps write cell solidity but only touch
   // `open` for the lander hull, so without this the two disagree -- and verification's
@@ -178,7 +196,7 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
 
   // Verification's own corridor repair can carve as well, on the rare seed where a
   // required node is unreachable. Idempotent, so simply assert the authored ground again.
-  stampLanding(cells, caves.open);
+  stampLandingArea(cells, caves.open);
   stampCornerstones(cells, caves.open);
 
   enforceInvariants(cells);

@@ -28,6 +28,7 @@ import { ballSpeed, createBall, stepBall, type BallStepEvents } from "./physics"
 import { FieldCombat } from "./combat/fieldCombat";
 import { metalForBand } from "./worldgen/assign";
 import { SHADOW, ShadowLayer } from "./view/shadowLayer";
+import { FIRST_BOUNDER, SEAL_CELLS, SEAL_CENTRE } from "./worldgen/landing";
 import { shadowQuad, visibleFrom } from "./light/shadow";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
@@ -59,7 +60,7 @@ import { ExpeditionView } from "./expeditionView";
 import { DeploymentPreviews } from "./deploymentPreviews";
 import type { Arena, Ball, Brick, Drop, FrameGeometry, Membrane, TutorialStep, Vec2 } from "./types";
 import { WorldModel } from "./world";
-import { BANK } from "./worldgen/landmarks";
+import { BANK, BAY } from "./worldgen/landmarks";
 import type { AtlasSite } from "./atlas";
 import {
   clearSave,
@@ -250,30 +251,34 @@ export class OrekenoidGame {
    * and it would be silly to hold the tutorial hostage to them.
    */
   readonly tutorial: TutorialStep[] = [
-    { id: "move", keys: "WASD / ARROWS", gesture: "DRAG · LEFT HALF", demo: "stick", label: "FLY THE DRONE", why: "Rock worth cutting is everywhere down here.", where: "survey", done: false },
-    { id: "aim", keys: "Q / E", gesture: "DRAG · RIGHT HALF", demo: "swipe", label: "TURN THE FRAME", why: "The frame is the rock you will cut.", where: "survey", done: false },
-    // The Atlas is how the mine becomes navigable at all, so it is taught rather than left to be
-    // found -- and taught out here, before the first claim. It used to come last, which put it
-    // after the claim had already started: the sequence asked the player to stop reading a live
-    // board and go and open a map, which is a strange thing to do in the middle of a rally.
-    { id: "atlas", keys: "M", gesture: "TAP ATLAS, TOP RIGHT", label: "OPEN THE ATLAS", why: "Everywhere you have been.", where: "survey", done: false },
-    { id: "commit", keys: "F", gesture: "TAP COMMIT", label: "COMMIT THE CLAIM", why: "The framed rock becomes your board.", where: "survey", done: false },
-    // Inside a claim the order is: hold the thing you control, then aim it, then let go. Serving
-    // first meant the player's very first act in the new mode was to launch a ball they had no
-    // idea how to catch, and then to discover the paddle while it was already falling.
+    // --- Inside the Berth. Sealed, and nothing here can hurt anyone. -----------------------------
+    { id: "move", keys: "WASD / ARROWS", gesture: "DRAG · LEFT HALF", demo: "stick", label: "FLY THE DRONE", why: "The Seal is the way out.", where: "survey", done: false },
+    // One rung, two keys, because fitting a frame to the Seal is one act. The Seal is drawn on a
+    // diagonal precisely so that a frame left square cannot cover it: the rock asks for the rotation,
+    // and the prompt only has to name the keys. This is also the rung that opens the world, so it
+    // refuses a frame that is not on the door -- see `frameCoversSeal`.
+    { id: "commit", also: ["aim"], keys: "Q / E, THEN F", gesture: "DRAG · RIGHT HALF, THEN COMMIT", demo: "swipe", label: "FIT THE FRAME TO THE SEAL", why: "Cut the Seal and the mine is open.", where: "survey", done: false },
     { id: "paddle", keys: "A / D", gesture: "DRAG ANYWHERE", demo: "swipe", label: "MOVE THE PADDLE", why: "It is the drone, edge on.", where: "play", done: false },
-    // Aiming comes before the serve because that is the only time it does anything -- the aim
-    // steers the ball off the paddle and is fixed once the ball is live. Teaching it afterwards
-    // made it unreachable in that claim, which is the kind of thing a sequential tutorial makes
-    // obvious and a checklist hides.
-    { id: "arenaAim", keys: "Q / E", gesture: "TAP WHERE IT SHOULD GO", label: "AIM THE SERVE", why: "The only steering you get.", where: "play", done: false },
-    { id: "serve", keys: "SPACE", gesture: "PRESS SERVE", label: "SERVE", where: "play", done: false },
-    // Shown, not demanded.
+    // Likewise one act: the aim steers the ball off the paddle and is fixed the moment it is live, so
+    // a rung that taught aiming after serving was teaching something already spent.
+    { id: "serve", also: ["arenaAim"], keys: "Q / E TO AIM, SPACE TO SERVE", gesture: "TAP WHERE IT SHOULD GO", label: "AIM AND SERVE", where: "play", done: false },
     { id: "speed", keys: "W / S", gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "For the long tail of a claim.", where: "play", optional: true, done: false },
-    // The last rung, and the one the game most needed. Nothing told a player that ore has to come
-    // home before it can be spent, or that there is a home to bring it to -- so the first haul is
-    // taught explicitly, and the rung completes by banking rather than by pressing anything. It
-    // gates no control: there is no key to withhold here, only a place to find.
+
+    // --- Through the Seal. Dark, and no longer empty. --------------------------------------------
+    // The Atlas comes after the door and not before it. A map is worth having the moment there is
+    // more world than you can see, and not one second earlier: taught inside the Berth it asked the
+    // player to go and read a chart of a room they were standing in the middle of.
+    { id: "atlas", keys: "M", gesture: "TAP ATLAS, TOP RIGHT", label: "OPEN THE ATLAS", why: "Everywhere you have been.", where: "survey", done: false },
+    // The one enemy, taught the way the Gallery is built to teach it: the first Bounder is stood on
+    // the island out of aggro range, so the player watches it walk and coil before it has ever cost
+    // them anything. Completed by a return off the paddle's face, not by pressing a key -- there is
+    // no key for this, only the front of the machine pointed the right way.
+    { id: "face", keys: "MEET IT HEAD ON", gesture: "MEET IT HEAD ON", label: "TAKE IT ON THE FACE", why: "The front deflects. Anywhere else and it hurts.", where: "survey", done: false },
+    // Shown, not demanded, and deliberately about a number rather than a control. The liability gauge
+    // and the damage read-out have always been on screen and nothing ever said what they were, so the
+    // first time a player left rock behind the cost arrived as a surprise. Named on the Overload Face,
+    // where it is legibly larger than the armour, it is a thing understood before it is ever charged.
+    { id: "liability", keys: "WATCH THE DAMAGE", gesture: "WATCH THE DAMAGE", label: "ROCK LEFT STANDING COSTS ARMOUR", why: "Bricks left, less armour. Slate is free.", where: "play", optional: true, done: false },
     { id: "bank", keys: "FLY HOME", gesture: "FLY HOME", label: "BANK THE HAUL", why: "Ore only counts once it is banked.", where: "survey", done: false },
   ];
   /**
@@ -294,6 +299,17 @@ export class OrekenoidGame {
   /** Seconds left of the 3-2-1. Zero means the claim is live. */
   resumeCountdown = 0;
   tutorialComplete = false;
+  /** Has the Landing's Seal been cut? The one-way moment the opening is built around. */
+  sealBreached = false;
+  /**
+   * Seconds until the Gallery's authored Bounder is stood up, or -1 when there is none waiting.
+   *
+   * A delay rather than a test on frame time. The first version waited for a frame with a short `dt`,
+   * which is a guess about the machine: headless runs at thirteen frames a second and never satisfied
+   * it, and neither would a slow laptop. What actually needs to pass is the resolve, and that is a
+   * duration.
+   */
+  private firstBounderIn = -1;
   /**
    * Gestures already demonstrated, so each is mimed once and then trusted.
    *
@@ -356,7 +372,7 @@ export class OrekenoidGame {
     // At the rack rather than at the landing pad. Those are three cells apart, and pointing the
     // compass at one while measuring banking against the other had the interface quoting two
     // different distances to the same place -- 527m in the objective, 489m on the arrow.
-    this.anchors.push({ id: "refitBay", x: BANK.x, y: BANK.y, name: "REFIT BAY" });
+    this.anchors.push({ id: "refitBay", x: BAY.x, y: BAY.y, name: "REFIT BAY" });
     this.effects = new Effects(this.effectLayer);
     this.effectLayer.addChild(this.crumbleEdge);
     this.deploymentPreviews = new DeploymentPreviews(this.world, this.terrain);
@@ -407,11 +423,13 @@ export class OrekenoidGame {
    */
   private can(control: TutorialStep["id"]): boolean {
     if (this.tutorialComplete) return true;
-    const at = this.tutorial.findIndex((step) => step.id === control);
-    if (at < 0) return true;
+    // The rung that owns this control, which is not always the rung named after it: `commit` hands
+    // over `aim` with it, and `serve` hands over `arenaAim`.
+    const owner = this.tutorial.find((step) => step.id === control || step.also?.includes(control));
+    if (!owner) return true;
     // Available if it is done, or if it is the step being asked for right now.
-    if (this.tutorial[at].done) return true;
-    return this.currentStep?.id === control;
+    if (owner.done) return true;
+    return this.currentStep?.id === owner.id;
   }
 
   /** A key was pressed that the sequence has not offered yet. Pulse rather than nag. */
@@ -937,6 +955,65 @@ export class OrekenoidGame {
     );
   }
 
+  /**
+   * Is this frame covering the Seal?
+   *
+   * World point back into frame-local coordinates: `localToWorld` lays the frame out along
+   * `side = (cos a, sin a)` across and `direction = (sin a, -cos a)` away, and both are unit and
+   * perpendicular, so the inverse is two dot products.
+   *
+   * Most of the Seal rather than all of it. Asking for every cell would make the rung a pixel-hunt on
+   * a frame the player is turning by hand.
+   */
+  private frameCoversSeal(frame: FrameGeometry): boolean {
+    const sideX = Math.cos(frame.angle);
+    const sideY = Math.sin(frame.angle);
+    const awayX = Math.sin(frame.angle);
+    const awayY = -Math.cos(frame.angle);
+    let covered = 0;
+    for (const cell of SEAL_CELLS) {
+      const dx = cell.x + 0.5 - frame.origin.x;
+      const dy = cell.y + 0.5 - frame.origin.y;
+      const u = dx * sideX + dy * sideY;
+      const v = dx * awayX + dy * awayY;
+      if (Math.abs(u) <= frame.width / 2 && v >= 0 && v <= frame.depth) covered++;
+    }
+    return covered >= SEAL_CELLS.length * 0.6;
+  }
+
+  /**
+   * The moment the mine opens.
+   *
+   * Fired once, when enough of the Seal is gone to walk through. Deliberately measured on the world
+   * rather than on the claim's outcome, so it is true whether the player cleared the board or bailed
+   * out halfway: the door opens as wide as they cut it, and any real cut is a door.
+   */
+  private checkSealBreach(): void {
+    if (this.sealBreached) return;
+    const standing = SEAL_CELLS.filter((cell) => this.world.solidAt(cell.x + 0.5, cell.y + 0.5)).length;
+    if (standing > SEAL_CELLS.length * 0.5) return;
+    this.sealBreached = true;
+    this.showToast("THE SEAL IS CUT · THE MINE IS OPEN");
+    // Placed on the next ordinary frame rather than on this one.
+    //
+    // This frame is the claim resolving: the board tears down, chunks re-rasterise, and the tick that
+    // follows carries several hundred milliseconds of catch-up. A Bounder spawned into that got up to
+    // eight substeps of crawl and re-attach in one go and walked fourteen cells off the island before
+    // the player ever saw it. Deferred to a frame with an ordinary dt, it stands where it is put.
+    this.firstBounderIn = 0.5;
+    // The first Bounder is stood on the island, not rolled for.
+    //
+    // Everything about where it goes is the lesson: on top of the ore body in the middle of the
+    // Gallery, so it is lit and side-on from the ledge the player steps out onto, and well outside
+    // aggro range so they watch it walk and coil before it has cost them anything. Doom teaches a tell
+    // by letting you see the animation for free the first time, and this is the only place in the game
+    // that can be guaranteed to do that.
+
+    this.audio.play(SOUNDS.armorBreached);
+    const centre = { x: SEAL_CENTRE.x * CELL, y: SEAL_CENTRE.y * CELL };
+    this.effects.spawnRing(centre.x, centre.y, PALETTE.rail, 3.2);
+  }
+
   private frameGeometry(): FrameGeometry {
     return {
       origin: { x: this.player.x / CELL, y: this.player.y / CELL },
@@ -1238,6 +1315,18 @@ export class OrekenoidGame {
     //
     // "No material in frame" still refuses, which covers the only case that was ever really at
     // stake -- a frame aimed entirely at nothing.
+    // The first claim is the door, so the first claim has to be on the door.
+    //
+    // Refused here rather than by withholding the key, because withholding would say "you cannot
+    // commit" when what is true is "not there". The Seal is drawn on a diagonal and braced at both
+    // ends so it already looks like the answer; this is only what happens if the player frames the
+    // wall beside it instead.
+    if (!this.tutorialComplete && !this.tutorial.find((step) => step.id === "commit")?.done
+      && !this.frameCoversSeal(frame)) {
+      this.showToast("FRAME THE SEAL");
+      this.coach.refused();
+      return;
+    }
     const sampled = this.world.framedBricks(frame);
     if (!sampled.length) { this.showToast("NO MATERIAL IN FRAME"); return; }
     const bricks: Brick[] = [];
@@ -1649,6 +1738,7 @@ export class OrekenoidGame {
       this.soakCapacity,
     );
     this.world.exhaustFrame(arena, standing);
+    this.checkSealBreach();
     if (reason === "clear") {
       this.showToast(`CLAIM CLEARED · ${arena.collected} SECURED`);
     } else if (arena.damageTaken > 0) {
@@ -2064,6 +2154,22 @@ export class OrekenoidGame {
       heading: this.player.heading,
       paddleWidth: this.chassis.paddleWidth,
     };
+    // Held off until the player has met one on the paddle's face. A wanderer arriving from off screen
+    // mid-lesson would be the game teaching an idea and interrupting it at the same time.
+    this.combat.spawning = this.tutorialComplete
+      || (this.tutorial.find((step) => step.id === "face")?.done ?? false);
+    // Everything about where it goes is the lesson: on top of the ore body in the middle of the
+    // Gallery, so it is lit and side-on from the ledge the player steps out onto, and well outside
+    // aggro range, so they watch it walk and coil before it has cost them anything. Doom teaches a tell
+    // by letting you see the animation for free the first time, and this is the only place in the game
+    // that can be guaranteed to do that.
+    if (this.firstBounderIn >= 0) {
+      this.firstBounderIn -= Math.min(dt, 0.1);
+      if (this.firstBounderIn <= 0) {
+        this.firstBounderIn = -1;
+        if (!this.tutorialComplete) this.combat.spawn(FIRST_BOUNDER.x, FIRST_BOUNDER.y);
+      }
+    }
     const events = this.combat.update(dt, drone, (x, y) => this.canSee(drone, x, y));
     this.ramCooldown = Math.max(0, this.ramCooldown - dt);
 
@@ -2074,6 +2180,7 @@ export class OrekenoidGame {
     // A clean return: nothing is paid either way, and the creature becomes the rock's problem.
     for (const hit of events.returns) {
       this.fieldReturns++;
+      this.markTutorial("face");
       this.audio.play(SOUNDS.paddleHit);
       this.effects.spawnRing(hit.x * CELL, hit.y * CELL, PALETTE.rail, 0.55);
       this.effects.spawnShards(hit.x * CELL, hit.y * CELL, PALETTE.rail, 3, 0.7, false);
@@ -3138,7 +3245,7 @@ export class OrekenoidGame {
     // At the rack rather than at the landing pad. Those are three cells apart, and pointing the
     // compass at one while measuring banking against the other had the interface quoting two
     // different distances to the same place -- 527m in the objective, 489m on the arrow.
-    this.anchors.push({ id: "refitBay", x: BANK.x, y: BANK.y, name: "REFIT BAY" });
+    this.anchors.push({ id: "refitBay", x: BAY.x, y: BAY.y, name: "REFIT BAY" });
     for (const anchor of data.anchors) {
       if (anchor.id === "refitBay") continue;
       this.anchors.push({ ...anchor });
