@@ -15,11 +15,19 @@ import type { FrameGeometry, Vec2 } from "../types";
 import type { WorldModel } from "../world";
 import { BANK } from "../worldgen/landmarks";
 
-/** A flat void plate behind the terrain, so unbuilt chunks read as unlit rock. */
+/**
+ * The floor of the mine, behind the terrain.
+ *
+ * A flat plate rather than anything drawn per cell, because it is only ever seen through the holes
+ * in the terrain -- which is exactly what open ground is. It carries a real tone now instead of
+ * `void`: the shadow layer multiplies over it, so this is the brightness that tells the player
+ * where their line of sight reaches. Without it, lit floor and unseen floor were both black and the
+ * shadows had nothing to be shadows against.
+ */
 export function buildFarGeology(layer: Container): void {
-  const shadow = new Graphics();
-  shadow.rect(0, 0, WORLD_COLS * CELL, WORLD_ROWS * CELL).fill(PALETTE.void);
-  layer.addChild(shadow);
+  const floor = new Graphics();
+  floor.rect(0, 0, WORLD_COLS * CELL, WORLD_ROWS * CELL).fill(PALETTE.floor);
+  layer.addChild(floor);
 }
 
 /**

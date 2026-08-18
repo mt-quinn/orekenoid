@@ -217,3 +217,89 @@ test("a Douser puts the lamp out, and the ball gives it back", async ({ page }) 
     null, { timeout: 20_000 });
   expect(errors).toEqual([]);
 });
+
+test("a creature is drawn if and only if the drone can see it", async ({ page }) => {
+  test.setTimeout(120_000);
+  await intoCaverns(page);
+
+  // Somewhere robustly out of sight: the whole disc around it, not just its centre, so a creature
+  // that shuffles a cell while settling does not wander over the shadow boundary and make the test
+  // about the boundary instead of about the rule.
+  const hidden = await page.evaluate(() => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    const world = hook.world;
+    const drone = { x: hook.game.player.x / 42, y: hook.game.player.y / 42 };
+    const sees = (x: number, y: number) => {
+      for (let t = 0; t <= 1; t += 0.01) {
+        if (world.solidAt(drone.x + (x - drone.x) * t, drone.y + (y - drone.y) * t)) return false;
+      }
+      return true;
+    };
+    for (let radius = 5; radius < 24; radius += 0.5) {
+      for (let step = 0; step < 96; step++) {
+        const angle = (step / 96) * Math.PI * 2;
+        const x = drone.x + Math.cos(angle) * radius;
+        const y = drone.y + Math.sin(angle) * radius;
+        if (world.solidAt(x, y)) continue;
+        let clearOfSight = true;
+        for (let s = 0; s < 8 && clearOfSight; s++) {
+          const a = (s / 8) * Math.PI * 2;
+          if (sees(x + Math.cos(a) * 1.5, y + Math.sin(a) * 1.5)) clearOfSight = false;
+        }
+        if (clearOfSight && !sees(x, y)) return { x, y };
+      }
+    }
+    return null;
+  });
+  expect(hidden, "the world should have somewhere robustly out of sight").not.toBeNull();
+
+  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, 0, "grinder"), hidden!);
+  await page.waitForTimeout(400);
+
+  // The rule, checked against wherever each creature actually is: terrain shows dimly through
+  // shadow, creatures do not, because one at a third brightness is one you can still see.
+  const rows = await page.evaluate(() => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    const game = hook.game;
+    const drone = { x: game.player.x / 42, y: game.player.y / 42 };
+    return (game.combat as any).creatures.map((entry: any) => {
+      let seen = true;
+      for (let t = 0; t <= 1; t += 0.01) {
+        if (hook.world.solidAt(
+          drone.x + (entry.creature.x - drone.x) * t,
+          drone.y + (entry.creature.y - drone.y) * t,
+        )) { seen = false; break; }
+      }
+      return { visible: entry.display.container.visible, seen, kind: entry.creature.kind };
+    });
+  });
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) expect(row.visible, `${row.kind} visible=${row.visible} seen=${row.seen}`).toBe(row.seen);
+  // And the placed one really was hidden, so the test proves something.
+  expect(rows.some((row: any) => !row.visible)).toBe(true);
+});
+
+test("a smothered lamp blinds the drone to what it could plainly see", async ({ page }) => {
+  test.setTimeout(120_000);
+  const spot = await intoCaverns(page);
+
+  // Down the open lane, in clear line of sight and well inside ordinary reach.
+  const target = { x: spot.x + 9, y: spot.y };
+  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI, "spitter"), target);
+  await page.waitForTimeout(400);
+  const seenAt = (page: any, near: { x: number; y: number }) => page.evaluate((at: any) => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    const entry = (game.combat as any).creatures.find((e: any) => Math.hypot(e.creature.x - at.x, e.creature.y - at.y) < 4);
+    return entry ? entry.display.container.visible : null;
+  }, near);
+  expect(await seenAt(page, target), "visible with the lamp intact").toBe(true);
+
+  // Now take the lamp. Sight collapses to a few cells, so the same creature at the same distance,
+  // with nothing whatsoever in the way, goes dark -- which is the entire creature.
+  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI, "douser"),
+    { x: spot.x + 2, y: spot.y });
+  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.lamp <= 0.23,
+    null, { timeout: 25_000 });
+  await page.waitForTimeout(200);
+  expect(await seenAt(page, target), "hidden while the lamp is smothered").toBe(false);
+});

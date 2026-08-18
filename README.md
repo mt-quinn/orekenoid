@@ -72,10 +72,13 @@ faces away from the drone.** There is no lamp and no radius. A corridor is visib
 it, and what hides a thing is never how far off it is, only what is standing in between — so you are
 hidden from by *shape*, and excavation carves sightlines. A claim you cut last hour is a window.
 
-Shadow is opaque: what the drone cannot see is black, with no memory of it drawn into the world. The
-mine's memory is the Atlas, which is what the Atlas is for. The one thing that ever imposes a
-distance is a **Douser** on the hull, which closes sight down to a few cells — the radius is the
-emergency, never the everyday.
+Shadow is translucent, not black: terrain and floor survive in it at about a third brightness, so
+the silhouette of a chamber you are standing in the dark half of stays readable. **Creatures do not**
+— they are hidden outright, because one at a third brightness is one you can still see. That is the
+whole trade the layer makes.
+
+The one thing that ever imposes a distance is a **Douser** on the hull, which closes sight down to a
+few cells. The radius is the emergency, never the everyday.
 
 Three creatures, differentiated by what they take from you rather than by how they die. All three
 die the same way: hit them with the ball, enough times.

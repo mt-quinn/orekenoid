@@ -223,6 +223,16 @@ export const FABRICATED_CHASSIS: readonly PaddleChassis[] = [
 
 export const PALETTE = {
   void: 0x070a0b,
+  /**
+   * The cavern floor, behind the terrain.
+   *
+   * This plate used to be `void` -- all but black -- which was invisible until the lighting arrived
+   * and then became the whole problem with it: open cells had no tone of their own, so ground in
+   * line of sight and ground never seen came out the same colour and the shadow had nothing to
+   * contrast against. Lit it reads as a surface; multiplied down into shadow it lands close to
+   * `void`, which is where the darkness gets its depth from.
+   */
+  floor: 0x232c31,
   ink: 0xf1eadb,
   machine: 0x9a927d,
   rail: 0xe7dbc0,

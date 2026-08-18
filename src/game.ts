@@ -500,7 +500,7 @@ export class OrekenoidGame {
     this.app.canvas.setAttribute("aria-label", "Orekanoid");
     // Above the world and the bay: these are the player's own hands, and nothing occludes them.
     this.app.stage.addChild(this.worldRoot, this.gantry.container, this.touchControls.container);
-    this.shadows = new ShadowLayer(this.world);
+    this.shadows = new ShadowLayer(this.world, this.app.renderer);
     // Over everything that is *in* the mine, under everything that is an instrument. The survey
     // frame and the coach are read-outs rather than objects in the world, and going dark must never
     // take an instrument off the player.
@@ -1934,8 +1934,11 @@ export class OrekenoidGame {
     const zoom = this.camera.zoom || 1;
     const halfWidth = view.width / (CELL * zoom) * 0.5 + 3;
     const halfHeight = view.height / (CELL * zoom) * 0.5 + 3;
-    this.shadows.update(eyeX, eyeY, this.cameraFocus.x / CELL, this.cameraFocus.y / CELL, halfWidth, halfHeight);
-    this.shadows.setLampCap(this.lampReach());
+    this.shadows.resize(view.width, view.height);
+    this.shadows.update(
+      eyeX, eyeY, this.cameraFocus.x / CELL, this.cameraFocus.y / CELL,
+      halfWidth, halfHeight, this.lampReach(),
+    );
   }
 
   /**
@@ -1949,7 +1952,13 @@ export class OrekenoidGame {
    * from by shape.
    */
   private lampReach(): number {
-    return SMOTHERED_REACH + (UNSMOTHERED_REACH - SMOTHERED_REACH) * this.lampScale;
+    // Mapped across the range `lampScale` actually travels, not used as the lerp factor directly.
+    // It bottoms out at `DOUSER.smotherTo`, so treating it as 0..1 meant a fully smothered lamp
+    // still reached three quarters of the way to the edge of the screen and the creature that exists
+    // to take the player's sight took almost nothing.
+    const span = 1 - DOUSER.smotherTo;
+    const t = span > 0 ? Math.max(0, Math.min(1, (this.lampScale - DOUSER.smotherTo) / span)) : 1;
+    return SMOTHERED_REACH + (UNSMOTHERED_REACH - SMOTHERED_REACH) * t;
   }
 
   private updateSurvey(dt: number): void {

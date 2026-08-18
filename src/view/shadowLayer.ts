@@ -1,39 +1,41 @@
-// Drawing the dark, as geometry.
+// Drawing the dark, as geometry, composited once.
 //
-// Replaces the per-cell mask texture that used to do this job. That version was wrong twice over:
-// it limited sight by distance rather than by what was in the way, and it drew shadow edges on cell
-// boundaries, so a wall's shadow came out as a staircase of squares instead of the sharp angular
-// wedge a wall actually throws. Both are visible in a single screenshot once you know to look.
+// The shadows themselves are Teleglitch's: black polygons extruded from wall faces away from the
+// drone, hard-edged, with no radius and no falloff. What is different here is that they are not
+// opaque -- terrain and background show faintly through, so the player keeps the shape of a chamber
+// they are standing in the dark half of, and the mine stays readable.
 //
-// What survives from the old system is only the *memory* of ground already seen, which is genuinely
-// a per-cell question and is still drawn as a coarse mask underneath this. Live visibility is
-// geometry.
+// That translucency is the whole reason for the render texture. Shadow quads overlap constantly:
+// every wall behind another wall is inside its shadow. Drawn straight into the scene at partial
+// alpha they compound -- measured in this renderer, a 50% quad reads 128 and its overlap with a
+// second reads 64 -- and shadow-behind-shadow gets progressively darker, which is a gradient
+// arrived at by accident in the one system whose whole point is not having one. Rendered *opaquely*
+// into an off-screen texture and then multiplied over the world as a single sprite, the overlaps
+// collapse into one flat value and the dim level becomes a free parameter.
+//
+// Enemies are not dimmed by this. They are hidden outright, by a line-of-sight test in
+// `FieldCombat`, because a creature at a third brightness is a creature you can still see.
 
-import { Container, Graphics } from "pixi.js";
+import { Container, Graphics, RenderTexture, Sprite, type Renderer } from "pixi.js";
 import { CELL } from "../config";
 import type { SolidityOracle } from "../combat/ballField";
 import { collectOccluders, shadowQuad } from "../light/shadow";
 
 export const SHADOW = {
   /**
-   * How dark an occluded cell goes. One, and it has to be one.
+   * How much of the world survives in shadow, 0..1, as a multiply.
    *
-   * A first version drew this at 0.7 so ground already walked showed faintly through, keeping a
-   * memory of the mine in the world itself. Measured in the renderer, that was wrong: Pixi applies
-   * container alpha per vertex rather than as a group opacity, so two overlapping shadow quads
-   * composite twice -- 50% black measured 128, and the overlap measured 64. Shadow behind shadow
-   * got progressively darker, which is a gradient arrived at by accident in the one system whose
-   * whole point is not having one.
-   *
-   * Opaque removes the artifact and is the reference behaviour besides. The mine's memory lives in
-   * the Atlas, which is what the Atlas is for.
+   * Zero is the reference behaviour and unreadable here: Teleglitch's floors are textured, so lit
+   * ground *looks* lit, where this mine's open cells had no tone of their own and lit and unseen
+   * came out equally black. Low enough that the boundary is unmistakable, high enough that the
+   * silhouette of a chamber survives it.
    */
-  opacity: 1,
+  dim: 0.3,
   /**
    * How far a shadow is extruded, in cells.
    *
    * Only needs to clear the viewport, since anything past the screen edge is not drawn. Generous
-   * rather than exact, because the camera rotates into a claim and the corners swing out.
+   * rather than exact, because the camera swings when a claim is framed near the edge of the world.
    */
   reach: 90,
   /** Extra cells of geometry gathered beyond the visible rect, so walls just off screen still cast. */
@@ -41,48 +43,66 @@ export const SHADOW = {
 } as const;
 
 export class ShadowLayer {
+  /** Goes into the world, above everything in the mine and below the instruments. */
   readonly container = new Container();
-  private readonly shadows = new Graphics();
+  /** World-space shadow geometry. Never added to the stage -- only rendered into the texture. */
+  private readonly geometry = new Graphics();
   private readonly cap = new Graphics();
+  private readonly offscreen = new Container();
+  private texture: RenderTexture;
+  private readonly sprite: Sprite;
+  private width = 2;
+  private height = 2;
   /** Occluder count from the last rebuild, for the render diagnostics. */
   lastOccluders = 0;
-  private eyeX = 0;
-  private eyeY = 0;
 
-  constructor(private readonly world: SolidityOracle) {
-    this.container.addChild(this.shadows, this.cap);
+  constructor(private readonly world: SolidityOracle, private readonly renderer: Renderer) {
+    this.offscreen.addChild(this.geometry, this.cap);
+    this.texture = RenderTexture.create({ width: 2, height: 2 });
+    this.sprite = new Sprite(this.texture);
+    // Multiply, so the texture darkens what is already drawn rather than painting over it.
+    this.sprite.blendMode = "multiply";
+    this.container.addChild(this.sprite);
   }
 
   /**
-   * Close the dark in to a fixed distance regardless of what is in the way.
+   * Match the texture to the viewport.
    *
-   * Off by default -- at full reach the ring falls outside the viewport and nothing is drawn, which
-   * is the point: ordinary sight has no radius. It exists so a Douser on the hull has something to
-   * actually take. Drawn as one enormously thick circular stroke rather than a rectangle with a
-   * hole in it, because a stroke is a single call and needs no even-odd winding to make the hole.
+   * One texel per screen pixel. Cheaper than the world-sized mask this replaces, which allocated
+   * for the whole 240x144 mine whatever was on screen.
    */
-  setLampCap(reach: number): void {
-    this.cap.clear();
-    if (reach >= SHADOW.reach) return;
-    const inner = reach * CELL;
-    const band = SHADOW.reach * CELL;
-    this.cap
-      .circle(this.eyeX * CELL, this.eyeY * CELL, inner + band / 2)
-      .stroke({ width: band, color: 0x000000, alpha: 1 });
+  resize(width: number, height: number): void {
+    const nextWidth = Math.max(2, Math.ceil(width));
+    const nextHeight = Math.max(2, Math.ceil(height));
+    if (nextWidth === this.width && nextHeight === this.height) return;
+    this.width = nextWidth;
+    this.height = nextHeight;
+    this.texture.destroy(true);
+    this.texture = RenderTexture.create({ width: nextWidth, height: nextHeight });
+    this.sprite.texture = this.texture;
   }
 
   /**
-   * Rebuild the shadows for this eye.
+   * Rebuild the shadows and composite them.
    *
-   * Everything is redrawn each frame rather than cached. The geometry depends on where the drone is
-   * standing, so it changes every time the drone moves at all -- and a cache keyed on a position
-   * that changes continuously is not a cache.
+   * `focus` is the camera's world-space centre in cells and the halves are the world rect it can
+   * see. The geometry is drawn in world pixels and squeezed into the texture by that same rect, so
+   * the sprite laid back over the world lines up exactly.
+   *
+   * Redrawn every frame rather than cached: the geometry depends on where the drone is standing, and
+   * a cache keyed on a position that changes continuously is not a cache.
    */
-  update(eyeX: number, eyeY: number, focusX: number, focusY: number, halfWidth: number, halfHeight: number): void {
-    this.eyeX = eyeX;
-    this.eyeY = eyeY;
-    const shadows = this.shadows;
-    shadows.clear();
+  update(
+    eyeX: number,
+    eyeY: number,
+    focusX: number,
+    focusY: number,
+    halfWidth: number,
+    halfHeight: number,
+    lampReach: number,
+  ): void {
+    const geometry = this.geometry;
+    geometry.clear();
     const occluders = collectOccluders(
       this.world,
       focusX - halfWidth - SHADOW.margin,
@@ -92,14 +112,8 @@ export class ShadowLayer {
     );
     this.lastOccluders = occluders.length;
 
-    // Filled one quad at a time rather than accumulated into a single path.
-    //
-    // The quads overlap constantly, so one fill would hand the triangulator a single enormous
-    // self-intersecting path every frame; four points at a time is trivial instead. Not measured
-    // as a win -- a headless run is software-rendered and pins at about 13fps whatever this file
-    // does, so it cannot tell the two apart -- chosen because it is the one that is obviously
-    // cheap. Only correct because the fill is opaque; overlapping translucent quads would
-    // compound, see `SHADOW.opacity`.
+    // Opaque, one quad at a time. Overlap is free here precisely because this is going into its own
+    // texture -- the translucency is applied once, later, by the sprite.
     for (const occluder of occluders) {
       const quad = shadowQuad(occluder, eyeX, eyeY, SHADOW.reach);
       if (!quad) continue;
@@ -107,7 +121,42 @@ export class ShadowLayer {
       for (let index = 0; index < quad.length; index += 2) {
         points.push(quad[index] * CELL, quad[index + 1] * CELL);
       }
-      shadows.poly(points).fill({ color: 0x000000, alpha: SHADOW.opacity });
+      geometry.poly(points).fill({ color: 0x000000, alpha: 1 });
     }
+    this.drawLampCap(eyeX, eyeY, lampReach);
+
+    // Squeeze the visible world rect into the texture. Rotation is deliberately not handled: this
+    // layer only runs in survey, where the camera never rotates.
+    const originX = (focusX - halfWidth) * CELL;
+    const originY = (focusY - halfHeight) * CELL;
+    const scale = this.width / (halfWidth * 2 * CELL);
+    this.offscreen.scale.set(scale, this.height / (halfHeight * 2 * CELL));
+    this.offscreen.position.set(-originX * scale, -originY * (this.height / (halfHeight * 2 * CELL)));
+    // White ground, black shadows: the sprite multiplies, so untouched ground passes through at full
+    // brightness and shadow lands at `dim`.
+    this.renderer.render({ container: this.offscreen, target: this.texture, clear: true, clearColor: 0xffffff });
+
+    this.sprite.position.set(originX, originY);
+    this.sprite.width = halfWidth * 2 * CELL;
+    this.sprite.height = halfHeight * 2 * CELL;
+    // The dim level rides on the sprite rather than on the fills, which is what stops overlapping
+    // quads compounding. One sprite, one alpha, applied once.
+    this.sprite.alpha = 1 - SHADOW.dim;
+  }
+
+  /**
+   * Close the dark in to a fixed distance regardless of what is in the way.
+   *
+   * Off at full reach, which is the point: ordinary sight has no radius. It exists so a Douser on
+   * the hull has something to actually take. Drawn as one enormously thick circular stroke rather
+   * than a rectangle with a hole in it, because a stroke needs no even-odd winding to make the hole.
+   */
+  private drawLampCap(eyeX: number, eyeY: number, reach: number): void {
+    this.cap.clear();
+    if (reach >= SHADOW.reach) return;
+    const band = SHADOW.reach * CELL;
+    this.cap
+      .circle(eyeX * CELL, eyeY * CELL, reach * CELL + band / 2)
+      .stroke({ width: band, color: 0x000000, alpha: 1 });
   }
 }
