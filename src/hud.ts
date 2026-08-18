@@ -32,11 +32,6 @@ export interface HudModel {
   soakCapacity: number;
   liveBalls: number;
   spareBalls: number;
-  /**
-   * The emitter's cavern charge. Null inside a claim, where the ball is the claim's, not the
-   * emitter's, and the BALLS pips are already saying it.
-   */
-  emitter: { ready: boolean; progress: number; out: boolean } | null;
   cargo: Array<[ResourceId, number]>;
   /** Cargo is only safe once banked, so the hold says so while it is at risk. */
   cargoAtRisk: boolean;
@@ -77,7 +72,6 @@ export class Hud {
   private readonly damageStat = document.querySelector<HTMLElement>("#damageStat");
   private readonly damageLabel = document.querySelector<HTMLElement>("#damageValue");
   private readonly integrityStat = document.querySelector<HTMLElement>("#integrityStat");
-  private readonly emitterStat = document.querySelector<HTMLElement>("#emitterStat");
   private readonly healthLabel = document.querySelector<HTMLElement>("#healthValue");
   private readonly healthMax = document.querySelector<HTMLElement>("#healthMax");
   private readonly healthBar = document.querySelector<HTMLElement>("#healthBar");
@@ -134,17 +128,6 @@ export class Hud {
       const ballsStat = this.ballPips.parentElement;
       if (ballsStat) {
         ballsStat.dataset.trivial = String(!model.inArena || (model.liveBalls <= 1 && model.spareBalls === 0));
-      }
-    }
-
-    if (this.emitterStat) {
-      const emitter = model.emitter;
-      this.emitterStat.dataset.trivial = String(!emitter);
-      if (emitter) {
-        // Three states rather than two, because "ball in flight" and "building a new one" feel
-        // completely different to play and must not share a readout: one is armed, one is not.
-        this.emitterStat.dataset.state = emitter.out ? "out" : emitter.ready ? "ready" : "charging";
-        this.emitterStat.style.setProperty("--v", `${Math.round(emitter.progress * 100)}%`);
       }
     }
 

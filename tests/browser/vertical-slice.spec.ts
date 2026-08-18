@@ -9,7 +9,12 @@ test("deployment previews, generated world, province rules, and the crafting cha
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
 
   await page.goto("/");
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 20_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
+  // The caverns are inhabited now, and this walkthrough is about the world, the economy and the
+  // crafting chain rather than about combat. Left running, a Bounder can reach the drone mid-tour and
+  // kill it -- which loses the cargo the banking rung needs, and fails the tour on something it is not
+  // testing. Combat has its own spec.
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.setSpawning(false));
   await expect(page.locator("#briefing")).toHaveAttribute("data-render-state", "ready");
   await expect(page.locator("#briefing")).not.toHaveClass(/loading|failed/);
   await expect(page.locator(".game-canvas")).toBeVisible();

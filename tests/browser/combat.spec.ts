@@ -3,18 +3,21 @@ import { expect, test } from "@playwright/test";
 /**
  * Cavern combat, in the real renderer.
  *
- * The unit tests prove the solver and the state machine in isolation. What they cannot prove is
- * that the two are wired to the same world the player is standing in -- that a ball fired from the
- * drone's nose actually travels through the terrain the chunks drew, that it reaches a creature,
- * and that a creature reaches the hull. That is what this covers.
+ * The unit tests prove the crawl, the exchange and the contact test in isolation. What they cannot
+ * prove is that any of it is wired to the world the player is standing in -- that a Bounder walks the
+ * terrain the chunks drew, that the paddle the player is turning is the paddle contact is measured
+ * against, and that ore reaching the hold reaches the actual cargo.
  */
 
 type Win = Window & typeof globalThis & { __OREKENOID__: any };
 
-/** Boot, take a chassis, skip the opening sequence, and stand in open ground. */
+/** Boot, take a chassis, skip the opening sequence, and stand somewhere with rock to hand. */
 async function intoCaverns(page: import("@playwright/test").Page): Promise<{ x: number; y: number }> {
   await page.goto("/");
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 30_000 });
+  // Generous: a headless run is software-rendered, and with the whole suite in flight a boot has been
+  // seen to take most of half a minute. Every test in the file goes through here, so a tight bound
+  // fails an arbitrary one of them rather than the one with a problem.
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.locator(".paddle-option").first().click();
   await page.click("#beginButton");
   await page.waitForTimeout(900);
@@ -24,282 +27,241 @@ async function intoCaverns(page: import("@playwright/test").Page): Promise<{ x: 
     for (const step of game.tutorial) step.done = true;
   });
 
-  // A clearing with room to the east, because the drone fires along its heading and the test wants
-  // a lane rather than a wall two cells away.
+  // Open ground with an eight-cell lane east and rock within a few cells: a Bounder needs a surface,
+  // and the tests need room in front of the paddle.
   const spot = await page.evaluate(() => {
-    const hook = (window as unknown as Win).__OREKENOID__;
-    const world = hook.world;
+    const world = (window as unknown as Win).__OREKENOID__.world;
     const clear = (x: number, y: number) => {
-      for (let dy = -1.2; dy <= 1.2; dy += 0.4) {
-        for (let dx = -1.2; dx <= 1.2; dx += 0.4) if (world.solidAt(x + dx, y + dy)) return false;
+      for (let dy = -1.4; dy <= 1.4; dy += 0.35) {
+        for (let dx = -1.4; dx <= 1.4; dx += 0.35) if (world.solidAt(x + dx, y + dy)) return false;
       }
       return true;
     };
-    for (let y = 8; y < 130; y += 1) {
-      for (let x = 8; x < 220; x += 1) {
+    // Well inside the map, with a clear lane on *both* sides. Only requiring one meant the scan
+    // settled at the top-left corner of the world, where there is nothing to the west to light and
+    // every test about turning round failed on the fixture rather than on the game.
+    for (let y = 24; y < 120; y++) {
+      for (let x = 24; x < 210; x++) {
         if (!clear(x, y)) continue;
-        // Ten cells of open lane due east.
-        let open = true;
-        for (let step = 1; step <= 10 && open; step++) if (!clear(x + step, y)) open = false;
-        if (open) return { x, y };
+        let lane = true;
+        for (let step = 1; step <= 8 && lane; step++) {
+          if (!clear(x + step, y) || !clear(x - step, y)) lane = false;
+        }
+        if (!lane) continue;
+        for (let radius = 2; radius <= 5; radius += 0.5) {
+          for (let index = 0; index < 16; index++) {
+            const angle = (index / 16) * Math.PI * 2;
+            if (world.solidAt(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius)) return { x, y };
+          }
+        }
       }
     }
     return null;
   });
-  expect(spot, "the world should contain one ten-cell open lane").not.toBeNull();
+  expect(spot, "the world should have open ground beside rock").not.toBeNull();
 
   await page.evaluate(({ x, y }) => {
     const hook = (window as unknown as Win).__OREKENOID__;
     hook.warpTo(x, y);
-    // Heading is measured from the frame's forward axis, so this points the nose due east and the
-    // ball leaves along +x.
+    // Heading is measured from the frame's forward axis, so this points the paddle's face due east.
     hook.game.player.heading = Math.PI / 2;
   }, spot!);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400);
   return spot!;
 }
 
-/** The creature the test placed, found by where it was put rather than by index. */
-async function trackedCreature(page: import("@playwright/test").Page, near: { x: number; y: number }) {
-  return page.evaluate(({ x, y }) => {
-    const creatures = (window as unknown as Win).__OREKENOID__.state.combat.creatures;
-    let best: any = null;
-    for (const creature of creatures) {
-      const distance = Math.hypot(creature.x - x, creature.y - y);
-      if (distance < 12 && (!best || distance < best.distance)) best = { ...creature, distance };
-    }
-    return best;
-  }, near);
+/** Put a Bounder in the air aimed at a point, without waiting out its coil. */
+async function hurlAt(
+  page: import("@playwright/test").Page,
+  from: { x: number; y: number },
+  at: { x: number; y: number },
+): Promise<void> {
+  await page.evaluate(({ from: origin, at: target }) => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    const creature = hook.spawnCreature(origin.x, origin.y);
+    creature.state = "hurl";
+    creature.timer = 3;
+    creature.deflected = false;
+    const angle = Math.atan2(target.y - origin.y, target.x - origin.x);
+    creature.vx = Math.cos(angle) * 8.6;
+    creature.vy = Math.sin(angle) * 8.6;
+  }, { from, at });
 }
 
-test("a ball fired into the caverns travels, and kills what it hits", async ({ page }) => {
-  test.setTimeout(120_000);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  const spot = await intoCaverns(page);
-
-  // Placed down the lane, far enough that the ball has to actually travel to reach it.
-  const target = { x: spot.x + 6, y: spot.y };
-  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI), target);
-  expect(await trackedCreature(page, target)).not.toBeNull();
-
-  await page.keyboard.press("Space");
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.balls > 0,
-    null, { timeout: 5_000 });
-
-  // Three hits kill a Grinder. The ball rebounds off it and comes back through the lane, so this
-  // usually lands without further input -- fire again whenever the emitter is free.
-  await page.waitForFunction(() => {
-    const hook = (window as unknown as Win).__OREKENOID__;
-    const near = hook.state.combat.creatures;
-    return near.length === 0 || near.every((creature: any) => creature.state === "dead");
-  }, null, { timeout: 20_000 }).catch(() => undefined);
-
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const creature = await trackedCreature(page, target);
-    if (!creature || creature.state === "dead") break;
-    await page.keyboard.press("Space");
-    await page.waitForTimeout(1200);
-  }
-
-  const after = await trackedCreature(page, target);
-  expect(after === null || after.state === "dead", "the Grinder should be dead").toBe(true);
-  expect(errors).toEqual([]);
-});
-
-test("a Grinder that reaches the drone costs it health", async ({ page }) => {
-  test.setTimeout(120_000);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  const spot = await intoCaverns(page);
-  const before = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.integrity);
-
-  // Placed in the lane and left to it: the drone does not move, which is precisely what a Grinder
-  // exists to punish.
-  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI),
-    { x: spot.x + 5, y: spot.y });
-
-  await page.waitForFunction((was) => (window as unknown as Win).__OREKENOID__.state.integrity < was,
-    before, { timeout: 20_000 });
-  const after = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.integrity);
-  expect(after).toBeLessThan(before);
-  expect(errors).toEqual([]);
-});
-
-test("the emitter takes its ball back when a claim begins", async ({ page }) => {
+test("the drone has no ball to fire out here", async ({ page }) => {
   test.setTimeout(120_000);
   await intoCaverns(page);
+  // Space and R used to launch and recall one. The paddle is purely defensive now, and pressing them
+  // must do nothing rather than something invisible.
   await page.keyboard.press("Space");
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.balls > 0,
-    null, { timeout: 5_000 });
-  await page.keyboard.press("KeyF");
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__.state.arena),
-    null, { timeout: 10_000 });
-  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.combat.balls)).toBe(0);
-});
-
-test("the emitter reads out fire, recall and recharge", async ({ page }) => {
-  test.setTimeout(120_000);
-  await intoCaverns(page);
-  const readout = page.locator("#emitterStat");
-  await expect(readout).toHaveAttribute("data-state", "ready");
-
-  await page.keyboard.press("Space");
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.balls > 0,
-    null, { timeout: 5_000 });
-  await expect(readout).toHaveAttribute("data-state", "out");
-
-  // Recall takes the ball back and pays the full recharge for it, which is what makes taking a
-  // wasted shot back a decision rather than a free undo.
   await page.keyboard.press("KeyR");
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.balls === 0,
-    null, { timeout: 5_000 });
-  await expect(readout).toHaveAttribute("data-state", "charging");
-  // Firing during the recharge is refused rather than queued.
-  await page.keyboard.press("Space");
-  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.combat.balls)).toBe(0);
-
-  await expect(readout).toHaveAttribute("data-state", "ready", { timeout: 10_000 });
-  await page.keyboard.press("Space");
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.balls > 0,
-    null, { timeout: 5_000 });
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => "balls" in (window as unknown as Win).__OREKENOID__.state.combat)).toBe(false);
+  await expect(page.locator("#emitterStat")).toHaveCount(0);
 });
 
-test("the emitter readout is a caverns-only instrument", async ({ page }) => {
-  test.setTimeout(120_000);
-  await intoCaverns(page);
-  await expect(page.locator("#emitterStat")).toBeVisible();
-  await page.keyboard.press("KeyF");
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__.state.arena),
-    null, { timeout: 10_000 });
-  // Inside a claim the ball belongs to the claim, and the BALLS pips already say how many are left.
-  await expect(page.locator("#emitterStat")).toBeHidden();
-});
-
-test("a Spitter holds its range and its globs cost the hull", async ({ page }) => {
+test("a Bounder walks the rock and gets mad when it sees the drone", async ({ page }) => {
   test.setTimeout(120_000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const spot = await intoCaverns(page);
-  const before = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.integrity);
-  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI, "spitter"),
-    { x: spot.x + 8, y: spot.y });
 
-  await page.waitForFunction((was) => (window as unknown as Win).__OREKENOID__.state.integrity < was,
-    before, { timeout: 25_000 });
-  // It never closed to contact: the damage came from a glob crossing the room, not from a ram.
-  const creature = await trackedCreature(page, { x: spot.x + 8, y: spot.y });
-  expect(creature).not.toBeNull();
-  expect(Math.hypot(creature.x - spot.x, creature.y - spot.y)).toBeGreaterThan(3);
-  expect(errors).toEqual([]);
-});
-
-test("a Douser puts the lamp out, and the ball gives it back", async ({ page }) => {
-  test.setTimeout(120_000);
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  const spot = await intoCaverns(page);
-  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.combat.lamp)).toBe(1);
-
-  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI, "douser"),
-    { x: spot.x + 5, y: spot.y });
-  // The lamp goes down while it is on the hull. This is the whole creature.
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.lamp < 0.5,
-    null, { timeout: 25_000 });
-
-  // Shake it off. It is sitting on the drone, so this is the ball coming back into the machine.
-  await page.evaluate(() => {
-    for (const creature of (window as unknown as Win).__OREKENOID__.game.combat.roster) {
-      if (creature.kind === "douser") creature.hp = 0, creature.state = "dead";
-    }
-  });
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.lamp > 0.9,
-    null, { timeout: 20_000 });
-  expect(errors).toEqual([]);
-});
-
-test("a creature is drawn if and only if the drone can see it", async ({ page }) => {
-  test.setTimeout(120_000);
-  await intoCaverns(page);
-
-  // Somewhere robustly out of sight: the whole disc around it, not just its centre, so a creature
-  // that shuffles a cell while settling does not wander over the shadow boundary and make the test
-  // about the boundary instead of about the rule.
-  const hidden = await page.evaluate(() => {
+  const placed = await page.evaluate((at) => {
     const hook = (window as unknown as Win).__OREKENOID__;
     const world = hook.world;
-    const drone = { x: hook.game.player.x / 42, y: hook.game.player.y / 42 };
-    const sees = (x: number, y: number) => {
-      for (let t = 0; t <= 1; t += 0.01) {
-        if (world.solidAt(drone.x + (x - drone.x) * t, drone.y + (y - drone.y) * t)) return false;
-      }
-      return true;
-    };
-    for (let radius = 5; radius < 24; radius += 0.5) {
-      for (let step = 0; step < 96; step++) {
-        const angle = (step / 96) * Math.PI * 2;
-        const x = drone.x + Math.cos(angle) * radius;
-        const y = drone.y + Math.sin(angle) * radius;
+    for (let radius = 2.5; radius <= 8; radius += 0.5) {
+      for (let index = 0; index < 32; index++) {
+        const angle = (index / 32) * Math.PI * 2;
+        const x = at.x + Math.cos(angle) * radius;
+        const y = at.y + Math.sin(angle) * radius;
         if (world.solidAt(x, y)) continue;
-        let clearOfSight = true;
-        for (let s = 0; s < 8 && clearOfSight; s++) {
-          const a = (s / 8) * Math.PI * 2;
-          if (sees(x + Math.cos(a) * 1.5, y + Math.sin(a) * 1.5)) clearOfSight = false;
+        for (let probe = 0; probe < 16; probe++) {
+          const surface = (probe / 16) * Math.PI * 2;
+          if (!world.solidAt(x + Math.cos(surface) * 0.84, y + Math.sin(surface) * 0.84)) continue;
+          hook.spawnCreature(x, y, surface);
+          return { x, y };
         }
-        if (clearOfSight && !sees(x, y)) return { x, y };
       }
     }
     return null;
-  });
-  expect(hidden, "the world should have somewhere robustly out of sight").not.toBeNull();
+  }, spot);
+  expect(placed, "there should be a surface near the drone to place one on").not.toBeNull();
 
-  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, 0, "grinder"), hidden!);
-  await page.waitForTimeout(400);
-
-  // The rule, checked against wherever each creature actually is: terrain shows dimly through
-  // shadow, creatures do not, because one at a third brightness is one you can still see.
-  const rows = await page.evaluate(() => {
-    const hook = (window as unknown as Win).__OREKENOID__;
-    const game = hook.game;
-    const drone = { x: game.player.x / 42, y: game.player.y / 42 };
-    return (game.combat as any).creatures.map((entry: any) => {
-      let seen = true;
-      for (let t = 0; t <= 1; t += 0.01) {
-        if (hook.world.solidAt(
-          drone.x + (entry.creature.x - drone.x) * t,
-          drone.y + (entry.creature.y - drone.y) * t,
-        )) { seen = false; break; }
-      }
-      return { visible: entry.display.container.visible, seen, kind: entry.creature.kind };
-    });
-  });
-  expect(rows.length).toBeGreaterThan(0);
-  for (const row of rows) expect(row.visible, `${row.kind} visible=${row.visible} seen=${row.seen}`).toBe(row.seen);
-  // And the placed one really was hidden, so the test proves something.
-  expect(rows.some((row: any) => !row.visible)).toBe(true);
+  await page.waitForFunction(() => {
+    const roster = (window as unknown as Win).__OREKENOID__.state.combat.creatures;
+    return roster.some((creature: any) => creature.state !== "idle" && creature.state !== "dead");
+  }, null, { timeout: 25_000 });
+  // And it never lost its grip on the rock while doing it.
+  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.combat.creatures
+    .every((creature: any) => !creature.adrift))).toBe(true);
+  expect(errors).toEqual([]);
 });
 
-test("a smothered lamp blinds the drone to what it could plainly see", async ({ page }) => {
+test("meeting one with the back of the paddle costs the hull", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const spot = await intoCaverns(page);
+  const before = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.integrity);
+
+  // The face points east, so this arrives from the west: into the back of the machine.
+  await hurlAt(page, { x: spot.x - 4, y: spot.y }, { x: spot.x, y: spot.y });
+  await page.waitForFunction((was) => (window as unknown as Win).__OREKENOID__.state.integrity < was,
+    before, { timeout: 20_000 });
+  expect(errors).toEqual([]);
+});
+
+test("meeting one with the face costs nothing at all", async ({ page }) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const spot = await intoCaverns(page);
+  // The room to ourselves: the mine keeps sending its own, and one of those arriving from behind would
+  // make this a test about the whole world instead of about the face.
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.setSpawning(false));
+  const before = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.integrity);
+  const strikesBefore = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.combat.strikes);
+
+  // One throw, square into the front of the face from the east, and the measurement stops at the
+  // moment of contact. Letting it run on would be a different claim and a false one: a returned
+  // Bounder is still live, still bouncing, and perfectly entitled to come back round at the hull.
+  await hurlAt(page, { x: spot.x + 4, y: spot.y }, { x: spot.x, y: spot.y });
+  await page.waitForFunction((was) => (window as unknown as Win).__OREKENOID__.state.combat.returns > was,
+    0, { timeout: 15_000 });
+  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.combat.strikes))
+    .toBe(strikesBefore);
+  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.state.integrity)).toBe(before);
+  expect(errors).toEqual([]);
+});
+
+test("a kill pays out into cargo, and standing near it collects it", async ({ page }) => {
+  test.setTimeout(120_000);
+  const spot = await intoCaverns(page);
+  const before = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.economy.carriedTotal);
+
+  // Killed on the spot, so the test is about the payout rather than about winning a fight: one point
+  // of health left, already returned, so its next contact with rock finishes it.
+  await page.evaluate((at) => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    const creature = hook.spawnCreature(at.x + 1.2, at.y + 0.4);
+    creature.ores = ["iron"];
+    creature.hp = 1;
+    creature.state = "hurl";
+    creature.deflected = true;
+    creature.timer = 3;
+    // Aimed at the nearest rock, because a returned Bounder is killed by landing and a stationary one
+    // never lands. Whichever way that is, the ore ends up within a couple of cells of the drone.
+    let best = { angle: 0, distance: Infinity };
+    for (let index = 0; index < 32; index++) {
+      const angle = (index / 32) * Math.PI * 2;
+      for (let radius = 0.6; radius < 6; radius += 0.2) {
+        if (!hook.world.solidAt(creature.x + Math.cos(angle) * radius, creature.y + Math.sin(angle) * radius)) continue;
+        if (radius < best.distance) best = { angle, distance: radius };
+        break;
+      }
+    }
+    creature.vx = Math.cos(best.angle) * 8.6;
+    creature.vy = Math.sin(best.angle) * 8.6;
+  }, spot);
+  await page.waitForFunction((was) => (window as unknown as Win).__OREKENOID__.economy.carriedTotal > was,
+    before, { timeout: 25_000 });
+  expect(await page.evaluate(() => (window as unknown as Win).__OREKENOID__.economy.carried("iron")))
+    .toBeGreaterThan(0);
+});
+
+test("the paddle lights only what is in front of it", async ({ page }) => {
   test.setTimeout(120_000);
   const spot = await intoCaverns(page);
 
-  // Down the open lane, in clear line of sight and well inside ordinary reach.
-  const target = { x: spot.x + 9, y: spot.y };
-  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI, "spitter"), target);
-  await page.waitForTimeout(400);
-  const seenAt = (page: any, near: { x: number; y: number }) => page.evaluate((at: any) => {
-    const game = (window as unknown as Win).__OREKENOID__.game;
-    const entry = (game.combat as any).creatures.find((e: any) => Math.hypot(e.creature.x - at.x, e.creature.y - at.y) < 4);
-    return entry ? entry.display.container.visible : null;
-  }, near);
-  expect(await seenAt(page, target), "visible with the lamp intact").toBe(true);
+  // One either side, both in clear line of sight and both well inside reach. The face points east, so
+  // only the eastern one may be drawn.
+  await page.evaluate((at) => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    hook.spawnCreature(at.x + 4, at.y);
+    hook.spawnCreature(at.x - 4, at.y);
+  }, spot);
+  await page.waitForTimeout(500);
 
-  // Now take the lamp. Sight collapses to a few cells, so the same creature at the same distance,
-  // with nothing whatsoever in the way, goes dark -- which is the entire creature.
-  await page.evaluate((at) => (window as unknown as Win).__OREKENOID__.spawnCreature(at.x, at.y, Math.PI, "douser"),
-    { x: spot.x + 2, y: spot.y });
-  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.combat.lamp <= 0.23,
-    null, { timeout: 25_000 });
-  await page.waitForTimeout(200);
-  expect(await seenAt(page, target), "hidden while the lamp is smothered").toBe(false);
+  // Matched by where they were put, not by index or by side: the ambient spawner is running too, and
+  // picking "the first eastern one" can pick its work instead of this test's.
+  const sides = () => page.evaluate((at) => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    const nearest = (x: number, y: number) => (game.combat as any).creatures
+      .map((entry: any) => ({
+        gap: Math.hypot(entry.creature.x - x, entry.creature.y - y),
+        visible: entry.display.container.visible,
+      }))
+      .sort((a: any, b: any) => a.gap - b.gap)[0];
+    return { east: nearest(at.x + 4, at.y), west: nearest(at.x - 4, at.y) };
+  }, spot);
+
+  const facingEast = await sides();
+  expect(facingEast.east.gap).toBeLessThan(2);
+  expect(facingEast.west.gap).toBeLessThan(2);
+  expect(facingEast.east.visible, "in front of the face").toBe(true);
+  expect(facingEast.west.visible, "behind the paddle").toBe(false);
+
+  // Turn the machine around. Nothing has moved but the heading, and the answer inverts -- which is
+  // what makes turning the act of looking.
+  await page.evaluate(() => { (window as unknown as Win).__OREKENOID__.game.player.heading = -Math.PI / 2; });
+  await page.waitForTimeout(400);
+  const facingWest = await sides();
+  expect(facingWest.east.visible, "now behind the paddle").toBe(false);
+  expect(facingWest.west.visible, "now in front of the face").toBe(true);
+});
+
+test("the drawn world behind the paddle is dark", async ({ page }) => {
+  test.setTimeout(120_000);
+  await intoCaverns(page);
+  // Read off the composited shadow mask itself rather than off the model, so this is about what was
+  // drawn. Sampling the visible canvas would be the more direct test and cannot work: reading a WebGL
+  // canvas back needs `preserveDrawingBuffer`, which the production app rightly does not set, so it
+  // measures a blank buffer instead of the frame.
+  const facingEast = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.shadowMask());
+  expect(facingEast.right, "in front of the face").toBeGreaterThan(facingEast.left + 60);
+
+  await page.evaluate(() => { (window as unknown as Win).__OREKENOID__.game.player.heading = -Math.PI / 2; });
+  await page.waitForTimeout(500);
+  const facingWest = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.shadowMask());
+  expect(facingWest.left, "in front of the face once turned").toBeGreaterThan(facingWest.right + 60);
 });

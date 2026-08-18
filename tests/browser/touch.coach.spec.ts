@@ -16,7 +16,7 @@ test("the opening prompt teaches gestures once a finger is used", async ({ page 
   await page.goto("/");
   await page.locator(".paddle-option.surveyor").tap();
   await page.locator("#beginButton").tap();
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 20_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(700);
 
   // Nothing has been touched on the canvas yet, so the prompt is still talking about keys: a

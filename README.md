@@ -55,46 +55,44 @@ Before deployment, the FTUE teaches survey, commitment, and unresolved-load dama
 
 ### The caverns
 
-Roaming is no longer a commute. The drone carries a lamp, the mine is dark beyond it, and things
-live out there.
+Roaming is no longer a commute. The drone carries no ball out here: the paddle is purely defensive,
+and the only thing in flight is the enemy.
 
-- `Space`: fire the ball into the cavern. It rebounds off rock at the same pace and with the same
-  feel as an arena volley, and it lights the room as it flies.
-- `R`: recall it, taking the recharge early. A shot that has gone somewhere useless costs the same
-  as one that has finished, so pulling it back is a decision rather than a wait.
+**The Bounder** is the whole roster. It is a segmented animal that crawls the surface of whatever rock
+it is stuck to — walking a floor, a ceiling and the underside of an overhang with the same code, and
+circling a free-standing island of rock forever because there is nowhere else for it to walk. Come
+inside its aggro range with line of sight and it curls up, telegraphs, and hurls itself at you under
+the same solver the arena's ball moves under.
 
-The ball is a charge, not an inventory. One is out at a time; when it is lost, recalled, or runs out
-of life, the emitter builds another, and how long that takes is the **emitter station's grade**. That
-gap is the combat progression: attacking lights the room, reloading blinds you.
+That gives one exchange, and the whole fight is in it:
+
+- **Meet it with the front of the paddle** and it goes back out with english on it, costing nothing.
+- **Let it reach anywhere else** — the back, the ends, the flanks — and the hull pays. It still goes
+  back out, so the trade is not wasted, only paid for.
+- Either way it is now marked, and the rock it lands against takes a point off it. **Three of those
+  kills it.** A Bounder that cleanly misses takes nothing from the landing, which is why the paddle is
+  necessary rather than decorative.
+
+One at a time is a rally you can win standing still. The difficulty is how many are in the air at
+once, which is a property of the room rather than of the creature — and is why there only needs to be
+one kind of them. A kill scatters ore drawn from the ground it spawned in, and getting near it sucks
+it into the hold.
 
 Darkness is Teleglitch's, and works the way Teleglitch's does: **black polygons extruded from wall
 faces away from the drone.** Those faces are traced from the silhouette the renderer actually draws —
 the noise-warped `visualSolidAt` contour, not the cell grid under it, which disagrees with the drawn
 edge by twenty to fifty pixels and would put a staircase of square steps alongside a curved rock
-face. A shadow that disagrees with the thing casting it is not a shadow. There is no lamp and no
-radius. A corridor is visible all the way down
-it, and what hides a thing is never how far off it is, only what is standing in between — so you are
-hidden from by *shape*, and excavation carves sightlines. A claim you cut last hour is a window.
+face. A shadow that disagrees with the thing casting it is not a shadow.
 
-Shadow is translucent, not black: terrain and floor survive in it at about a third brightness, so
-the silhouette of a chamber you are standing in the dark half of stays readable. **Creatures do not**
-— they are hidden outright, because one at a third brightness is one you can still see. That is the
+The lamp is on the **front face of the paddle** and throws a half turn ahead of it. The machine is
+opaque, so nothing behind it is lit, and turning the drone is how the player looks at something. There
+is no radius: a corridor ahead of you is visible all the way down it, and what hides a thing is only
+what stands in between.
+
+Shadow is translucent, not black: terrain and floor survive in it at about a third brightness, so the
+silhouette of a chamber you are standing in the dark half of stays readable. **Creatures do not** —
+they are hidden outright, because one at a third brightness is one you can still see. That is the
 whole trade the layer makes.
-
-The one thing that ever imposes a distance is a **Douser** on the hull, which closes sight down to a
-few cells. The radius is the emergency, never the everyday.
-
-Three creatures, differentiated by what they take from you rather than by how they die. All three
-die the same way: hit them with the ball, enough times.
-
-| Creature | Takes | How it reads |
-|---|---|---|
-| **Grinder** | Standing still | Locks its aim, paints the lane in red, and charges. Dodge and it slams into rock, which is the window to hit it. |
-| **Spitter** | Free positioning | Holds its range, never closes, and lobs slow globs. Globs die on rock and to the ball. |
-| **Douser** | Your light | Ignores the hull, latches on, and closes your sight to a few cells. Shaking it off means banking the ball back into your own machine. |
-
-The rule the dark cannot break: **every attack is its own light source.** Darkness hides where
-something is, never what it is about to do.
 
 ### The Atlas
 

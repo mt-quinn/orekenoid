@@ -1,338 +1,182 @@
 // Cavern combat, assembled.
 //
-// Owns the balls in flight, the creatures in the dark, and the Pixi containers that draw them.
-// Everything consequential is reported back as events rather than done here: this module never
-// touches the player's health, the audio, or the save, because those belong to the game and it
-// should stay possible to run a fight in a test with no renderer attached.
+// Owns the Bounders, the ore they leave behind, and the Pixi containers that draw them. Everything
+// consequential is reported back as events rather than done here: this module never touches the
+// player's health, their cargo, the audio or the save, because those belong to the game and it should
+// stay possible to run a fight in a test with no renderer attached.
+//
+// The drone has no ball out here any more. The only thing in flight is a creature, and the paddle's
+// one job is to meet it with the right face.
 
-import { Container, Graphics } from "pixi.js";
-import { CELL } from "../config";
+import { Container } from "pixi.js";
+import { CELL, RESOURCES, type ResourceId } from "../config";
 import { mulberry32 } from "../worldgen/rng";
+import { FIELD, type SolidityOracle } from "./ballField";
+import { FEEL } from "../physics";
 import {
-  createFieldBall,
-  pathHitsCircle,
-  stepFieldBall,
-  FIELD,
-  type FieldBall,
-  type SolidityOracle,
-} from "./ballField";
-import {
-  createCreature, damageCreature, stepCreature, DOUSER, GRINDER, SPITTER,
-  type Creature, type CreatureKind,
+  BOUNDER,
+  bounceCreature,
+  createBounder,
+  deflectCreature,
+  stepCreature,
+  type Creature,
 } from "./creatures";
 import { hasLineOfSight } from "./sight";
 import {
-  createCreatureDisplay,
-  createFieldBallDisplay,
-  createFieldTrail,
-  createGlobDisplay,
-  drawCreatureTell,
-  type CreatureDisplay,
+  createBounderDisplay,
+  createOreDisplay,
+  drawBounder,
+  type BounderDisplay,
 } from "../view/field";
 
 export const COMBAT = {
-  /**
-   * Balls the emitter can hold out at once.
-   *
-   * One, deliberately. A second simultaneous ball is a real design decision about what the caverns
-   * ask of the player's attention, not a number to raise because the code supports it -- and the
-   * sequential balls a claim gets are a different idea wearing a similar name.
-   */
-  maxBalls: 1,
-  /** How long a ball lives before the emitter reclaims it. */
-  ballLifetime: 9,
-  /** Damage one ball hit does to a creature. */
-  ballDamage: 1,
   /** Creatures kept alive around the drone. */
-  population: 3,
-  /**
-   * How the population is drawn.
-   *
-   * Weighted, not uniform. The Grinder is the metronome the other two are read against -- it should
-   * be the creature the player meets most and knows best, so that a Spitter holding its range or a
-   * Douser closing on the lamp registers as a *different* problem rather than as more of the same.
-   */
-  mix: [
-    { kind: "grinder" as CreatureKind, weight: 5 },
-    { kind: "spitter" as CreatureKind, weight: 3 },
-    { kind: "douser" as CreatureKind, weight: 2 },
-  ],
+  population: 4,
   /**
    * Ring the spawner works in, in cells.
    *
-   * The minimum is not a taste call: at the design framing of 1280x720 with survey zoom at one,
-   * the viewport is about 30.5 by 17 cells, so its half-diagonal is a shade under 17.5. Anything
-   * spawned past that is off screen whatever direction the player is facing, which is the only
-   * guarantee that actually matters -- nothing may ever appear in front of them. Phones zoom out
-   * to a *narrower* world view, so desktop is the worst case and this is sized against it.
+   * The minimum is not a taste call: at the design framing of 1280x720 with survey zoom at one, the
+   * viewport is about 30.5 by 17 cells, so its half-diagonal is a shade under 17.5. Anything spawned
+   * past that is off screen whatever direction the player is facing, which is the only guarantee that
+   * matters -- nothing may ever appear in front of them.
    */
   spawnMin: 18,
   spawnMax: 30,
   /** Anything beyond this is forgotten, so a fight left behind stays left behind. */
   despawn: 42,
   /** Seconds between spawn attempts. */
-  spawnInterval: 1.6,
+  spawnInterval: 1.4,
   /** How long a corpse is drawn while it sinks. */
-  corpseSeconds: 0.5,
+  corpseSeconds: 0.45,
   /**
-   * The drone, as a circle, for contact tests.
+   * The drone's hull, across its short axis, in cells.
    *
-   * The hull is really a long thin capsule -- about 3.7 cells by 0.5 -- and a single radius cannot
-   * be both. This is deliberately sized between the two: generous enough that a charge across the
-   * machine connects, tight enough that one down its length is not a free hit from two cells away.
-   * A capsule test is the right answer once the roster is settled and contact is worth that much
-   * precision.
+   * The machine is a long thin capsule -- roughly 3.7 cells by 0.5 -- so contact is tested against a
+   * capsule rather than a circle. It has to be, now that *which part* was touched is the whole
+   * mechanic: a single radius cannot tell the front of the paddle from its back.
    */
-  droneHitRadius: 0.8,
-  /** Largest simulation bite. Above this a fast ball can step past something it should have hit. */
-  maxStep: 0.033,
-  /** Most real time one frame may consume, so a stalled tab drops time instead of catching up. */
-  maxCatchUp: 0.25,
+  hullHalfThickness: 0.28,
+  /** Frames of grace after a return, so one contact is one return. */
+  deflectGrace: 0.12,
+  /** How many pieces of ore a dead Bounder leaves. */
+  oreDrop: 3,
+  /** Where the vacuum starts pulling, in cells. */
+  vacuumRadius: 3.4,
+  /** How hard it pulls, in cells per second per second. */
+  vacuumPull: 34,
+  /** Close enough to be in the hold. */
+  vacuumBite: 0.55,
+  /** Unclaimed ore gives up after this long, so an abandoned fight leaves nothing lying about. */
+  oreLifetime: 40,
 } as const;
 
-/**
- * How long the emitter takes to build another ball, by the grade fitted at the emitter station.
- *
- * This is the combat progression. Everything else about a fight -- the dodge, the read, the bank
- * shot -- is the player getting better; this is the machine getting better, and it is felt as the
- * blind, unarmed gap between volleys getting shorter. Index is the station grade, zero to three.
- */
-export const EMITTER_RECHARGE: readonly number[] = [3.2, 2.6, 2.1, 1.6];
-
-export function rechargeSecondsFor(grade: number): number {
-  return EMITTER_RECHARGE[Math.max(0, Math.min(EMITTER_RECHARGE.length - 1, Math.floor(grade)))];
-}
-
 export interface CombatEvents {
-  bounces: Array<{ x: number; y: number }>;
-  ballsLost: Array<{ x: number; y: number }>;
-  hits: Array<{ x: number; y: number; killed: boolean }>;
-  rams: Array<{ x: number; y: number; damage: number }>;
-  slams: Array<{ x: number; y: number }>;
+  /** A Bounder reached the hull somewhere that is not the paddle's face. */
+  strikes: Array<{ x: number; y: number; damage: number }>;
+  /** The paddle returned one. */
+  returns: Array<{ x: number; y: number }>;
+  /** A returned Bounder landed against rock. */
+  landings: Array<{ x: number; y: number; killed: boolean }>;
+  /** One curled up and committed to a hurl. */
   commits: Array<{ x: number; y: number }>;
-  /** The emitter finished building a ball this frame. */
-  recharged: boolean;
-  /** A glob reached the hull. */
-  globHits: Array<{ x: number; y: number; damage: number }>;
-  /** A glob was shot down or spent itself on rock. */
-  globsSpent: Array<{ x: number; y: number }>;
-  /** A Douser is on the lamp right now. Non-zero means the light is being taken. */
-  smotherers: number;
+  /** Ore reached the hold. */
+  pickups: Array<{ resource: ResourceId; x: number; y: number }>;
 }
 
-interface BallEntry {
-  ball: FieldBall;
-  display: Container;
-  trail: Graphics;
-  previousX: number;
-  previousY: number;
+/** Where the drone is and which way its paddle faces. */
+export interface DronePose {
+  /** Cell coordinates of the hull's centre. */
+  x: number;
+  y: number;
+  /** The hull's long axis, matching `FrameGeometry.angle`. */
+  heading: number;
+  /** The paddle face's span, in cells. */
+  paddleWidth: number;
 }
 
-interface Glob {
+interface CreatureEntry {
+  creature: Creature;
+  display: BounderDisplay;
+  /** Counts up once dead, so a kill sinks rather than vanishing. */
+  fade: number;
+  /** Counts down after a return. */
+  grace: number;
+}
+
+interface OrePiece {
   x: number;
   y: number;
   vx: number;
   vy: number;
   age: number;
+  resource: ResourceId;
   display: Container;
 }
 
-interface CreatureEntry {
-  creature: Creature;
-  display: CreatureDisplay;
-  /** Counts up once dead, so a kill sinks rather than vanishing. */
-  fade: number;
-}
-
 const noEvents = (): CombatEvents => ({
-  bounces: [], ballsLost: [], hits: [], rams: [], slams: [], commits: [], recharged: false,
-  globHits: [], globsSpent: [], smotherers: 0,
+  strikes: [], returns: [], landings: [], commits: [], pickups: [],
 });
 
 export class FieldCombat {
   readonly container = new Container();
-  private readonly balls: BallEntry[] = [];
   private readonly creatures: CreatureEntry[] = [];
-  private readonly globs: Glob[] = [];
+  private readonly ore: OrePiece[] = [];
   private readonly random: () => number;
   private spawnTimer = 0;
-  /** Seconds until the emitter can fire again. */
-  private recharge = 0;
-  /** Set by the host from the emitter station's grade, so a refit is felt on the next volley. */
-  rechargeSeconds = EMITTER_RECHARGE[0];
+  /**
+   * Whether the ambient spawner runs.
+   *
+   * A seam for tests that need the room to themselves: measuring one exchange is impossible while the
+   * mine keeps sending its own, and a test that has to assert "nothing at all hit me" is a test about
+   * the whole world rather than about the paddle.
+   */
+  spawning = true;
+  /** Filled by the host so a spawn can be paid for in the ore of the ground it happened in. */
+  oreTableFor: (x: number, y: number) => ResourceId[] = () => [];
 
   constructor(private readonly world: SolidityOracle, seed: number) {
     this.random = mulberry32(seed ^ 0x5eed_c0de);
-  }
-
-  get liveBalls(): number {
-    return this.balls.length;
   }
 
   get liveCreatures(): number {
     return this.creatures.filter((entry) => entry.creature.state !== "dead").length;
   }
 
-  /** For tests and the HUD: the creatures currently simulated. */
+  get liveOre(): number {
+    return this.ore.length;
+  }
+
+  /** For tests and the debug hook: the creatures currently simulated. */
   get roster(): readonly Creature[] {
     return this.creatures.map((entry) => entry.creature);
   }
 
-  canFire(): boolean {
-    return this.balls.length < COMBAT.maxBalls && this.recharge <= 0;
-  }
-
-  /** Seconds left on the recharge, zero when the emitter is ready. */
-  get rechargeRemaining(): number {
-    return this.recharge;
-  }
-
-  /** 0 the instant a ball is reclaimed, 1 when the emitter is ready. Drives the HUD. */
-  get chargeProgress(): number {
-    if (this.recharge <= 0) return 1;
-    return Math.max(0, Math.min(1, 1 - this.recharge / this.rechargeSeconds));
-  }
-
-  /**
-   * Send a ball out from the drone's emitter.
-   *
-   * Refused if it would be born inside rock, because a ball that spawns buried is retired on its
-   * first step and reads to the player as the fire button not working.
-   */
-  fire(x: number, y: number, heading: number): boolean {
-    if (!this.canFire()) return false;
-    const ball = createFieldBall(x, y, heading);
-    const step = stepFieldBall(ball, this.world, 0);
-    if (step.buried) return false;
-    const display = createFieldBallDisplay();
-    const trail = createFieldTrail();
-    this.container.addChild(trail, display);
-    this.balls.push({ ball, display, trail, previousX: ball.x, previousY: ball.y });
-    return true;
-  }
-
-  /**
-   * Pull every ball home early, and start the clock.
-   *
-   * This is the whole reason the recharge is a decision rather than a wait: a shot that has gone
-   * somewhere useless costs the same as a shot that has finished, so taking it back the moment you
-   * know it is wasted is strictly better play than watching it rattle out its nine seconds.
-   */
-  recall(): number {
-    const count = this.balls.length;
-    for (const entry of this.balls) this.retire(entry);
-    this.balls.length = 0;
-    if (count > 0) this.recharge = this.rechargeSeconds;
-    return count;
-  }
-
   clear(): void {
-    this.recall();
-    this.recharge = 0;
     for (const entry of this.creatures) entry.display.container.destroy({ children: true });
     this.creatures.length = 0;
-    for (const glob of this.globs) glob.display.destroy({ children: true });
-    this.globs.length = 0;
+    for (const piece of this.ore) piece.display.destroy({ children: true });
+    this.ore.length = 0;
   }
 
-  private retire(entry: BallEntry): void {
-    entry.display.destroy({ children: true });
-    entry.trail.destroy();
-  }
-
-  update(
-    dt: number,
-    drone: { x: number; y: number; radius: number } | null,
-    isLit?: (x: number, y: number) => boolean,
-  ): CombatEvents {
+  update(dt: number, drone: DronePose | null, isLit?: (x: number, y: number) => boolean): CombatEvents {
     const events = noEvents();
     if (dt <= 0) return events;
-
-    // Substepped, not clamped.
-    //
-    // A single `min(0.033, dt)` keeps the integration stable and quietly runs the whole simulation
-    // in slow motion on any machine that cannot hold 30fps: at 13fps a frame is 77ms, only 33ms of
-    // it gets simulated, and everything with a clock -- the recharge above all -- takes twice as
-    // long in wall-clock seconds as the number the player was shown. Consuming the full frame in
-    // stable-sized bites keeps game time and real time the same thing.
-    //
-    // The total is capped so returning to a stalled tab catches up by dropping time rather than by
-    // teleporting every creature through a second of movement at once.
-    let remaining = Math.min(dt, COMBAT.maxCatchUp);
+    // Substepped rather than clamped: clamping a long frame runs the whole simulation in slow motion,
+    // so every clock in it lies on a machine that cannot hold the frame rate.
+    let remaining = Math.min(dt, 0.25);
     while (remaining > 1e-6) {
-      const step = Math.min(COMBAT.maxStep, remaining);
+      const step = Math.min(0.033, remaining);
       remaining -= step;
-      if (this.recharge > 0) {
-        this.recharge = Math.max(0, this.recharge - step);
-        if (this.recharge === 0) events.recharged = true;
-      }
-      this.updateBalls(step, events);
       this.updateCreatures(step, drone, events, isLit);
-      this.updateGlobs(step, drone, events);
+      this.updateOre(step, drone, events);
       if (drone) this.maintainPopulation(step, drone);
     }
     return events;
   }
 
-  private updateBalls(dt: number, events: CombatEvents): void {
-    for (let index = this.balls.length - 1; index >= 0; index--) {
-      const entry = this.balls[index];
-      const ball = entry.ball;
-      entry.previousX = ball.x;
-      entry.previousY = ball.y;
-      const step = stepFieldBall(ball, this.world, dt);
-      for (const bounce of step.bounces) events.bounces.push({ x: bounce.x, y: bounce.y });
-
-      // Creature hits are tested against the path the ball swept, not where it ended up: at field
-      // speed the ball crosses a Grinder in a couple of frames and endpoint sampling walks through
-      // it about a third of the time.
-      for (const target of this.creatures) {
-        const creature = target.creature;
-        if (creature.state === "dead") continue;
-        if (!pathHitsCircle(entry.previousX, entry.previousY, ball.x, ball.y, creature.x, creature.y, creature.radius + ball.radius)) continue;
-        const killed = damageCreature(creature, COMBAT.ballDamage, ball.vx, ball.vy);
-        events.hits.push({ x: creature.x, y: creature.y, killed });
-        // Rebound off the carapace, so a hit reads as a hit and the ball stays in play. Normal is
-        // from the creature's centre out to the ball, which is the only sensible surface a circle
-        // has to offer.
-        const dx = ball.x - creature.x;
-        const dy = ball.y - creature.y;
-        const distance = Math.hypot(dx, dy) || 1;
-        const speed = Math.hypot(ball.vx, ball.vy) || FIELD.speed;
-        const nx = dx / distance;
-        const ny = dy / distance;
-        const dot = ball.vx * nx + ball.vy * ny;
-        ball.vx -= 2 * dot * nx;
-        ball.vy -= 2 * dot * ny;
-        const magnitude = Math.hypot(ball.vx, ball.vy) || speed;
-        ball.vx = ball.vx / magnitude * speed;
-        ball.vy = ball.vy / magnitude * speed;
-        // Lifted clear of the creature it just struck, or the next frame reads as a second hit.
-        ball.x = creature.x + nx * (creature.radius + ball.radius + FIELD.contactSkin);
-        ball.y = creature.y + ny * (creature.radius + ball.radius + FIELD.contactSkin);
-        break;
-      }
-
-      if (step.buried || ball.age >= COMBAT.ballLifetime) {
-        events.ballsLost.push({ x: ball.x, y: ball.y });
-        this.retire(entry);
-        this.balls.splice(index, 1);
-        this.recharge = this.rechargeSeconds;
-        continue;
-      }
-
-      entry.display.position.set(ball.x * CELL, ball.y * CELL);
-      entry.trail.clear();
-      entry.trail
-        .moveTo(entry.previousX * CELL, entry.previousY * CELL)
-        .lineTo(ball.x * CELL, ball.y * CELL)
-        .stroke({ width: FIELD.radius * CELL * 1.5, color: 0xe7dbc0, alpha: 0.3 });
-    }
-  }
-
   private updateCreatures(
     dt: number,
-    drone: { x: number; y: number; radius: number } | null,
+    drone: DronePose | null,
     events: CombatEvents,
     isLit?: (x: number, y: number) => boolean,
   ): void {
@@ -351,26 +195,30 @@ export class FieldCombat {
         continue;
       }
 
+      entry.grace = Math.max(0, entry.grace - dt);
       const step = stepCreature(creature, this.world, drone, dt);
       if (step.committed) events.commits.push({ x: creature.x, y: creature.y });
-      if (step.slammed) events.slams.push({ x: creature.x, y: creature.y });
-      if (step.rammed) {
-        const damage = creature.kind === "douser" ? DOUSER.latchDamage : GRINDER.ramDamage;
-        events.rams.push({ x: creature.x, y: creature.y, damage });
-      }
-      if (step.smothering) events.smotherers++;
-      if (step.fired) {
-        const glob = {
-          x: step.fired.x,
-          y: step.fired.y,
-          vx: step.fired.dirX * SPITTER.projectileSpeed,
-          vy: step.fired.dirY * SPITTER.projectileSpeed,
-          age: 0,
-          display: createGlobDisplay(),
-        };
-        glob.display.position.set(glob.x * CELL, glob.y * CELL);
-        this.container.addChild(glob.display);
-        this.globs.push(glob);
+      if (step.landed) events.landings.push({ x: creature.x, y: creature.y, killed: step.killed });
+      if (step.killed) this.scatterOre(creature);
+
+      // Contact is resolved here rather than in the creature, because whether the paddle's face was
+      // the part that met it is a question about the drone.
+      if (step.struck && drone && entry.grace <= 0) {
+        const contact = paddleContact(creature, drone);
+        if (contact === "face") {
+          const along = alongPaddle(creature, drone);
+          const english = Math.max(-1, Math.min(1, along / (drone.paddleWidth / 2)));
+          deflectCreature(creature, drone.heading - Math.PI / 2, english, FEEL.englishCurve, FIELD.minOffNormal);
+          entry.grace = COMBAT.deflectGrace;
+          events.returns.push({ x: creature.x, y: creature.y });
+        } else if (contact === "hull") {
+          // Bounced off just the same, and marked just the same: the rock still gets it. The player
+          // has not wasted the exchange, only paid for it.
+          const normal = hullNormal(creature, drone);
+          bounceCreature(creature, normal.x, normal.y);
+          entry.grace = COMBAT.deflectGrace;
+          events.strikes.push({ x: creature.x, y: creature.y, damage: BOUNDER.hitDamage });
+        }
       }
 
       if (drone && Math.hypot(creature.x - drone.x, creature.y - drone.y) > COMBAT.despawn) {
@@ -380,122 +228,185 @@ export class FieldCombat {
       }
 
       entry.display.container.position.set(creature.x * CELL, creature.y * CELL);
-      entry.display.container.rotation = creature.facing;
-      // Darkness hides it outright rather than dimming it. A creature at thirty percent brightness
-      // is a creature you can still see, which is not darkness, it is a filter. A telling creature
-      // lights its own cell, so this is also what makes the tell the thing that reveals it.
+      // Darkness hides it outright rather than dimming it. Terrain survives in shadow at a third
+      // brightness; a creature at a third brightness is a creature you can still see.
       entry.display.container.visible = !isLit || isLit(creature.x, creature.y);
-      drawCreatureTell(entry.display, creature);
+      drawBounder(entry.display, creature);
     }
   }
 
   /**
-   * Keep a few creatures around the drone.
+   * Ore on the floor, and the pull that collects it.
    *
-   * Spawned out of sight and at a distance, so nothing ever appears in front of the player -- a
-   * creature that pops into an empty room the player is looking at reads as a bug however
-   * carefully it was placed.
+   * A collection radius was tried and removed once before, in the arena, where it was the same
+   * mechanic as the paddle catching drops and so did the same job twice. Out here nothing else
+   * collects anything, so it is the only mechanic rather than a duplicate one -- and it keeps a kill
+   * from becoming an errand.
    */
-  private maintainPopulation(dt: number, drone: { x: number; y: number }): void {
+  private updateOre(dt: number, drone: DronePose | null, events: CombatEvents): void {
+    for (let index = this.ore.length - 1; index >= 0; index--) {
+      const piece = this.ore[index];
+      piece.age += dt;
+      if (drone) {
+        const dx = drone.x - piece.x;
+        const dy = drone.y - piece.y;
+        const distance = Math.hypot(dx, dy) || 1;
+        if (distance <= COMBAT.vacuumBite) {
+          events.pickups.push({ resource: piece.resource, x: piece.x, y: piece.y });
+          piece.display.destroy({ children: true });
+          this.ore.splice(index, 1);
+          continue;
+        }
+        if (distance <= COMBAT.vacuumRadius) {
+          // Pull that strengthens as it closes, so the last of the distance is covered fast and the
+          // piece arrives rather than drifting in.
+          const pull = COMBAT.vacuumPull * (1 - distance / COMBAT.vacuumRadius) * dt;
+          piece.vx += (dx / distance) * pull;
+          piece.vy += (dy / distance) * pull;
+        }
+      }
+      if (piece.age >= COMBAT.oreLifetime) {
+        piece.display.destroy({ children: true });
+        this.ore.splice(index, 1);
+        continue;
+      }
+      piece.vx *= 0.92;
+      piece.vy *= 0.92;
+      const next = { x: piece.x + piece.vx * dt, y: piece.y + piece.vy * dt };
+      // Ore does not pass through rock, but neither does it need a solver: stop it dead at a wall.
+      if (!this.world.solidAt(next.x, next.y)) {
+        piece.x = next.x;
+        piece.y = next.y;
+      } else {
+        piece.vx = 0;
+        piece.vy = 0;
+      }
+      piece.display.position.set(piece.x * CELL, piece.y * CELL);
+      piece.display.rotation += dt * 1.4;
+    }
+  }
+
+  private scatterOre(creature: Creature): void {
+    for (let index = 0; index < COMBAT.oreDrop; index++) {
+      const resource = creature.ores[index % Math.max(1, creature.ores.length)];
+      if (!resource) continue;
+      const angle = this.random() * Math.PI * 2;
+      const speed = 1.4 + this.random() * 1.6;
+      const piece: OrePiece = {
+        x: creature.x,
+        y: creature.y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        age: 0,
+        resource,
+        display: createOreDisplay(RESOURCES[resource].colour),
+      };
+      piece.display.position.set(piece.x * CELL, piece.y * CELL);
+      this.container.addChild(piece.display);
+      this.ore.push(piece);
+    }
+  }
+
+  /**
+   * Keep a few Bounders around the drone.
+   *
+   * Spawned out of sight where possible, at a distance in every case, and always attached to rock,
+   * because a Bounder that is not on a surface has nothing to walk on and would sit where it was put.
+   */
+  private maintainPopulation(dt: number, drone: DronePose): void {
+    if (!this.spawning) return;
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0) return;
     this.spawnTimer = COMBAT.spawnInterval;
     if (this.liveCreatures >= COMBAT.population) return;
 
-    // Two passes. The first insists on broken line of sight, which is the nicer placement: the
-    // creature is round a corner rather than merely far off. The second accepts any open ground in
-    // the ring, because insisting was a silent failure -- in a wide open chamber every candidate is
-    // visible, nothing ever spawned, and the biggest rooms in the mine were the safest places in
-    // it. Distance already guarantees off screen, so the fallback is safe on its own.
-    let fallback: { x: number; y: number } | null = null;
-    for (let attempt = 0; attempt < 24; attempt++) {
+    let fallback: { x: number; y: number; surface: number } | null = null;
+    for (let attempt = 0; attempt < 32; attempt++) {
       const angle = this.random() * Math.PI * 2;
       const distance = COMBAT.spawnMin + this.random() * (COMBAT.spawnMax - COMBAT.spawnMin);
       const x = drone.x + Math.cos(angle) * distance;
       const y = drone.y + Math.sin(angle) * distance;
-      if (!this.roomFor(x, y, GRINDER.radius * 1.6)) continue;
+      const surface = this.surfaceNear(x, y);
+      if (surface === null) continue;
       if (hasLineOfSight(this.world, x, y, drone.x, drone.y)) {
-        fallback ??= { x, y };
+        fallback ??= { x, y, surface };
         continue;
       }
-      this.spawn(x, y, this.random() * Math.PI * 2, this.rollKind());
+      this.spawn(x, y, surface);
       return;
     }
-    if (fallback) this.spawn(fallback.x, fallback.y, this.random() * Math.PI * 2, this.rollKind());
-  }
-
-  /** Draw a species from the weighted mix. */
-  private rollKind(): CreatureKind {
-    const total = COMBAT.mix.reduce((sum, entry) => sum + entry.weight, 0);
-    let roll = this.random() * total;
-    for (const entry of COMBAT.mix) {
-      roll -= entry.weight;
-      if (roll <= 0) return entry.kind;
-    }
-    return COMBAT.mix[0].kind;
+    // Distance already guarantees off screen, so taking a visible spot beats never spawning -- which
+    // is what insisting on cover produced in wide open chambers.
+    if (fallback) this.spawn(fallback.x, fallback.y, fallback.surface);
   }
 
   /**
-   * Globs in flight.
-   *
-   * They die on rock, they die to the ball, and they die of old age. All three matter: the first
-   * makes cover real, the second makes the ball a defensive tool as well as an offensive one, and
-   * the third means an abandoned fight never leaves anything drifting in the dark.
+   * Is there open ground here with rock to hold on to, and if so which way is the rock?
    */
-  private updateGlobs(dt: number, drone: { x: number; y: number; radius: number } | null, events: CombatEvents): void {
-    for (let index = this.globs.length - 1; index >= 0; index--) {
-      const glob = this.globs[index];
-      const previousX = glob.x;
-      const previousY = glob.y;
-      glob.age += dt;
-      glob.x += glob.vx * dt;
-      glob.y += glob.vy * dt;
-
-      let spent = glob.age >= SPITTER.projectileLife;
-      let hitDrone = false;
-      if (!spent && this.world.solidAt(glob.x, glob.y)) spent = true;
-      if (!spent) {
-        for (const entry of this.balls) {
-          if (!pathHitsCircle(
-            entry.previousX, entry.previousY, entry.ball.x, entry.ball.y,
-            glob.x, glob.y, SPITTER.projectileRadius + entry.ball.radius,
-          )) continue;
-          spent = true;
-          break;
-        }
-      }
-      if (!spent && drone && pathHitsCircle(previousX, previousY, glob.x, glob.y, drone.x, drone.y, drone.radius + SPITTER.projectileRadius)) {
-        spent = true;
-        hitDrone = true;
-      }
-
-      if (spent) {
-        if (hitDrone) events.globHits.push({ x: glob.x, y: glob.y, damage: SPITTER.projectileDamage });
-        else events.globsSpent.push({ x: glob.x, y: glob.y });
-        glob.display.destroy({ children: true });
-        this.globs.splice(index, 1);
-        continue;
-      }
-      glob.display.position.set(glob.x * CELL, glob.y * CELL);
+  private surfaceNear(x: number, y: number): number | null {
+    if (this.world.solidAt(x, y)) return null;
+    const reach = BOUNDER.radius + BOUNDER.probeDepth;
+    for (let index = 0; index < 16; index++) {
+      const angle = (index / 16) * Math.PI * 2;
+      if (this.world.solidAt(x + Math.cos(angle) * reach, y + Math.sin(angle) * reach)) return angle;
     }
+    return null;
   }
 
-  /** Is there open ground here, with clearance to move? */
-  private roomFor(x: number, y: number, radius: number): boolean {
-    if (this.world.solidAt(x, y)) return false;
-    for (let index = 0; index < 8; index++) {
-      const angle = (index / 8) * Math.PI * 2;
-      if (this.world.solidAt(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius)) return false;
-    }
-    return true;
-  }
-
-  spawn(x: number, y: number, facing = 0, kind: CreatureKind = "grinder"): Creature {
-    const creature = createCreature(kind, x, y, facing);
-    const display = createCreatureDisplay(kind);
+  spawn(x: number, y: number, surfaceAngle = Math.PI / 2): Creature {
+    const circulation = this.random() < 0.5 ? 1 : -1;
+    const creature = createBounder(x, y, surfaceAngle, this.oreTableFor(x, y), surfaceAngle, circulation);
+    const display = createBounderDisplay();
     display.container.position.set(x * CELL, y * CELL);
     this.container.addChild(display.container);
-    this.creatures.push({ creature, display, fade: 0 });
+    this.creatures.push({ creature, display, fade: 0, grace: 0 });
     return creature;
   }
+}
+
+/** Outward direction from the hull's long axis to a creature touching it. */
+function hullNormal(creature: Creature, drone: DronePose): { x: number; y: number } {
+  const dx = creature.x - drone.x;
+  const dy = creature.y - drone.y;
+  const along = dx * Math.cos(drone.heading) + dy * Math.sin(drone.heading);
+  const halfWidth = drone.paddleWidth / 2;
+  const clamped = Math.max(-halfWidth, Math.min(halfWidth, along));
+  const nearestX = drone.x + Math.cos(drone.heading) * clamped;
+  const nearestY = drone.y + Math.sin(drone.heading) * clamped;
+  const outX = creature.x - nearestX;
+  const outY = creature.y - nearestY;
+  const length = Math.hypot(outX, outY);
+  // Dead on the axis has no outward direction; send it back the way it came.
+  if (length < 1e-6) return { x: -creature.vx, y: -creature.vy };
+  return { x: outX / length, y: outY / length };
+}
+
+/** Where along the paddle's face a creature is, in cells from its centre. */
+function alongPaddle(creature: Creature, drone: DronePose): number {
+  return (creature.x - drone.x) * Math.cos(drone.heading) + (creature.y - drone.y) * Math.sin(drone.heading);
+}
+
+/**
+ * Which part of the drone a flying Bounder is touching, if any.
+ *
+ * `face` is the front of the paddle: the forward side, within the span of the face itself. Everything
+ * else about the machine -- its back, its ends, its flanks -- is `hull`, and costs the player. Being
+ * strict about the span is what makes the ends of the paddle dangerous rather than merely useless,
+ * which is the difference between aiming the machine and pointing it roughly.
+ */
+export function paddleContact(creature: Creature, drone: DronePose): "face" | "hull" | null {
+  const dx = creature.x - drone.x;
+  const dy = creature.y - drone.y;
+  const along = dx * Math.cos(drone.heading) + dy * Math.sin(drone.heading);
+  const across = dx * Math.sin(drone.heading) - dy * Math.cos(drone.heading);
+  const halfWidth = drone.paddleWidth / 2;
+
+  // Contact first, then which part. Asking "is it on the face" before "is it touching at all" was a
+  // real bug: the face band was shallower than the hull capsule, so a Bounder arriving square on
+  // passed through a shell where it was close enough to count as a hull hit and not yet close enough
+  // to count as the face. Every head-on return came back as a hit on the player instead.
+  const clamped = Math.max(-halfWidth, Math.min(halfWidth, along));
+  const gap = Math.hypot(along - clamped, across);
+  if (gap > creature.radius + COMBAT.hullHalfThickness) return null;
+  return across > 0 && Math.abs(along) <= halfWidth ? "face" : "hull";
 }

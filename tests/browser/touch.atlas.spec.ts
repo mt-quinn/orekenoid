@@ -14,7 +14,7 @@ test("the Atlas can be opened and closed with a thumb", async ({ page }) => {
   await page.goto("/");
   await page.locator(".paddle-option.surveyor").tap();
   await page.locator("#beginButton").tap();
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 20_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);
   await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
@@ -46,7 +46,7 @@ test("a notch pushes both the interface and the drawn layer clear of it", async 
   await page.goto("/");
   await page.locator(".paddle-option.surveyor").tap();
   await page.locator("#beginButton").tap();
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 20_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(500);
 
   // Headless has no insets of its own, so the Dynamic Island is simulated by overriding the same

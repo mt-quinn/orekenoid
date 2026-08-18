@@ -1,198 +1,144 @@
 // Placeholder artwork for cavern combat.
 //
-// Deliberately plain. Step 2 of the combat build is a go/no-go on whether aiming a bouncing ball
-// at something that charges you is fun, and that question is answered by shapes and timings, not
-// by finish. What is *not* placeholder is the tell: the Grinder's wind-up glow is the whole read,
-// so it is drawn properly here even though the body is two polygons.
+// Deliberately plain, with one exception. The Bounder has to read as two different things at a glance
+// -- a segmented animal walking on a wall, and a ball in the air -- because the player's decision
+// depends entirely on which of the two it currently is. So the curl is drawn properly even though the
+// body is a handful of arcs, and the tell is drawn properly because the rule the dark cannot break is
+// that every attack is its own light source.
 
 import { Container, Graphics } from "pixi.js";
 import { CELL, PALETTE } from "../config";
-import { FIELD } from "../combat/ballField";
-import { DOUSER, GRINDER, SPITTER, type Creature, type CreatureKind } from "../combat/creatures";
+import { BOUNDER, type Creature } from "../combat/creatures";
 
-/** The ball, out in the world. Same size as the arena's, because it is the same ball. */
-export function createFieldBallDisplay(): Container {
-  const container = new Container();
-  const radius = FIELD.radius * CELL;
-  const glow = new Graphics().circle(0, 0, radius * 2.6).fill({ color: PALETTE.rail, alpha: 0.14 });
-  const body = new Graphics().circle(0, 0, radius).fill(PALETTE.rail);
-  container.addChild(glow, body);
-  return container;
-}
-
-/** The line the ball has swept this frame, so a fast ball reads as a streak and not a strobe. */
-export function createFieldTrail(): Graphics {
-  return new Graphics();
-}
-
-export interface CreatureDisplay {
+export interface BounderDisplay {
   container: Container;
-  body: Graphics;
+  /** Rotates with the creature. Everything that should lean with the surface lives in here. */
+  body: Container;
+  plates: Graphics;
   tell: Graphics;
 }
 
-/** A Spitter's glob, in flight. Its own light source, per the one rule the dark cannot break. */
-export function createGlobDisplay(): Container {
+/**
+ * A Bounder.
+ *
+ * Six overlapping plates around a centre, so curling is a single parameter: at rest they fan out into
+ * a segmented back with legs showing, and closed they overlap into a sphere. Same trick a real pill
+ * bug uses, and the reason it reads without animation frames.
+ */
+export function createBounderDisplay(): BounderDisplay {
   const container = new Container();
-  const radius = SPITTER.projectileRadius * CELL;
+  const body = new Container();
+  const tell = new Graphics();
+  const plates = new Graphics();
+  body.addChild(tell, plates);
+  container.addChild(body);
+  return { container, body, plates, tell };
+}
+
+const PLATES = 6;
+
+/**
+ * Redraw a Bounder at its current curl.
+ *
+ * `curl` runs from nothing to fully closed: 0 while it is walking, 1 in the air. The plates slide
+ * together and the whole body shortens as it goes, so an uncurled one is visibly wider than tall and a
+ * curled one is round -- which is the only thing the player needs to read from across a dark room.
+ */
+export function drawBounder(display: BounderDisplay, creature: Creature): void {
+  const radius = BOUNDER.radius * CELL;
+  const curl = creature.state === "hurl" ? 1
+    : creature.state === "coil" ? Math.min(1, creature.tell)
+      : creature.state === "spent" ? 0.35
+        : 0;
+
+  // Walking, it lies along the surface: the body's long axis follows the tangent, and the plates fan
+  // away from the rock. In the air there is no surface, so it simply spins.
+  display.body.rotation = creature.state === "hurl"
+    ? Math.atan2(creature.vy, creature.vx)
+    : creature.surfaceAngle - Math.PI / 2;
+
+  const plates = display.plates;
+  plates.clear();
+  // Legs, only while there is something to stand on and they are not tucked away.
+  if (curl < 0.5) {
+    const show = 1 - curl * 2;
+    for (let index = 0; index < 4; index++) {
+      const offset = (index / 3 - 0.5) * radius * 1.3;
+      plates
+        .moveTo(offset, radius * 0.5)
+        .lineTo(offset + radius * 0.16, radius * (0.5 + 0.42 * show))
+        .stroke({ width: 2, color: 0x53483c, alpha: 0.9 });
+    }
+  }
+  // The shell. Fanned out along the body when walking, stacked into a circle when curled.
+  for (let index = 0; index < PLATES; index++) {
+    const t = index / (PLATES - 1);
+    const spread = (t - 0.5) * radius * 1.7 * (1 - curl);
+    const arc = radius * (0.52 + 0.48 * curl);
+    const lift = -radius * 0.1 * (1 - curl);
+    plates
+      .ellipse(spread, lift, arc * (0.34 + 0.66 * curl), arc)
+      .fill({ color: index % 2 === 0 ? 0x6d5b46 : 0x5b4c3b, alpha: 1 })
+      .stroke({ width: 1.5, color: 0x2a231c, alpha: 0.85 });
+  }
+
+  drawTell(display, creature, radius);
+  const damage = 1 - creature.hp / creature.maxHp;
+  display.plates.tint = creature.hitFlash > 0
+    ? 0xffffff
+    : damage > 0.6 ? 0xd08a72 : damage > 0.3 ? 0xc0a288 : 0xffffff;
+}
+
+/**
+ * The tell.
+ *
+ * Two states worth announcing and they must not look alike. Winding up throws a lane down the heading
+ * it has locked, because that lane is the ground to leave. In the air it carries a hot core instead,
+ * because by then the lane is no longer a warning -- it is a fact, and what the player needs is to see
+ * where the thing *is* so they can turn the paddle to it.
+ */
+function drawTell(display: BounderDisplay, creature: Creature, radius: number): void {
+  const tell = display.tell;
+  tell.clear();
+  if (creature.state === "coil") {
+    const heat = creature.tell;
+    // Drawn in body-local space, so it has to be rotated back out of the body's own lean.
+    const lane = creature.facing - display.body.rotation;
+    if (creature.timer <= BOUNDER.lockSeconds) {
+      const reach = BOUNDER.hurlSpeed * BOUNDER.hurlSeconds * CELL * 0.3;
+      const spread = radius * 0.5 * heat;
+      tell.moveTo(Math.cos(lane) * radius * 0.5 - Math.sin(lane) * spread,
+        Math.sin(lane) * radius * 0.5 + Math.cos(lane) * spread)
+        .lineTo(Math.cos(lane) * reach - Math.sin(lane) * radius * 0.16,
+          Math.sin(lane) * reach + Math.cos(lane) * radius * 0.16)
+        .lineTo(Math.cos(lane) * reach + Math.sin(lane) * radius * 0.16,
+          Math.sin(lane) * reach - Math.cos(lane) * radius * 0.16)
+        .lineTo(Math.cos(lane) * radius * 0.5 + Math.sin(lane) * spread,
+          Math.sin(lane) * radius * 0.5 - Math.cos(lane) * spread)
+        .closePath()
+        .fill({ color: PALETTE.danger, alpha: 0.1 + heat * 0.18 });
+    }
+    tell.circle(0, 0, radius * (1.1 + heat * 0.5)).fill({ color: PALETTE.danger, alpha: 0.12 + heat * 0.3 });
+  } else if (creature.state === "hurl") {
+    tell.circle(0, 0, radius * 1.5).fill({ color: PALETTE.danger, alpha: 0.22 });
+    // Brighter once the paddle has sent it back, because that is the one moment the player is waiting
+    // on: a returned Bounder is about to take damage, and it should look like it.
+    if (creature.deflected) {
+      tell.circle(0, 0, radius * 2.1).fill({ color: PALETTE.rail, alpha: 0.2 });
+    }
+  }
+}
+
+/** A piece of ore on the cavern floor. */
+export function createOreDisplay(colour: number): Container {
+  const container = new Container();
+  const size = CELL * 0.16;
   container.addChild(
-    new Graphics().circle(0, 0, radius * 2.2).fill({ color: PALETTE.spore, alpha: 0.18 }),
-    new Graphics().circle(0, 0, radius).fill(PALETTE.spore),
+    new Graphics().circle(0, 0, size * 2.4).fill({ color: colour, alpha: 0.16 }),
+    new Graphics()
+      .moveTo(-size, 0).lineTo(0, -size).lineTo(size, 0).lineTo(0, size).closePath()
+      .fill(colour)
+      .stroke({ width: 1, color: PALETTE.void, alpha: 0.6 }),
   );
   return container;
-}
-
-/**
- * Silhouettes.
- *
- * The one thing the player must be able to do in a black room lit by a passing ball is name what
- * they just saw in that one frame. So the three read as three shapes at a glance and never as
- * three tints of the same shape: the Grinder is a wedge with a point, the Spitter is a squat
- * hunched sac, the Douser is a ragged star with nothing solid about it.
- */
-export function createCreatureDisplay(kind: CreatureKind): CreatureDisplay {
-  if (kind === "spitter") return createSpitterDisplay();
-  if (kind === "douser") return createDouserDisplay();
-  return createGrinderDisplay();
-}
-
-function createSpitterDisplay(): CreatureDisplay {
-  const container = new Container();
-  const radius = SPITTER.radius * CELL;
-  const tell = new Graphics();
-  const body = new Graphics();
-  // Squat and hunched, widest at the back, with a short blunt spout rather than a point: it throws
-  // rather than rams, and the silhouette should say so before the first glob does.
-  body
-    .ellipse(-radius * 0.15, 0, radius * 0.85, radius * 0.7)
-    .fill(0x40453a)
-    .stroke({ width: 2, color: PALETTE.machine, alpha: 0.8 })
-    .rect(radius * 0.5, -radius * 0.22, radius * 0.4, radius * 0.44)
-    .fill(0x2f3329);
-  container.addChild(tell, body);
-  return { container, body, tell };
-}
-
-function createDouserDisplay(): CreatureDisplay {
-  const container = new Container();
-  const radius = DOUSER.radius * CELL;
-  const tell = new Graphics();
-  const body = new Graphics();
-  // No flat faces and no point. A ragged star, so it never reads as something that can be blocked
-  // or steered -- it is going to arrive, and the question is only what you do once it has.
-  const points = 7;
-  body.moveTo(radius, 0);
-  for (let index = 1; index <= points * 2; index++) {
-    const angle = (index / (points * 2)) * Math.PI * 2;
-    const reach = index % 2 === 0 ? radius : radius * 0.42;
-    body.lineTo(Math.cos(angle) * reach, Math.sin(angle) * reach);
-  }
-  body.closePath().fill(0x1f2a33).stroke({ width: 1.5, color: 0x6f97b8, alpha: 0.9 });
-  container.addChild(tell, body);
-  return { container, body, tell };
-}
-
-/**
- * A Grinder.
- *
- * Wedge-shaped and pointed the way it is facing, because the one thing the player has to read off
- * it at a glance is which way the charge is going to go.
- */
-function createGrinderDisplay(): CreatureDisplay {
-  const container = new Container();
-  const radius = GRINDER.radius * CELL;
-  const tell = new Graphics();
-  const body = new Graphics();
-  // Armoured wedge: broad at the back, driven to a point at the front.
-  body
-    .moveTo(radius, 0)
-    .lineTo(-radius * 0.55, radius * 0.85)
-    .lineTo(-radius * 0.85, 0)
-    .lineTo(-radius * 0.55, -radius * 0.85)
-    .closePath()
-    .fill(0x4a3f38)
-    .stroke({ width: 2, color: PALETTE.machine, alpha: 0.85 });
-  container.addChild(tell, body);
-  return { container, body, tell };
-}
-
-/**
- * Redraw the tell.
- *
- * The rule for combat in the dark: every attack is its own light source. The wind-up therefore
- * brightens from nothing to a hard eye and throws a lane down the heading it has locked, so the
- * player is being shown the ground to leave rather than being asked to guess it.
- */
-export function drawCreatureTell(display: CreatureDisplay, creature: Creature): void {
-  if (creature.kind === "spitter") return drawSpitterTell(display, creature);
-  if (creature.kind === "douser") return drawDouserTell(display, creature);
-  drawGrinderTell(display, creature);
-}
-
-function drawGrinderTell(display: CreatureDisplay, creature: Creature): void {
-  const radius = GRINDER.radius * CELL;
-  display.tell.clear();
-  if (creature.state === "wind") {
-    const heat = creature.tell;
-    // The lane it has committed to. Only drawn once the aim is locked, so it never points somewhere
-    // the charge is not going to go.
-    if (creature.timer <= GRINDER.lockSeconds) {
-      display.tell
-        .moveTo(radius * 0.6, -radius * 0.5 * heat)
-        .lineTo(GRINDER.chargeSpeed * GRINDER.chargeSeconds * CELL * 0.42, -radius * 0.16 * heat)
-        .lineTo(GRINDER.chargeSpeed * GRINDER.chargeSeconds * CELL * 0.42, radius * 0.16 * heat)
-        .lineTo(radius * 0.6, radius * 0.5 * heat)
-        .closePath()
-        .fill({ color: PALETTE.danger, alpha: 0.1 + heat * 0.16 });
-    }
-    display.tell.circle(radius * 0.25, 0, radius * (0.2 + heat * 0.3))
-      .fill({ color: PALETTE.danger, alpha: 0.35 + heat * 0.6 });
-  } else if (creature.state === "charge") {
-    display.tell.circle(radius * 0.25, 0, radius * 0.5).fill({ color: PALETTE.danger, alpha: 0.9 });
-  } else if (creature.state === "recover") {
-    // Visibly open. The recovery is the reward for dodging, so it has to look like one.
-    display.tell.circle(radius * 0.25, 0, radius * 0.22).fill({ color: PALETTE.danger, alpha: 0.22 });
-  }
-  const damage = 1 - creature.hp / creature.maxHp;
-  display.body.alpha = 1;
-  display.body.tint = creature.hitFlash > 0
-    ? 0xffffff
-    : damage > 0.6 ? 0xd08a72 : damage > 0.3 ? 0xb59a86 : 0xffffff;
-}
-
-/**
- * The Spitter's telegraph.
- *
- * A charging mouth rather than a lane, because the shot is slow: the player is being told a glob
- * is coming and roughly from where, not handed a line to sidestep. The lane belongs to the Grinder,
- * whose attack is instantaneous once it commits.
- */
-function drawSpitterTell(display: CreatureDisplay, creature: Creature): void {
-  const radius = SPITTER.radius * CELL;
-  display.tell.clear();
-  if (creature.state === "wind") {
-    const heat = creature.tell;
-    display.tell
-      .circle(radius * 0.75, 0, radius * (0.18 + heat * 0.45))
-      .fill({ color: PALETTE.spore, alpha: 0.4 + heat * 0.55 });
-  }
-  display.body.tint = creature.hitFlash > 0 ? 0xffffff : creature.hp < creature.maxHp ? 0xc79f86 : 0xffffff;
-}
-
-/**
- * The Douser's glow.
- *
- * On the whole time it is hunting, and brightest when it is closest. It is the only creature that
- * announces itself continuously rather than per attack -- which is the trade for what it takes: it
- * can never ambush you, and it will reach you anyway.
- */
-function drawDouserTell(display: CreatureDisplay, creature: Creature): void {
-  const radius = DOUSER.radius * CELL;
-  display.tell.clear();
-  const heat = creature.state === "latched" ? 1 : creature.tell;
-  if (heat > 0.02) {
-    display.tell.circle(0, 0, radius * (1.1 + heat * 1.5)).fill({ color: 0x7fb2e8, alpha: 0.1 + heat * 0.3 });
-    display.tell.circle(0, 0, radius * 0.4).fill({ color: 0xdcefff, alpha: 0.4 + heat * 0.5 });
-  }
-  display.body.tint = creature.hitFlash > 0 ? 0xffffff : creature.hp < creature.maxHp ? 0x9fc0d4 : 0xffffff;
 }

@@ -117,6 +117,17 @@ export function materialFor(seed: number, x: number, y: number, sample: RegionSa
 }
 
 /**
+ * What metal this depth band is made of, given a roll in 0..1.
+ *
+ * The same table the generator seeds ore inclusions from, exposed because a creature killed in a
+ * chamber should pay in that chamber's metal -- and deriving a second table for it would be two
+ * answers to "what is down here" that could disagree.
+ */
+export function metalForBand(band: Band, roll: number): ResourceId {
+  return weightedPick(METALS_BY_BAND[band], roll);
+}
+
+/**
  * Choose the resource a cell drops, or null.
  *
  * Reagents are keyed strictly to their source material; metals appear only in

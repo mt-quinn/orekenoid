@@ -86,6 +86,11 @@ export class ShadowLayer {
    * Takes the world rect that changed and drops only the chunks it touches, plus their neighbours --
    * a cut near a chunk edge moves a contour that the adjacent chunk traced part of.
    */
+  /** The composited mask, for diagnostics: white where lit, dark where not. */
+  get maskTexture(): RenderTexture {
+    return this.texture;
+  }
+
   invalidate(minX?: number, minY?: number, maxX?: number, maxY?: number): void {
     if (minX === undefined || minY === undefined || maxX === undefined || maxY === undefined) {
       this.tracedChunks.clear();
@@ -134,7 +139,8 @@ export class ShadowLayer {
     focusY: number,
     halfWidth: number,
     halfHeight: number,
-    lampReach: number,
+    /** Direction the paddle's face points, in radians. Everything behind it is unlit. */
+    forward: number,
   ): void {
     const geometry = this.geometry;
     geometry.clear();
@@ -164,7 +170,7 @@ export class ShadowLayer {
       }
       geometry.poly(points).fill({ color: 0x000000, alpha: 1 });
     }
-    this.drawLampCap(eyeX, eyeY, lampReach);
+    this.drawFacing(eyeX, eyeY, forward);
 
     // Squeeze the visible world rect into the texture. Rotation is deliberately not handled: this
     // layer only runs in survey, where the camera never rotates.
@@ -228,18 +234,33 @@ export class ShadowLayer {
   }
 
   /**
-   * Close the dark in to a fixed distance regardless of what is in the way.
+   * Everything behind the paddle.
    *
-   * Off at full reach, which is the point: ordinary sight has no radius. It exists so a Douser on
-   * the hull has something to actually take. Drawn as one enormously thick circular stroke rather
-   * than a rectangle with a hole in it, because a stroke needs no even-odd winding to make the hole.
+   * The lamp is on the front face of the machine and the machine is opaque, so the lit region is a
+   * half turn ahead of it and nothing else -- which makes turning the drone the act of looking, and
+   * makes the player's own body the wall they most often have to work around.
+   *
+   * Drawn as one quad covering the half-plane behind the face rather than by extruding a shadow from
+   * the hull. Extruding would be the more literal model and gives the wrong answer: the light sits
+   * *on* the occluder, so the occluder blocks nothing at all and the shadow behind it is empty.
    */
-  private drawLampCap(eyeX: number, eyeY: number, reach: number): void {
+  private drawFacing(eyeX: number, eyeY: number, forward: number): void {
     this.cap.clear();
-    if (reach >= SHADOW.reach) return;
-    const band = SHADOW.reach * CELL;
+    const reach = SHADOW.reach * CELL;
+    const originX = eyeX * CELL;
+    const originY = eyeY * CELL;
+    // Along the face, and away from it.
+    const sideX = -Math.sin(forward);
+    const sideY = Math.cos(forward);
+    const backX = -Math.cos(forward);
+    const backY = -Math.sin(forward);
     this.cap
-      .circle(eyeX * CELL, eyeY * CELL, reach * CELL + band / 2)
-      .stroke({ width: band, color: 0x000000, alpha: 1 });
+      .poly([
+        originX + sideX * reach, originY + sideY * reach,
+        originX - sideX * reach, originY - sideY * reach,
+        originX - sideX * reach + backX * reach, originY - sideY * reach + backY * reach,
+        originX + sideX * reach + backX * reach, originY + sideY * reach + backY * reach,
+      ])
+      .fill({ color: 0x000000, alpha: 1 });
   }
 }

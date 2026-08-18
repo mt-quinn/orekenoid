@@ -22,7 +22,7 @@ const RETRACT = 0.46;
 
 async function boot(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 30_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.locator(".paddle-option").first().click();
   await page.click("#beginButton");
   await page.waitForTimeout(900);

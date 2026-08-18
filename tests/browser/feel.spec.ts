@@ -14,7 +14,7 @@ const deploy = async (page: any) => {
   await page.goto("/");
   await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 20_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);
   await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;

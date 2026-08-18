@@ -9,7 +9,7 @@ async function bootFresh(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
   await page.evaluate((key) => window.localStorage.removeItem(key), SAVE_KEY);
   await page.reload();
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 20_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await expect(page.locator("#briefing")).toHaveAttribute("data-render-state", "ready");
 }
 
@@ -74,7 +74,7 @@ test("an expedition survives a reload, and the Atlas records only what was surve
 
   // --- Reload and continue -------------------------------------------------
   await page.reload();
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 20_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await expect(page.locator("#briefing")).toHaveAttribute("data-render-state", "ready");
   await expect(page.locator("#expeditionTitle")).toContainText("EXPEDITION");
   await expect(page.locator("#continueButton")).toBeVisible();

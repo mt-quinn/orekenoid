@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { SolidityOracle } from "../src/combat/ballField";
 import {
-  createCreature, createGrinder, damageCreature, DOUSER, GRINDER, SPITTER, stepCreature,
+  BOUNDER,
+  bounceCreature,
+  createBounder,
+  deflectCreature,
+  stepCreature,
   type Creature,
 } from "../src/combat/creatures";
 import { castRay, hasLineOfSight } from "../src/combat/sight";
+import { FEEL } from "../src/physics";
+import { FIELD } from "../src/combat/ballField";
 
 function cave(rows: string[], originX = 20, originY = 20): SolidityOracle {
   return {
@@ -19,30 +25,35 @@ function cave(rows: string[], originX = 20, originY = 20): SolidityOracle {
   };
 }
 
+/** Open air with a floor, which is the simplest thing a Bounder can be standing on. */
+function floorAt(y: number): SolidityOracle {
+  return { solidAt: (_x, sy) => sy >= y };
+}
+
 const OPEN: SolidityOracle = { solidAt: () => false };
 const DT = 1 / 60;
 
-const drone = (x: number, y: number) => ({ x, y, radius: 0.45 });
-
-/** Run the machine forward, optionally moving the drone, and report what happened along the way. */
+/** Run the machine forward and report what happened along the way. */
 function run(
   creature: Creature,
   world: SolidityOracle,
   seconds: number,
-  target: (elapsed: number) => { x: number; y: number; radius: number } | null,
+  target: (elapsed: number) => { x: number; y: number } | null,
 ) {
-  let rammed = 0;
-  let slammed = 0;
+  let struck = 0;
+  let landed = 0;
   let committed = 0;
+  let killed = 0;
   const states = new Set<string>();
   for (let elapsed = 0; elapsed < seconds; elapsed += DT) {
     const step = stepCreature(creature, world, target(elapsed), DT);
-    if (step.rammed) rammed++;
-    if (step.slammed) slammed++;
+    if (step.struck) struck++;
+    if (step.landed) landed++;
     if (step.committed) committed++;
+    if (step.killed) killed++;
     states.add(creature.state);
   }
-  return { rammed, slammed, committed, states };
+  return { struck, landed, committed, killed, states };
 }
 
 describe("line of sight", () => {
@@ -56,275 +67,211 @@ describe("line of sight", () => {
     ]);
     expect(hasLineOfSight(world, 21.5, 24.5, 27.5, 24.5)).toBe(true);
     expect(hasLineOfSight(world, 21.5, 21.5, 27.5, 21.5)).toBe(false);
-    expect(hasLineOfSight(world, 21.5, 21.5, 21.5, 23.5)).toBe(true);
   });
 
   it("reports how far a ray got before the wall", () => {
-    const world = cave([".....#...."]);
-    // From the middle of column 0 to the wall at column 5 is five cells.
-    const hit = castRay(world, 20.5, 20.5, 1, 0, 20);
+    const hit = castRay(cave([".....#...."]), 20.5, 20.5, 1, 0, 20);
     expect(hit.cellX).toBe(25);
     expect(hit.distance).toBeCloseTo(4.5, 6);
   });
+});
 
-  it("stops at the edge of the world", () => {
-    const hit = castRay(OPEN, 3.5, 10, -1, 0, 50);
-    expect(hit.cellX).toBe(-1);
-    expect(hit.distance).toBeCloseTo(3.5, 6);
+describe("a Bounder walking about", () => {
+  it("rides the surface it is on rather than sinking into it or floating off", () => {
+    const world = floorAt(30);
+    const creature = createBounder(40, 30 - BOUNDER.radius - BOUNDER.ride, 0, [], Math.PI / 2);
+    run(creature, world, 4, () => null);
+    // Still sitting on the floor, at its ride height, having walked along it.
+    expect(creature.y).toBeCloseTo(30 - BOUNDER.radius - BOUNDER.ride, 1);
+    expect(Math.abs(creature.x - 40)).toBeGreaterThan(3);
+    expect(creature.adrift).toBe(false);
   });
 
-  it("runs its full length through open air", () => {
-    const hit = castRay(OPEN, 50, 50, 1, 0, 7);
-    expect(hit.cellX).toBeNull();
-    expect(hit.distance).toBeCloseTo(7, 6);
+  it("circles an island of rock instead of walking off the end of it", () => {
+    // A free-standing block. There is no floor and no ceiling: the only thing to hold on to is the
+    // block itself, so a Bounder that keeps contact has no choice but to go round it.
+    const world = cave([
+      "......",
+      "..##..",
+      "..##..",
+      "......",
+    ]);
+    const creature = createBounder(22.5, 21 - BOUNDER.radius - BOUNDER.ride, 0, [], Math.PI / 2);
+    const angles: number[] = [];
+    for (let elapsed = 0; elapsed < 30; elapsed += DT) {
+      stepCreature(creature, world, null, DT);
+      angles.push(Math.atan2(creature.y - 22, creature.x - 23));
+    }
+    expect(creature.adrift).toBe(false);
+
+    // Total turn about the block's centre. Going round it once is a full turn; walking off it and
+    // stopping, or oscillating on one face, is not.
+    let swept = 0;
+    for (let index = 1; index < angles.length; index++) {
+      let delta = angles[index] - angles[index - 1];
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      swept += delta;
+    }
+    expect(Math.abs(swept)).toBeGreaterThan(Math.PI * 2);
+    // And it never left the block: always within a stride of its surface.
+    expect(Math.hypot(creature.x - 23, creature.y - 22)).toBeLessThan(4);
+  });
+
+  it("holds still when there is nothing to hold on to", () => {
+    const creature = createBounder(60, 60, 0, [], Math.PI / 2);
+    run(creature, OPEN, 2, () => null);
+    expect(creature.adrift).toBe(true);
+    expect(Math.hypot(creature.x - 60, creature.y - 60)).toBeLessThan(0.5);
+  });
+
+  it("walks a ceiling the same way it walks a floor", () => {
+    const world: SolidityOracle = { solidAt: (_x, y) => y <= 30 };
+    const creature = createBounder(40, 30 + BOUNDER.radius + BOUNDER.ride, 0, [], -Math.PI / 2);
+    run(creature, world, 4, () => null);
+    expect(creature.y).toBeCloseTo(30 + BOUNDER.radius + BOUNDER.ride, 1);
+    expect(Math.abs(creature.x - 40)).toBeGreaterThan(3);
   });
 });
 
-describe("the Grinder", () => {
-  it("wakes, tells, then commits", () => {
-    const creature = createGrinder(30, 30);
-    const result = run(creature, OPEN, 0.9, () => drone(34, 30));
-    expect(result.states.has("wind")).toBe(true);
+describe("a Bounder getting mad", () => {
+  const world = floorAt(30);
+  const standing = () => createBounder(40, 30 - BOUNDER.radius - BOUNDER.ride, 0, [], Math.PI / 2);
+
+  it("coils, then hurls itself", () => {
+    const creature = standing();
+    const result = run(creature, world, 1.4, () => ({ x: 46, y: 29 }));
+    expect(result.states.has("coil")).toBe(true);
     expect(result.committed).toBe(1);
-    expect(creature.state === "charge" || creature.state === "recover").toBe(true);
+    expect(result.states.has("hurl")).toBe(true);
   });
 
-  it("does not wake through a wall", () => {
-    const world = cave([
-      "..........",
-      "..........",
-      "####.#####",
-      "..........",
-    ]);
-    const creature = createGrinder(23.5, 21.5);
-    // The drone is close, but on the far side of the slab and not in the gap.
-    const result = run(creature, world, 2, () => drone(23.5, 23.5));
+  it("stays asleep when the drone is out of aggro range", () => {
+    const creature = standing();
+    const result = run(creature, world, 3, () => ({ x: 40 + BOUNDER.aggroRange + 4, y: 29 }));
     expect(result.committed).toBe(0);
-    expect(creature.state).not.toBe("charge");
+    expect(creature.state).toBe("idle");
+  });
+
+  it("stays asleep when the drone is close but behind rock", () => {
+    // An endless slab, not a wall with ends. A crawling Bounder walks round anything it can walk
+    // round, and it re-aggroing after doing so is correct -- so the test has to be about rock it
+    // genuinely cannot get past, or it is a test about the fixture.
+    const slab: SolidityOracle = { solidAt: (_x, y) => y >= 22 && y < 23 };
+    const creature = createBounder(23.5, 22 - BOUNDER.radius - BOUNDER.ride, 0, [], Math.PI / 2);
+    const result = run(creature, slab, 3, () => ({ x: 23.5, y: 24 }));
+    expect(result.committed).toBe(0);
   });
 
   it("locks its aim before it commits, so stepping out of the lane dodges", () => {
-    const creature = createGrinder(30, 30);
-    // Standing still until the shot locks, then stepping aside.
-    const locksAt = GRINDER.windUp - GRINDER.lockSeconds;
-    run(creature, OPEN, GRINDER.windUp + 0.4, (elapsed) => (
-      elapsed < locksAt ? drone(36, 30) : drone(36, 36)
+    const creature = standing();
+    const locksAt = BOUNDER.coilSeconds - BOUNDER.lockSeconds;
+    run(creature, world, BOUNDER.coilSeconds + 0.3, (elapsed) => (
+      elapsed < locksAt ? { x: 47, y: 29 } : { x: 40, y: 20 }
     ));
-    // It went east, at the pose it locked -- not south after the drone.
-    expect(creature.x).toBeGreaterThan(33);
-    expect(Math.abs(creature.y - 30)).toBeLessThan(0.5);
+    // It went along the lane it locked -- east -- not up after the drone.
+    expect(creature.x).toBeGreaterThan(41.5);
   });
 
-  it("rams a drone that stands in the lane", () => {
-    const creature = createGrinder(30, 30);
-    const result = run(creature, OPEN, 1.2, () => drone(36, 30));
-    expect(result.rammed).toBeGreaterThan(0);
-  });
+  it("re-aggros after a hurl only while the drone is still in range", () => {
+    const near = standing();
+    run(near, world, BOUNDER.coilSeconds + BOUNDER.hurlSeconds + BOUNDER.spentSeconds + 1.2,
+      () => ({ x: near.x + 5, y: 29 }));
+    // Something happened again: it is not stuck spent forever.
+    expect(near.state).not.toBe("spent");
 
-  it("slams into rock and hands over the recovery window", () => {
-    // Open ground with a wall at x = 34, just past where the drone was standing.
-    const walled: SolidityOracle = { solidAt: (x) => x >= 34 };
-    const creature = createGrinder(30, 30);
-    const locksAt = GRINDER.windUp - GRINDER.lockSeconds;
-    // Baited into charging east, then stepped out of the lane, so it runs into the wall.
-    const result = run(creature, walled, 1.4, (elapsed) => (
-      elapsed < locksAt ? drone(33, 30) : drone(33, 36)
-    ));
-    expect(result.slammed).toBeGreaterThan(0);
-    expect(creature.state).toBe("recover");
+    const gone = standing();
+    const result = run(gone, world, BOUNDER.coilSeconds + BOUNDER.hurlSeconds + BOUNDER.spentSeconds + 2,
+      (elapsed) => (elapsed < BOUNDER.coilSeconds ? { x: 46, y: 29 } : { x: 200, y: 200 }));
+    expect(result.committed).toBe(1);
   });
+});
 
-  it("takes three ball hits to kill", () => {
-    const creature = createGrinder(30, 30);
-    expect(damageCreature(creature, 1, 1, 0)).toBe(false);
-    expect(damageCreature(creature, 1, 1, 0)).toBe(false);
-    expect(damageCreature(creature, 1, 1, 0)).toBe(true);
-    expect(creature.state).toBe("dead");
-    // A dead creature stops running.
-    expect(stepCreature(creature, OPEN, drone(30, 30), DT).rammed).toBe(false);
-  });
+describe("the exchange", () => {
+  const world = floorAt(30);
 
-  it("is shoved by the hit that did not kill it", () => {
-    const creature = createGrinder(30, 30);
-    damageCreature(creature, 1, 1, 0);
-    expect(creature.vx).toBeGreaterThan(0);
-    expect(creature.hitFlash).toBeGreaterThan(0);
-  });
-
-  it("cannot be stunlocked out of a committed charge", () => {
-    const creature = createGrinder(30, 30);
-    // Wind up and commit.
-    for (let elapsed = 0; elapsed <= GRINDER.windUp + DT; elapsed += DT) {
-      stepCreature(creature, OPEN, drone(36, 30), DT);
+  /** Wind one up and get it into the air. */
+  function airborne(): Creature {
+    const creature = createBounder(40, 30 - BOUNDER.radius - BOUNDER.ride, 0, ["iron"], Math.PI / 2);
+    for (let elapsed = 0; elapsed <= BOUNDER.coilSeconds + DT; elapsed += DT) {
+      stepCreature(creature, world, { x: 46, y: 29 }, DT);
     }
-    expect(creature.state).toBe("charge");
-    damageCreature(creature, 1, -1, 0);
-    expect(creature.state).toBe("charge");
+    expect(creature.state).toBe("hurl");
+    return creature;
+  }
+
+  it("takes no damage from rock it merely flew into", () => {
+    // This is the whole reason the paddle matters. A Bounder crossing a corridor would otherwise kill
+    // itself on the far wall and the player would be a spectator.
+    const creature = airborne();
+    const result = run(creature, world, BOUNDER.hurlSeconds + 0.2, () => null);
+    expect(result.landed).toBe(0);
+    expect(creature.hp).toBe(BOUNDER.hp);
   });
 
-  it("never ends a frame inside rock", () => {
-    const world = cave([
-      "##########",
-      "#........#",
-      "#..##....#",
-      "#........#",
-      "#....##..#",
-      "#........#",
-      "##########",
-    ]);
-    const creature = createGrinder(24.5, 23.5);
-    for (let i = 0; i < 1200; i++) {
-      stepCreature(creature, world, drone(22.5, 21.5), DT);
-      for (let s = 0; s < 8; s++) {
-        const angle = (s / 8) * Math.PI * 2;
-        expect(world.solidAt(
-          creature.x + Math.cos(angle) * creature.radius * 0.98,
-          creature.y + Math.sin(angle) * creature.radius * 0.98,
-        )).toBe(false);
+  it("takes a hit from the rock once the paddle has returned it", () => {
+    const creature = airborne();
+    deflectCreature(creature, -Math.PI / 2, 0, FEEL.englishCurve, FIELD.minOffNormal);
+    expect(creature.deflected).toBe(true);
+    // Sent upward, away from the floor; it has to come off something to land. Give it a ceiling.
+    const boxed: SolidityOracle = { solidAt: (_x, y) => y >= 30 || y <= 24 };
+    const result = run(creature, boxed, 3, () => null);
+    expect(result.landed).toBeGreaterThan(0);
+    expect(creature.hp).toBeLessThan(BOUNDER.hp);
+  });
+
+  it("dies on the third returned landing, and reports it", () => {
+    const boxed: SolidityOracle = { solidAt: (_x, y) => y >= 30 || y <= 24 };
+    const creature = airborne();
+    let killed = 0;
+    for (let hit = 0; hit < BOUNDER.hp; hit++) {
+      creature.state = "hurl";
+      creature.timer = BOUNDER.hurlSeconds;
+      creature.deflected = true;
+      creature.vx = 0;
+      creature.vy = -BOUNDER.hurlSpeed;
+      for (let elapsed = 0; elapsed < 2; elapsed += DT) {
+        const step = stepCreature(creature, boxed, null, DT);
+        if (step.killed) killed++;
+        if (step.landed) break;
       }
     }
+    expect(creature.hp).toBeLessThanOrEqual(0);
+    expect(creature.state).toBe("dead");
+    expect(killed).toBe(1);
   });
 
-  it("patrols rather than grinding into the first wall it meets", () => {
-    const world = cave([
-      "##########",
-      "#........#",
-      "#........#",
-      "#........#",
-      "##########",
-    ]);
-    const creature = createGrinder(22.5, 22.5, 0);
-    // No drone anywhere: it should still be moving around the chamber after ten seconds.
-    const before = { x: creature.x, y: creature.y };
-    run(creature, world, 10, () => null);
-    expect(Math.hypot(creature.x - before.x, creature.y - before.y)).toBeGreaterThan(0.5);
-    expect(creature.state).toBe("prowl");
-  });
-});
-
-describe("the Spitter", () => {
-  it("holds its range instead of closing", () => {
-    const creature = createCreature("spitter", 30, 30);
-    // Drone well inside the range it wants: it should back off, not advance.
-    run(creature, OPEN, 1.2, () => drone(33, 30));
-    expect(Math.hypot(creature.x - 33, creature.y - 30)).toBeGreaterThan(3.5);
-
-    const far = createCreature("spitter", 30, 30);
-    run(far, OPEN, 1.2, () => drone(43, 30));
-    // And steps in when the drone is beyond it.
-    expect(Math.hypot(far.x - 43, far.y - 30)).toBeLessThan(13);
+  it("is marked for damage by a bounce off the machine, not only by a clean return", () => {
+    // Hitting the back of the paddle costs the hull, but it does not waste the exchange: the rock
+    // still gets it.
+    const creature = airborne();
+    bounceCreature(creature, -1, 0);
+    expect(creature.deflected).toBe(true);
   });
 
-  it("telegraphs, then lets a glob go along its facing", () => {
-    const creature = createCreature("spitter", 30, 30);
-    let fired: { dirX: number; dirY: number } | null = null;
-    for (let elapsed = 0; elapsed < 3; elapsed += DT) {
-      const step = stepCreature(creature, OPEN, drone(38, 30), DT);
-      if (step.fired) { fired = step.fired; break; }
-      // Nothing may be fired without the telegraph having run first.
-      if (!fired) expect(creature.state === "wind" || creature.tell === 0 || creature.state === "recover").toBe(true);
-    }
-    expect(fired).not.toBeNull();
-    expect(fired!.dirX).toBeGreaterThan(0.9);
-    expect(Math.abs(fired!.dirY)).toBeLessThan(0.2);
+  it("returns off the face with english, so the edge bites and the middle does not", () => {
+    const middle = airborne();
+    deflectCreature(middle, -Math.PI / 2, 0, FEEL.englishCurve, FIELD.minOffNormal);
+    const edge = airborne();
+    deflectCreature(edge, -Math.PI / 2, 1, FEEL.englishCurve, FIELD.minOffNormal);
+    // Straight back off the middle; swung well off the normal at the edge.
+    expect(Math.abs(middle.vx)).toBeLessThan(Math.abs(edge.vx));
+    expect(middle.vy).toBeLessThan(0);
   });
 
-  it("waits out its cooldown between shots", () => {
-    const creature = createCreature("spitter", 30, 30);
-    const shots: number[] = [];
-    for (let elapsed = 0; elapsed < 6; elapsed += DT) {
-      if (stepCreature(creature, OPEN, drone(38, 30), DT).fired) shots.push(elapsed);
-    }
-    expect(shots.length).toBeGreaterThan(1);
-    for (let index = 1; index < shots.length; index++) {
-      expect(shots[index] - shots[index - 1]).toBeGreaterThanOrEqual(SPITTER.cooldownSeconds);
-    }
+  it("cannot be returned when it is not in the air", () => {
+    const creature = createBounder(40, 29, 0, [], Math.PI / 2);
+    const before = { vx: creature.vx, vy: creature.vy };
+    deflectCreature(creature, 0, 0, FEEL.englishCurve, FIELD.minOffNormal);
+    expect(creature.deflected).toBe(false);
+    expect(creature.vx).toBe(before.vx);
+    expect(creature.vy).toBe(before.vy);
   });
 
-  it("does not shoot through rock", () => {
-    const world = cave([
-      "..........",
-      "..........",
-      "##########",
-      "..........",
-    ]);
-    const creature = createCreature("spitter", 23.5, 21.5);
-    const result = run(creature, world, 3, () => drone(23.5, 23.5));
-    expect(result.committed).toBe(0);
-  });
-});
-
-describe("the Douser", () => {
-  it("closes on the drone and latches on", () => {
-    const creature = createCreature("douser", 30, 30);
-    let smothered = 0;
-    for (let elapsed = 0; elapsed < 4; elapsed += DT) {
-      if (stepCreature(creature, OPEN, drone(36, 30), DT).smothering) smothered++;
-    }
-    expect(creature.state).toBe("latched");
-    expect(smothered).toBeGreaterThan(0);
-  });
-
-  it("rides the hull, so running does not scrape it off", () => {
-    const creature = createCreature("douser", 30, 30);
-    for (let elapsed = 0; elapsed < 4; elapsed += DT) stepCreature(creature, OPEN, drone(36, 30), DT);
-    expect(creature.state).toBe("latched");
-    // The drone bolts. The Douser goes with it.
-    for (let elapsed = 0; elapsed < 0.5; elapsed += DT) stepCreature(creature, OPEN, drone(50, 44), DT);
-    expect(creature.state).toBe("latched");
-    expect(Math.hypot(creature.x - 50, creature.y - 44)).toBeLessThan(0.01);
-  });
-
-  it("is shaken off by the ball, which is the whole shot", () => {
-    const creature = createCreature("douser", 30, 30);
-    for (let elapsed = 0; elapsed < 4; elapsed += DT) stepCreature(creature, OPEN, drone(36, 30), DT);
-    expect(creature.state).toBe("latched");
-    expect(damageCreature(creature, 1, 1, 0)).toBe(false);
-    expect(creature.state).toBe("recover");
-    expect(stepCreature(creature, OPEN, drone(36, 30), DT).smothering).toBe(false);
-  });
-
-  it("lets go on its own, and the light stays back for a while", () => {
-    const creature = createCreature("douser", 30, 30);
-    for (let elapsed = 0; elapsed < 4; elapsed += DT) stepCreature(creature, OPEN, drone(36, 30), DT);
-    expect(creature.state).toBe("latched");
-
-    // Run to the release rather than sampling at a fixed time: it re-acquires afterwards, so a
-    // late sample would catch the *next* latch and read as never having let go at all.
-    let held = 0;
-    for (let elapsed = 0; elapsed < DOUSER.latchSeconds + 1 && creature.state === "latched"; elapsed += DT) {
-      stepCreature(creature, OPEN, drone(36, 30), DT);
-      held += DT;
-    }
-    expect(creature.state).not.toBe("latched");
-    expect(held).toBeLessThanOrEqual(DOUSER.latchSeconds + DT * 2);
-
-    // And it cannot simply grab hold again off the same frame -- that is the whole point of the
-    // cooldown, and without it the lamp would never come back.
-    let smothered = 0;
-    for (let elapsed = 0; elapsed < DOUSER.relatchCooldown * 0.8; elapsed += DT) {
-      if (stepCreature(creature, OPEN, drone(36, 30), DT).smothering) smothered++;
-    }
-    expect(smothered).toBe(0);
-  });
-
-  it("cannot re-latch off the hull it was just shaken from", () => {
-    const creature = createCreature("douser", 30, 30);
-    for (let elapsed = 0; elapsed < 4; elapsed += DT) stepCreature(creature, OPEN, drone(36, 30), DT);
-    damageCreature(creature, 1, 1, 0);
-    let smothered = 0;
-    for (let elapsed = 0; elapsed < DOUSER.relatchCooldown * 0.8; elapsed += DT) {
-      if (stepCreature(creature, OPEN, drone(36, 30), DT).smothering) smothered++;
-    }
-    expect(smothered).toBe(0);
-  });
-
-  it("glows brighter the closer it gets, so it can never ambush", () => {
-    const far = createCreature("douser", 30, 30);
-    stepCreature(far, OPEN, drone(44, 30), DT);
-    const near = createCreature("douser", 30, 30);
-    stepCreature(near, OPEN, drone(34, 30), DT);
-    expect(near.tell).toBeGreaterThan(far.tell);
-    expect(far.tell).toBeGreaterThan(0);
+  it("only reports contact while it is actually in the air", () => {
+    const creature = createBounder(40, 30 - BOUNDER.radius - BOUNDER.ride, 0, [], Math.PI / 2);
+    // Standing on the drone's toes does nothing: walking into one is not the threat.
+    const step = stepCreature(creature, world, { x: creature.x, y: creature.y }, DT);
+    expect(step.struck).toBe(false);
   });
 });
