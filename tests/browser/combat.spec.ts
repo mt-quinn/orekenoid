@@ -368,3 +368,71 @@ test("nothing in the world is indestructible", async ({ page }) => {
     return persistent;
   })).toBe(0);
 });
+
+test("a cornerstone mechanism registers its strike and still takes the hit", async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/?seed=bounceworld-01");
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
+  await page.locator(".paddle-option").first().click();
+  await page.click("#beginButton");
+  await page.waitForTimeout(900);
+  await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    game.tutorialComplete = true;
+    for (const step of game.tutorial) step.done = true;
+  });
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.setSpawning(false));
+
+  // Mechanisms used to be indestructible, and `hitBrick` returned early on them -- so the strike was
+  // the only thing that could happen. They are ordinary hard stone now, which means both things have
+  // to happen on the same contact: progress registers *and* the brick loses a hit point. Losing the
+  // first would make cornerstones unreachable; losing the second would put the immortality back.
+  const spot = await page.evaluate(() => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    for (const site of hook.world.generated.cornerstones) {
+      for (let dy = -8; dy <= 8; dy += 2) {
+        for (let dx = -8; dx <= 8; dx += 2) {
+          const bricks = hook.world.framedBricks({
+            origin: { x: site.x + dx, y: site.y + dy }, angle: Math.PI / 2, width: 7, depth: 15,
+          });
+          if (bricks.filter((brick: any) => brick.cell.kind === "mechanism").length >= 3) {
+            return { x: site.x + dx, y: site.y + dy };
+          }
+        }
+      }
+    }
+    return null;
+  });
+  expect(spot, "a cornerstone should be framable").not.toBeNull();
+
+  await page.evaluate((at) => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    hook.warpTo(at.x, at.y);
+    hook.game.player.heading = Math.PI / 2;
+  }, spot!);
+  await page.waitForTimeout(1400);
+  await page.keyboard.press("KeyF");
+  await page.waitForFunction(() => !(window as unknown as Win).__OREKENOID__.state.cameraTransition,
+    null, { timeout: 25_000 });
+
+  const result = await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game as any;
+    const mechanisms = game.arena.bricks.filter((brick: any) => brick.kind === "mechanism");
+    const hpBefore = mechanisms[0].hp;
+    for (const brick of mechanisms.slice(0, 3)) game.hitBrick(brick, game.arena.balls[0]);
+    const site = [...game.cornerstoneProgress.keys()][0];
+    return {
+      count: mechanisms.length,
+      hpBefore,
+      hpAfter: mechanisms[0].hp,
+      struck: site ? game.cornerstoneProgress.get(site).size : 0,
+    };
+  });
+  expect(result.count).toBeGreaterThanOrEqual(3);
+  expect(result.hpBefore).toBeGreaterThan(1);
+  expect(result.hpAfter, "the strike costs it a hit point").toBeLessThan(result.hpBefore);
+  expect(result.struck, "the strike registers cornerstone progress").toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
