@@ -1,87 +1,104 @@
 import { describe, expect, it } from "vitest";
-import type { SolidityOracle } from "../src/combat/ballField";
-import { collectOccluders, shadowQuad, type Occluder } from "../src/light/shadow";
+import { CONTOUR, traceVisualContour, type VisualField } from "../src/light/contour";
+import { shadowQuad, type Occluder } from "../src/light/shadow";
+import type { OrientedFootprint } from "../src/types";
 
-function cave(rows: string[], originX = 20, originY = 20): SolidityOracle {
+/**
+ * A world with a real curved boundary.
+ *
+ * The point of the contour tracer is to follow the outline the *renderer* draws rather than the cell
+ * grid underneath it, so the fixture has to be a smooth field rather than a grid of blocks. A disc:
+ * positive inside, negative outside, so the boundary is a circle at no angle the cell grid has.
+ */
+function disc(centreX: number, centreY: number, radius: number, cuts: OrientedFootprint[] = []): VisualField {
+  const field = (x: number, y: number) => radius - Math.hypot(x - centreX, y - centreY);
+  const inCut = (x: number, y: number) => cuts.some((cut) => {
+    const dx = x - cut.center.x;
+    const dy = y - cut.center.y;
+    const u = dx * Math.cos(cut.angle) + dy * Math.sin(cut.angle);
+    const v = -dx * Math.sin(cut.angle) + dy * Math.cos(cut.angle);
+    return Math.abs(u) <= cut.halfWidth && Math.abs(v) <= cut.halfHeight;
+  });
   return {
-    solidAt(x: number, y: number): boolean {
-      const column = Math.floor(x) - originX;
-      const row = Math.floor(y) - originY;
-      if (row < 0 || row >= rows.length) return false;
-      const line = rows[row];
-      if (column < 0 || column >= line.length) return false;
-      return line[column] === "#";
-    },
+    visualFieldAt: field,
+    visualSolidAt: (x, y) => field(x, y) > 0 && !inCut(x, y),
+    cutsInRegion: () => cuts,
   };
 }
 
-/** Even-odd point-in-polygon over a flat `[x, y, ...]` ring. */
-function inside(polygon: number[], x: number, y: number): boolean {
-  let hit = false;
-  const count = polygon.length / 2;
-  for (let i = 0, j = count - 1; i < count; j = i++) {
-    const xi = polygon[i * 2];
-    const yi = polygon[i * 2 + 1];
-    const xj = polygon[j * 2];
-    const yj = polygon[j * 2 + 1];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
-  }
-  return hit;
-}
+const EMPTY: VisualField = {
+  visualFieldAt: () => -1,
+  visualSolidAt: () => false,
+  cutsInRegion: () => [],
+};
 
-/** Is this point inside any shadow the eye casts in this world? */
-function shadowed(world: SolidityOracle, eyeX: number, eyeY: number, x: number, y: number): boolean {
-  const occluders = collectOccluders(world, 0, 0, 60, 60);
-  for (const occluder of occluders) {
-    const quad = shadowQuad(occluder, eyeX, eyeY, 200);
-    if (quad && inside(quad, x, y)) return true;
-  }
-  return false;
-}
+describe("tracing the drawn silhouette", () => {
+  const world = disc(60, 60, 8);
+  const faces = traceVisualContour(world, 40, 40, 80, 80);
 
-describe("occluder collection", () => {
-  it("finds the four faces of a lone pillar, and no more", () => {
-    const world = cave([
-      ".....",
-      "..#..",
-      ".....",
-    ]);
-    const occluders = collectOccluders(world, 20, 20, 25, 23);
-    // One face per side. Any more means unmerged runs or duplicated edges.
-    expect(occluders.length).toBe(4);
-    for (const occluder of occluders) {
-      expect(Math.hypot(occluder.x2 - occluder.x1, occluder.y2 - occluder.y1)).toBeCloseTo(1, 6);
+  it("finds the boundary and nothing else", () => {
+    expect(faces.length).toBeGreaterThan(8);
+    // Every face sits on the circle, to within the simplification tolerance.
+    for (const face of faces) {
+      const midX = (face.x1 + face.x2) / 2;
+      const midY = (face.y1 + face.y2) / 2;
+      expect(Math.abs(Math.hypot(midX - 60, midY - 60) - 8)).toBeLessThan(CONTOUR.simplifyTolerance * 3);
     }
   });
 
-  it("merges a long wall into one face instead of one per cell", () => {
-    const world = cave([
-      "..........",
-      "##########",
-      "..........",
-    ]);
-    const occluders = collectOccluders(world, 20, 20, 30, 23);
-    // Two long faces, top and bottom. Twenty would mean the merge is not working, and a screen of
-    // ordinary cave would cost thousands of polygons instead of a couple of hundred.
-    const long = occluders.filter((o) => Math.abs(o.x2 - o.x1) >= 9);
-    expect(long.length).toBe(2);
-    expect(occluders.length).toBeLessThan(6);
+  it("follows the curve at angles the cell grid cannot express", () => {
+    // The old collector could only emit axis-aligned faces. A circle has tangents everywhere, so a
+    // tracer that follows it must produce plenty that are neither horizontal nor vertical.
+    const oblique = faces.filter((face) => {
+      const angle = Math.abs(Math.atan2(face.y2 - face.y1, face.x2 - face.x1)) % (Math.PI / 2);
+      return angle > 0.15 && angle < Math.PI / 2 - 0.15;
+    });
+    expect(oblique.length).toBeGreaterThan(faces.length * 0.5);
   });
 
-  it("points every normal into the open air", () => {
-    const world = cave([
-      ".....",
-      "..#..",
-      ".....",
-    ]);
-    for (const occluder of collectOccluders(world, 20, 20, 25, 23)) {
-      const midX = (occluder.x1 + occluder.x2) / 2 + occluder.nx * 0.25;
-      const midY = (occluder.y1 + occluder.y2) / 2 + occluder.ny * 0.25;
-      expect(world.solidAt(midX, midY)).toBe(false);
-      // And rock on the other side.
-      const backX = (occluder.x1 + occluder.x2) / 2 - occluder.nx * 0.25;
-      const backY = (occluder.y1 + occluder.y2) / 2 - occluder.ny * 0.25;
-      expect(world.solidAt(backX, backY)).toBe(true);
+  it("points every normal out of the rock", () => {
+    for (const face of faces) {
+      const midX = (face.x1 + face.x2) / 2;
+      const midY = (face.y1 + face.y2) / 2;
+      // Outward from the disc's centre is the open side.
+      const outX = (midX - 60) / Math.hypot(midX - 60, midY - 60);
+      const outY = (midY - 60) / Math.hypot(midX - 60, midY - 60);
+      expect(face.nx * outX + face.ny * outY).toBeGreaterThan(0.5);
+    }
+  });
+
+  it("simplifies to about the count the cell grid cost, not ten times it", () => {
+    // Chaining and Douglas-Peucker are what make tracing at sub-cell resolution affordable. Without
+    // them this is one face per sub-cell square crossed.
+    expect(faces.length).toBeLessThan(80);
+  });
+
+  it("traces nothing in a region with no rock in it", () => {
+    expect(traceVisualContour(EMPTY, 0, 0, 30, 30)).toEqual([]);
+  });
+});
+
+describe("excavated edges", () => {
+  it("keeps a cut's own edges straight instead of resampling them", () => {
+    // A cut clean through the middle of the disc, at an angle no sampling grid shares.
+    const cut: OrientedFootprint = {
+      center: { x: 60, y: 60 },
+      halfWidth: 6,
+      halfHeight: 1.5,
+      angle: 0.37,
+    };
+    const faces = traceVisualContour(disc(60, 60, 8, [cut]), 40, 40, 80, 80);
+    // The cut's long sides are 12 cells; a face that long can only have come from the rectangle
+    // itself, because the tracer never emits anything longer than a sub-cell square.
+    const long = faces.filter((face) => Math.hypot(face.x2 - face.x1, face.y2 - face.y1) > 6);
+    expect(long.length).toBeGreaterThan(0);
+    for (const face of long) {
+      const angle = Math.atan2(face.y2 - face.y1, face.x2 - face.x1);
+      const aligned = Math.min(
+        Math.abs(Math.abs(angle) - 0.37),
+        Math.abs(Math.abs(angle) - (Math.PI - 0.37)),
+      );
+      expect(aligned).toBeLessThan(0.02);
     }
   });
 });
@@ -107,44 +124,47 @@ describe("shadow quads", () => {
   });
 });
 
-describe("what a wall actually hides", () => {
-  const world = cave([
-    "..........",
-    "..........",
-    "....#.....",
-    "..........",
-    "..........",
-  ]);
+/** Even-odd point-in-polygon over a flat `[x, y, ...]` ring. */
+function inside(polygon: number[], x: number, y: number): boolean {
+  let hit = false;
+  const count = polygon.length / 2;
+  for (let i = 0, j = count - 1; i < count; j = i++) {
+    const xi = polygon[i * 2];
+    const yi = polygon[i * 2 + 1];
+    const xj = polygon[j * 2];
+    const yj = polygon[j * 2 + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
 
-  it("hides what is directly behind a pillar", () => {
-    // Eye due west of the pillar at cell (24, 22).
-    expect(shadowed(world, 20.5, 22.5, 27.5, 22.5)).toBe(true);
-    expect(shadowed(world, 20.5, 22.5, 40.5, 22.5)).toBe(true);
+describe("what the drawn rock hides", () => {
+  const world = disc(60, 60, 5);
+  const faces = traceVisualContour(world, 40, 40, 80, 80);
+  const shadowed = (eyeX: number, eyeY: number, x: number, y: number) => faces.some((face) => {
+    const quad = shadowQuad(face, eyeX, eyeY, 200);
+    return quad ? inside(quad, x, y) : false;
   });
 
-  it("hides nothing clear of the pillar, however far away it is", () => {
-    // This is the whole difference from the lantern the old mask was: thirty-five cells away with
-    // nothing in the way is visible, because distance never hides anything.
-    expect(shadowed(world, 20.5, 22.5, 50.5, 12.5)).toBe(false);
-    expect(shadowed(world, 20.5, 22.5, 55.5, 33.5)).toBe(false);
+  it("hides what is directly behind the rock", () => {
+    // Eye due west of the disc, target due east of it.
+    expect(shadowed(45, 60, 70, 60)).toBe(true);
+    expect(shadowed(45, 60, 95, 60)).toBe(true);
   });
 
-  it("does not hide the face of the wall the eye is looking at", () => {
-    // The near side of the pillar is lit; only what is behind it is not.
-    expect(shadowed(world, 20.5, 22.5, 23.9, 22.5)).toBe(false);
+  it("hides nothing clear of it, however far away", () => {
+    expect(shadowed(45, 60, 95, 40)).toBe(false);
+    expect(shadowed(45, 60, 95, 80)).toBe(false);
+  });
+
+  it("does not hide the near face the eye is looking at", () => {
+    expect(shadowed(45, 60, 54.6, 60)).toBe(false);
   });
 
   it("throws a wedge that widens with distance", () => {
-    // A shadow from a one-cell pillar covers more than one cell of width far away, which is what
-    // makes it a wedge rather than the cell-wide staircase the grid mask drew.
-    const nearWidth = [22.2, 22.8].filter((y) => shadowed(world, 20.5, 22.5, 26, y)).length;
-    const farWidth = [21.4, 22.5, 23.6].filter((y) => shadowed(world, 20.5, 22.5, 46, y)).length;
-    expect(nearWidth).toBe(2);
-    expect(farWidth).toBe(3);
-  });
-
-  it("leaves a room with no walls entirely visible", () => {
-    const open: SolidityOracle = { solidAt: () => false };
-    expect(shadowed(open, 30.5, 30.5, 44.5, 38.5)).toBe(false);
+    const near = [58, 62].filter((y) => shadowed(45, 60, 68, y)).length;
+    const far = [52, 60, 68].filter((y) => shadowed(45, 60, 110, y)).length;
+    expect(near).toBe(2);
+    expect(far).toBe(3);
   });
 });

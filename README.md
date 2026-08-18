@@ -68,7 +68,11 @@ of life, the emitter builds another, and how long that takes is the **emitter st
 gap is the combat progression: attacking lights the room, reloading blinds you.
 
 Darkness is Teleglitch's, and works the way Teleglitch's does: **black polygons extruded from wall
-faces away from the drone.** There is no lamp and no radius. A corridor is visible all the way down
+faces away from the drone.** Those faces are traced from the silhouette the renderer actually draws —
+the noise-warped `visualSolidAt` contour, not the cell grid under it, which disagrees with the drawn
+edge by twenty to fifty pixels and would put a staircase of square steps alongside a curved rock
+face. A shadow that disagrees with the thing casting it is not a shadow. There is no lamp and no
+radius. A corridor is visible all the way down
 it, and what hides a thing is never how far off it is, only what is standing in between — so you are
 hidden from by *shape*, and excavation carves sightlines. A claim you cut last hour is a window.
 

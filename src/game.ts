@@ -501,6 +501,15 @@ export class OrekenoidGame {
     // Above the world and the bay: these are the player's own hands, and nothing occludes them.
     this.app.stage.addChild(this.worldRoot, this.gantry.container, this.touchControls.container);
     this.shadows = new ShadowLayer(this.world, this.app.renderer);
+    // Excavation changes the silhouette, and the silhouette is what casts. Regrowth does not come
+    // through here, which is what the trace lifetime is a backstop for.
+    this.world.onCut((footprint) => {
+      const reach = Math.hypot(footprint.halfWidth, footprint.halfHeight) + 1;
+      this.shadows.invalidate(
+        footprint.center.x - reach, footprint.center.y - reach,
+        footprint.center.x + reach, footprint.center.y + reach,
+      );
+    });
     // Over everything that is *in* the mine, under everything that is an instrument. The survey
     // frame and the coach are read-outs rather than objects in the world, and going dark must never
     // take an instrument off the player.

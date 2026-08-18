@@ -1,4 +1,4 @@
-// Shadows, the way Teleglitch actually does them.
+// Extruding a shadow from a rock face.
 //
 // Not a light radius and not a grid mask. The developer's own description is the specification:
 // "the line of sight shadows aren't done with perspective. They are just black polygons extruded
@@ -17,9 +17,9 @@
 // shadow quads from a second caster would darken their intersection instead of lighting their
 // union, so more than one eye needs a per-caster visibility pass rather than this -- a real cost,
 // noted here because it is what the ball-as-a-moving-lamp idea would need.
+//
+// Where the faces come from is `light/contour.ts`: the drawn rock silhouette, not the cell grid.
 
-import { WORLD_COLS, WORLD_ROWS } from "../config";
-import type { SolidityOracle } from "../combat/ballField";
 
 /**
  * One face of rock, with the direction of the open air in front of it.
@@ -36,72 +36,6 @@ export interface Occluder {
   /** Unit normal, pointing into the open cell. */
   nx: number;
   ny: number;
-}
-
-/** Off-map is rock, matching the ball solver, the hull and the old field. */
-function solid(world: SolidityOracle, cellX: number, cellY: number): boolean {
-  if (cellX < 0 || cellY < 0 || cellX >= WORLD_COLS || cellY >= WORLD_ROWS) return true;
-  return world.solidAt(cellX + 0.5, cellY + 0.5);
-}
-
-/**
- * Every rock face bounding open air inside this rect, with collinear runs merged.
- *
- * The merge is not an optimisation detail, it is most of the cost: a twenty-cell wall is one quad
- * instead of twenty, and a screen of ordinary cave geometry drops from thousands of polygons to a
- * couple of hundred. Runs are broken when the open side flips, because those are two different
- * faces that happen to be in line.
- */
-export function collectOccluders(
-  world: SolidityOracle,
-  minX: number,
-  minY: number,
-  maxX: number,
-  maxY: number,
-): Occluder[] {
-  const result: Occluder[] = [];
-  const left = Math.max(-1, Math.floor(minX));
-  const right = Math.min(WORLD_COLS, Math.ceil(maxX));
-  const top = Math.max(-1, Math.floor(minY));
-  const bottom = Math.min(WORLD_ROWS, Math.ceil(maxY));
-
-  // Horizontal faces: the boundary between row y-1 and row y.
-  for (let y = top; y <= bottom + 1; y++) {
-    let runStart = -1;
-    let runSide = 0;
-    for (let x = left; x <= right + 1; x++) {
-      const above = x <= right ? solid(world, x, y - 1) : true;
-      const below = x <= right ? solid(world, x, y) : true;
-      // +1 when the open air is below the face, -1 when it is above, 0 when this is not a face.
-      const side = x > right || above === below ? 0 : above ? 1 : -1;
-      if (side !== runSide) {
-        if (runSide !== 0) {
-          result.push({ x1: runStart, y1: y, x2: x, y2: y, nx: 0, ny: runSide });
-        }
-        runStart = x;
-        runSide = side;
-      }
-    }
-  }
-
-  // Vertical faces: the boundary between column x-1 and column x.
-  for (let x = left; x <= right + 1; x++) {
-    let runStart = -1;
-    let runSide = 0;
-    for (let y = top; y <= bottom + 1; y++) {
-      const before = y <= bottom ? solid(world, x - 1, y) : true;
-      const after = y <= bottom ? solid(world, x, y) : true;
-      const side = y > bottom || before === after ? 0 : before ? 1 : -1;
-      if (side !== runSide) {
-        if (runSide !== 0) {
-          result.push({ x1: x, y1: runStart, x2: x, y2: y, nx: runSide, ny: 0 });
-        }
-        runStart = y;
-        runSide = side;
-      }
-    }
-  }
-  return result;
 }
 
 /**

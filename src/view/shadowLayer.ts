@@ -17,9 +17,9 @@
 // `FieldCombat`, because a creature at a third brightness is a creature you can still see.
 
 import { Container, Graphics, RenderTexture, Sprite, type Renderer } from "pixi.js";
-import { CELL } from "../config";
-import type { SolidityOracle } from "../combat/ballField";
-import { collectOccluders, shadowQuad } from "../light/shadow";
+import { CELL, CHUNK_CELLS, WORLD_COLS, WORLD_ROWS } from "../config";
+import { traceVisualContour, type VisualField } from "../light/contour";
+import { shadowQuad, type Occluder } from "../light/shadow";
 
 export const SHADOW = {
   /**
@@ -40,6 +40,16 @@ export const SHADOW = {
   reach: 90,
   /** Extra cells of geometry gathered beyond the visible rect, so walls just off screen still cast. */
   margin: 6,
+  /**
+   * How many chunks may be traced in one frame.
+   *
+   * The contour is cached per chunk, exactly as the terrain rasterisation is, because it answers the
+   * same question about the same ground and goes stale for the same reasons. One region-wide trace
+   * cost ten milliseconds and had to be redone every time the drone walked out of its padding -- a
+   * visible hitch every second or so. Per chunk it is about a millisecond, only newly-visible chunks
+   * pay it, and a budget keeps even a camera jump from spending the whole frame on it.
+   */
+  traceBudget: 2,
 } as const;
 
 export class ShadowLayer {
@@ -56,13 +66,38 @@ export class ShadowLayer {
   /** Occluder count from the last rebuild, for the render diagnostics. */
   lastOccluders = 0;
 
-  constructor(private readonly world: SolidityOracle, private readonly renderer: Renderer) {
+  /** Traced faces per chunk, keyed `cx,cy`. Missing means not traced yet or invalidated. */
+  private readonly tracedChunks = new Map<string, Occluder[]>();
+  /** Face count across the cached chunks, for the render diagnostics. */
+  lastTracedFaces = 0;
+
+  constructor(private readonly world: VisualField, private readonly renderer: Renderer) {
     this.offscreen.addChild(this.geometry, this.cap);
     this.texture = RenderTexture.create({ width: 2, height: 2 });
     this.sprite = new Sprite(this.texture);
     // Multiply, so the texture darkens what is already drawn rather than painting over it.
     this.sprite.blendMode = "multiply";
     this.container.addChild(this.sprite);
+  }
+
+  /**
+   * Terrain changed here: the traced silhouette is no longer the silhouette.
+   *
+   * Takes the world rect that changed and drops only the chunks it touches, plus their neighbours --
+   * a cut near a chunk edge moves a contour that the adjacent chunk traced part of.
+   */
+  invalidate(minX?: number, minY?: number, maxX?: number, maxY?: number): void {
+    if (minX === undefined || minY === undefined || maxX === undefined || maxY === undefined) {
+      this.tracedChunks.clear();
+      return;
+    }
+    const left = Math.floor((minX - 1) / CHUNK_CELLS);
+    const right = Math.floor((maxX + 1) / CHUNK_CELLS);
+    const top = Math.floor((minY - 1) / CHUNK_CELLS);
+    const bottom = Math.floor((maxY + 1) / CHUNK_CELLS);
+    for (let cy = top; cy <= bottom; cy++) {
+      for (let cx = left; cx <= right; cx++) this.tracedChunks.delete(`${cx},${cy}`);
+    }
   }
 
   /**
@@ -103,13 +138,19 @@ export class ShadowLayer {
   ): void {
     const geometry = this.geometry;
     geometry.clear();
-    const occluders = collectOccluders(
-      this.world,
-      focusX - halfWidth - SHADOW.margin,
-      focusY - halfHeight - SHADOW.margin,
-      focusX + halfWidth + SHADOW.margin,
-      focusY + halfHeight + SHADOW.margin,
-    );
+    const castMinX = focusX - halfWidth - SHADOW.margin;
+    const castMinY = focusY - halfHeight - SHADOW.margin;
+    const castMaxX = focusX + halfWidth + SHADOW.margin;
+    const castMaxY = focusY + halfHeight + SHADOW.margin;
+    const traced = this.occludersFor(castMinX, castMinY, castMaxX, castMaxY);
+    // Traced wide for cache stability, extruded narrow. A face beyond the margin cannot reach the
+    // screen anyway: its shadow runs *away* from the eye, and the eye is inside the viewport -- so
+    // extruding the whole padded trace was a few hundred quads a frame of provably invisible work.
+    const occluders = traced.filter((face) => {
+      const midX = (face.x1 + face.x2) / 2;
+      const midY = (face.y1 + face.y2) / 2;
+      return midX >= castMinX && midX <= castMaxX && midY >= castMinY && midY <= castMaxY;
+    });
     this.lastOccluders = occluders.length;
 
     // Opaque, one quad at a time. Overlap is free here precisely because this is going into its own
@@ -142,6 +183,48 @@ export class ShadowLayer {
     // The dim level rides on the sprite rather than on the fills, which is what stops overlapping
     // quads compounding. One sprite, one alpha, applied once.
     this.sprite.alpha = 1 - SHADOW.dim;
+  }
+
+  /**
+   * The drawn rock faces covering this region, chunk by chunk.
+   *
+   * Chunks already traced are reused untouched; missing ones are traced up to the frame's budget, so
+   * a camera jump reveals its shadows over a couple of frames instead of stalling one.
+   */
+  private occludersFor(minX: number, minY: number, maxX: number, maxY: number): Occluder[] {
+    const left = Math.max(0, Math.floor(minX / CHUNK_CELLS));
+    const right = Math.min(Math.ceil(WORLD_COLS / CHUNK_CELLS) - 1, Math.floor(maxX / CHUNK_CELLS));
+    const top = Math.max(0, Math.floor(minY / CHUNK_CELLS));
+    const bottom = Math.min(Math.ceil(WORLD_ROWS / CHUNK_CELLS) - 1, Math.floor(maxY / CHUNK_CELLS));
+
+    const faces: Occluder[] = [];
+    let budget = SHADOW.traceBudget;
+    let total = 0;
+    for (let cy = top; cy <= bottom; cy++) {
+      for (let cx = left; cx <= right; cx++) {
+        const key = `${cx},${cy}`;
+        let traced = this.tracedChunks.get(key);
+        if (!traced) {
+          if (budget <= 0) continue;
+          budget--;
+          // Exact chunk bounds, no overlap. The sample step divides the chunk evenly, so adjacent
+          // chunks share their seam sample line exactly: the contour is contiguous across the join
+          // with neither a gap nor a doubled face.
+          traced = traceVisualContour(
+            this.world,
+            cx * CHUNK_CELLS,
+            cy * CHUNK_CELLS,
+            (cx + 1) * CHUNK_CELLS,
+            (cy + 1) * CHUNK_CELLS,
+          );
+          this.tracedChunks.set(key, traced);
+        }
+        total += traced.length;
+        for (const face of traced) faces.push(face);
+      }
+    }
+    this.lastTracedFaces = total;
+    return faces;
   }
 
   /**

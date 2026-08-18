@@ -240,9 +240,28 @@ export class WorldModel {
    * is deliberate: the player should be able to tell excavation from geology.
    */
   visualSolidAt(x: number, y: number): boolean {
-    if (x < 0 || y < 0 || x >= WORLD_COLS || y >= WORLD_ROWS) return false;
-    const cell = this.cellAt(x, y);
-    if (cell?.persistent) return true;
+    if (this.visualFieldAt(x, y) <= 0) return false;
+    // Landmarks survive excavation, so they are solid whatever has been cut over them.
+    if (this.cellAt(x, y)?.persistent) return true;
+    const cuts = this.cutsByCell.get(`${Math.floor(x)},${Math.floor(y)}`);
+    return !cuts?.some((cut) => this.pointInFootprint(x, y, cut));
+  }
+
+  /**
+   * The geology behind `visualSolidAt`, as a signed scalar rather than a yes or no.
+   *
+   * Positive is rock, negative is air, and zero is exactly the boundary the terrain renderer draws.
+   * Excavation is deliberately *not* applied here: cuts are oriented rectangles with exact edges,
+   * and anything tracing this field wants to handle them from their own geometry rather than
+   * rediscover a straight line by sampling across it.
+   *
+   * Exists so the shadow contour can interpolate the real curve instead of approximating it. Same
+   * arithmetic `visualSolidAt` used to do inline, factored out rather than copied, because two
+   * functions that must agree on where the rock is should not be two functions.
+   */
+  visualFieldAt(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= WORLD_COLS || y >= WORLD_ROWS) return -1;
+    if (this.cellAt(x, y)?.persistent) return 1;
 
     const fx = x - 0.5;
     const fy = y - 0.5;
@@ -257,10 +276,28 @@ export class WorldModel {
     // Kept modest on purpose: a larger amplitude makes the boundary noisy enough
     // that edge-lighting samples straddle it and smear into soft clouds.
     const wobble = sfbm(this.generated.seed + 8821, x * 1.15, y * 1.15, 3) * 0.1;
-    if (field + wobble <= 0.5) return false;
+    return field + wobble - 0.5;
+  }
 
-    const cuts = this.cutsByCell.get(`${Math.floor(x)},${Math.floor(y)}`);
-    return !cuts?.some((cut) => this.pointInFootprint(x, y, cut));
+  /**
+   * Every cut footprint overlapping a region, without duplicates.
+   *
+   * A long expedition accumulates thousands of cuts and only the ones on screen can cast a shadow,
+   * so this walks `cutsByCell` rather than the whole log.
+   */
+  cutsInRegion(minX: number, minY: number, maxX: number, maxY: number): OrientedFootprint[] {
+    const found = new Set<OrientedFootprint>();
+    const left = Math.max(0, Math.floor(minX));
+    const right = Math.min(WORLD_COLS - 1, Math.ceil(maxX));
+    const top = Math.max(0, Math.floor(minY));
+    const bottom = Math.min(WORLD_ROWS - 1, Math.ceil(maxY));
+    for (let y = top; y <= bottom; y++) {
+      for (let x = left; x <= right; x++) {
+        const bucket = this.cutsByCell.get(`${x},${y}`);
+        if (bucket) for (const cut of bucket) found.add(cut);
+      }
+    }
+    return [...found];
   }
 
   /**
