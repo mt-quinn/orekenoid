@@ -208,3 +208,57 @@ describe("simulation time", () => {
     expect(b.timer).toBeCloseTo(a.timer, 1);
   });
 });
+
+describe("groups", () => {
+  /** How many creatures appeared on each frame the spawner acted. */
+  function spawnBursts(combat: FieldCombat, seconds: number, drone: DronePose): number[] {
+    const bursts: number[] = [];
+    let before = combat.liveCreatures;
+    for (let elapsed = 0; elapsed < seconds; elapsed += DT) {
+      combat.update(DT, drone);
+      const added = combat.liveCreatures - before;
+      if (added > 0) bursts.push(added);
+      before = combat.liveCreatures;
+    }
+    return bursts;
+  }
+
+  it("sometimes brings more than one at a time", () => {
+    // One Bounder is a puzzle with one answer. Facing several at once is the stated difficulty of the
+    // enemy, and independent rolls almost never produce it -- so it is asked for explicitly, and this
+    // is the test that it happens at all.
+    const combat = new FieldCombat(BROKEN, 30);
+    const bursts = spawnBursts(combat, 60, pose(62, 62));
+    expect(bursts.length).toBeGreaterThan(2);
+    expect(bursts.some((burst) => burst > 1)).toBe(true);
+  });
+
+  it("still never puts one on screen, pack or not", () => {
+    // A pack member is placed by offset from its anchor, so it can drift inside the spawn ring unless
+    // it is checked -- and inside the ring means in front of the player.
+    const combat = new FieldCombat(BROKEN, 31);
+    const drone = pose(62, 62);
+    const seen = new Set<object>();
+    for (let elapsed = 0; elapsed < 60; elapsed += DT) {
+      combat.update(DT, drone);
+      for (const creature of combat.roster) {
+        if (seen.has(creature)) continue;
+        seen.add(creature);
+        const range = Math.hypot(creature.x - drone.x, creature.y - drone.y);
+        expect(range).toBeGreaterThanOrEqual(COMBAT.spawnMin - 1e-6);
+      }
+    }
+    expect(seen.size).toBeGreaterThan(4);
+  });
+
+  it("fills a cavern well past the old cap of four", () => {
+    const combat = new FieldCombat(BROKEN, 32);
+    let peak = 0;
+    for (let elapsed = 0; elapsed < 60; elapsed += DT) {
+      combat.update(DT, pose(62, 62));
+      peak = Math.max(peak, combat.liveCreatures);
+    }
+    expect(peak).toBeGreaterThan(6);
+    expect(peak).toBeLessThanOrEqual(COMBAT.population);
+  });
+});

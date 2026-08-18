@@ -30,8 +30,16 @@ import {
 } from "../view/field";
 
 export const COMBAT = {
-  /** Creatures kept alive around the drone. */
-  population: 4,
+  /**
+   * Creatures kept alive around the drone.
+   *
+   * Four was too few to meet. A player crossing several chambers would see one Bounder, kill it, and
+   * walk a long way before the spawner offered another -- the cavern read as empty, and the stated
+   * challenge of the enemy ("the challenge mainly comes from facing more than one of them at a time")
+   * could essentially never happen by chance, because four spread over a 42-cell despawn radius is
+   * almost always one at a time.
+   */
+  population: 11,
   /**
    * Ring the spawner works in, in cells.
    *
@@ -44,8 +52,21 @@ export const COMBAT = {
   spawnMax: 30,
   /** Anything beyond this is forgotten, so a fight left behind stays left behind. */
   despawn: 42,
+  /**
+   * How often a spawn brings friends, and how many.
+   *
+   * Groups are the point rather than a flourish: one Bounder is a puzzle with one answer, and three
+   * arriving from the same direction is the situation the paddle's single deflecting face was designed
+   * to be difficult in. Left to independent rolls a pack is vanishingly unlikely, so it is asked for
+   * explicitly.
+   */
+  packChance: 0.4,
+  packMin: 2,
+  packMax: 4,
+  /** How far a pack's members are placed from its anchor, in cells. */
+  packSpread: 5.5,
   /** Seconds between spawn attempts. */
-  spawnInterval: 1.4,
+  spawnInterval: 0.8,
   /** How long a corpse is drawn while it sinks. */
   corpseSeconds: 0.45,
   /**
@@ -332,17 +353,48 @@ export class FieldCombat {
         fallback ??= { x, y, surface };
         continue;
       }
-      this.spawn(x, y, surface);
+      this.spawnGroupAt(x, y, surface, drone);
       return;
     }
     // Distance already guarantees off screen, so taking a visible spot beats never spawning -- which
     // is what insisting on cover produced in wide open chambers.
-    if (fallback) this.spawn(fallback.x, fallback.y, fallback.surface);
+    if (fallback) this.spawnGroupAt(fallback.x, fallback.y, fallback.surface, drone);
   }
 
   /**
    * Is there open ground here with rock to hold on to, and if so which way is the rock?
    */
+  /**
+   * Spawn at a found spot, sometimes with company.
+   *
+   * The extras are placed by looking for their own footing near the anchor rather than by offsetting
+   * blindly: a Bounder dropped into open air slides along whatever surface its re-attach sweep finds
+   * first and arrives somewhere nobody chose. A member with nowhere to stand is simply not spawned, so
+   * a pack in a tight chamber comes out smaller instead of coming out wrong.
+   */
+  private spawnGroupAt(x: number, y: number, surface: number, drone: DronePose): void {
+    this.spawn(x, y, surface);
+    if (this.random() >= COMBAT.packChance) return;
+    const wanted = COMBAT.packMin + Math.floor(this.random() * (COMBAT.packMax - COMBAT.packMin + 1));
+    let placed = 1;
+    for (let attempt = 0; attempt < 24 && placed < wanted; attempt++) {
+      if (this.liveCreatures >= COMBAT.population) return;
+      const angle = this.random() * Math.PI * 2;
+      const distance = 1.6 + this.random() * (COMBAT.packSpread - 1.6);
+      const px = x + Math.cos(angle) * distance;
+      const py = y + Math.sin(angle) * distance;
+      // A pack member is still a spawn, so it obeys the spawn ring too. Placed by offset alone, one
+      // could land five cells inside the minimum -- which is on screen, in front of the player, and the
+      // one thing the spawner is not allowed to do.
+      const range = Math.hypot(px - drone.x, py - drone.y);
+      if (range < COMBAT.spawnMin || range > COMBAT.spawnMax) continue;
+      const footing = this.surfaceNear(px, py);
+      if (footing === null) continue;
+      this.spawn(px, py, footing);
+      placed++;
+    }
+  }
+
   private surfaceNear(x: number, y: number): number | null {
     if (this.world.solidAt(x, y)) return null;
     const reach = BOUNDER.radius + BOUNDER.probeDepth;
