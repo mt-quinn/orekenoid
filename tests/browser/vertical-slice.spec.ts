@@ -331,12 +331,16 @@ test("deployment previews, generated world, province rules, and the crafting cha
     return {
       integrity: state.integrity,
       maxIntegrity: state.maxIntegrity,
-      persistentStillSolid: cells.filter((cell: any) => cell.persistent && cell.solid).length,
+      persistentCells: cells.filter((cell: any) => cell.persistent).length,
     };
   });
   expect(afterLoss.integrity).toBeLessThan(afterLoss.maxIntegrity);
-  // Generator contract 7: claim resolution never exhausts a landmark.
-  expect(afterLoss.persistentStillSolid).toBeGreaterThan(0);
+  // Generator contract 7 used to be "claim resolution never exhausts a landmark", enforced by making
+  // authored structure indestructible. That was withdrawn: a wall the player can neither see through,
+  // break, nor walk past is an obstruction rather than a landmark, and the Refit Bay's own lander was
+  // sealing off most of the bay. Nothing in the world is persistent now, and the contract is the
+  // absence of it.
+  expect(afterLoss.persistentCells).toBe(0);
 
   // --- Mirrorreef: orientation is the decision ----------------------------
   await page.evaluate(() => (window as unknown as Win).__OREKENOID__.warpTo(170, 40));

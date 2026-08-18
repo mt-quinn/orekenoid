@@ -1447,15 +1447,13 @@ export class OrekenoidGame {
     if (!arena || !brick.alive) return;
     const definition = materialOf(brick.kind);
 
-    // Persistent structure never breaks. Striking a cornerstone mechanism is the
-    // interaction, not an obstruction: each distinct mechanism struck is progress
-    // that survives the claim.
-    if (definition.persistent) {
-      brick.hitFlash = 0.16;
-      this.ringAtBrick(brick, definition.edge, 0.7);
+    // Striking a cornerstone mechanism is progress that survives the claim. It used to also be
+    // unbreakable, which is a different thing and one nobody asked for: the strike is the
+    // interaction, the immortality was just an obstruction. It registers and then takes the hit like
+    // any other stone.
+    if (brick.kind === "mechanism") {
       this.registerMechanismStrike(brick);
       this.audio.play(SOUNDS.structureStruck);
-      return;
     }
 
     brick.hp--;
@@ -2131,6 +2129,29 @@ export class OrekenoidGame {
    * the model can hold rock the raster has erased, and the raster can hold rock the model has cut.
    * Reported per cell with the flags that decide each answer.
    */
+  /** The probe's findings as data, so a test can assert what the key reports. */
+  probeReport(centreX: number, centreY: number): { ghosts: number; rows: string[] } {
+    const rows: string[] = [];
+    let ghosts = 0;
+    for (let dy = -5; dy <= 5; dy++) {
+      for (let dx = -5; dx <= 5; dx++) {
+        const cx = Math.floor(centreX) + dx;
+        const cy = Math.floor(centreY) + dy;
+        const cell = this.world.cellAt(cx + 0.5, cy + 0.5);
+        if (!cell) continue;
+        const blocks = this.world.blocksAt(cx + 0.5, cy + 0.5);
+        const drawn = this.world.visualSolidAt(cx + 0.5, cy + 0.5);
+        const alpha = this.terrain.alphaAt(cx + 0.5, cy + 0.5);
+        const painted = alpha >= 40;
+        if (blocks === drawn && drawn === painted) continue;
+        if (blocks && !painted) ghosts++;
+        rows.push(`${cx},${cy} ${cell.kind} blocks=${blocks} drawn=${drawn} canvasAlpha=${alpha}`
+          + ` persistent=${cell.persistent} worked=${cell.worked}`);
+      }
+    }
+    return { ghosts, rows };
+  }
+
   private probeAround(): void {
     const centreX = Math.floor(this.player.x / CELL);
     const centreY = Math.floor(this.player.y / CELL);
@@ -3306,6 +3327,9 @@ export class OrekenoidGame {
           }
         }
         return { left: mean(0.02, 0.45), right: mean(0.55, 0.98), lit, dark };
+      },
+      probeReport(x: number, y: number) {
+        return game.probeReport(x, y);
       },
       /** Is the shadow layer being drawn at all? */
       get shadowsVisible() {

@@ -235,7 +235,7 @@ Death costs the hold and the walk back. Banked material, crafted capacity and ea
 
 | # | Feature | Location | Teaches |
 |---|---|---|---|
-| 1 | **Lander & Refit Bay** — persistent, unbreakable forge, anchor #0 | (24, 14) | There is a home. Capacity is smelted here. |
+| 1 | **Lander & Refit Bay** — forge and anchor #0, drawn rather than built from terrain | (24, 14) | There is a home. Capacity is smelted here. |
 | 1b | **The Bank** — deposits cargo the moment you reach it | (21, 15) | Cargo is only safe once banked. Dying with a full hold loses it. |
 | 2 | **The Chalk Face** — pure chalk, low density, no slate | (16, 16) | Frame, commit, serve, clear. Full clear = zero load. |
 | 3 | **The Banked Face** — chalk crossed by two diagonal slate strata | (32, 18) | Slate takes four hits, costs nothing to leave, and is the best iron here. The most important beat in the game. |
@@ -279,7 +279,7 @@ Requirements the world generator must satisfy or fail loudly. These exist so "th
 4. Every ecotone contains at least one claimable seam of its rare reagent within its band, or the seed is rejected.
 5. Density, volatility and yield are monotonic in depth within each province.
 6. No band-I claim can reduce a starting chassis below 25% integrity.
-7. Persistent landmarks (lander, cornerstone mechanisms, stakes) are never exhausted by claim resolution — the existing `persistent` flag already enforces this.
+7. ~~Persistent landmarks (lander, cornerstone mechanisms, stakes) are never exhausted by claim resolution.~~ **Withdrawn.** Nothing in the mine is indestructible. Unbreakable authored cells produced a wall the player could neither see through, break, nor walk past — the lander sealed off most of the Refit Bay it was meant to be — and the flag also made claim resolution erase them from the terrain raster while the model kept them solid, which is where the invisible-blocker bug came from. The lander and the stakes are no longer terrain at all; the bay's readable form is drawn by the landmark layer. Cornerstone mechanisms are still rock so a claim can frame and strike them, and a strike still registers progress, but four hits takes one down like any other hard stone.
 8. Resource drops are never generated inside a cell no ball can reach.
 9. Band I always contains enough copper and coal to afford one Copper Plate without requiring a Band II descent.
 

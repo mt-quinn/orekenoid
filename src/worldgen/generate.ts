@@ -494,15 +494,18 @@ function verify(
   const missingLandingFeatures = LANDING_FEATURES.filter((feature) => {
     const cell = cells[feature.y]?.[feature.x];
     if (!cell) return true;
+    // These three are found by their material alone. The checks used to also require `persistent`,
+    // which stopped being a property of anything: authored structure is no longer indestructible, and
+    // the lander and the stakes are no longer terrain at all. What the contract is actually about is
+    // that the stamp happened here.
     if (feature.id === "refitBay") {
-      // The bay itself is open; its persistent hull surrounds it.
-      return !hasNearby(cells, feature.x, feature.y, 4, (c) => c.kind === "lander" && c.persistent);
+      return !hasNearby(cells, feature.x, feature.y, 4, (c) => c.kind === "lander");
     }
     if (feature.id === "bank") {
-      return !hasNearby(cells, feature.x, feature.y, 3, (c) => c.kind === "lander" && c.persistent);
+      return !hasNearby(cells, feature.x, feature.y, 3, (c) => c.kind === "lander");
     }
     if (feature.id === "surveyStakes") {
-      return !hasNearby(cells, feature.x, feature.y, 4, (c) => c.kind === "stake" && c.persistent);
+      return !hasNearby(cells, feature.x, feature.y, 4, (c) => c.kind === "stake");
     }
     if (feature.id === "theDrop") {
       return cell.solid;

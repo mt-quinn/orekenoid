@@ -315,3 +315,56 @@ test("the dark covers the screen corners through a rotated view", async ({ page 
   expect(mask.lit).toBeGreaterThan(0);
   expect(mask.dark).toBeGreaterThan(0);
 });
+
+test("a claim over the Refit Bay leaves nothing invisible behind", async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/?seed=bounceworld-01");
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
+  await page.locator(".paddle-option").first().click();
+  await page.click("#beginButton");
+  await page.waitForTimeout(900);
+  await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    game.tutorialComplete = true;
+    for (const step of game.tutorial) step.done = true;
+  });
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.setSpawning(false));
+
+  // The reported bug, in the place it was reported: a claim across the Refit Bay left blockers that
+  // could not be seen, could not be broken, and still cast a shadow. They were the lander -- authored
+  // structure that the model kept solid and drawable while the raster erased it, because `applyCut`
+  // wiped the whole footprint with no regard for what survived it. Authored structure is no longer
+  // indestructible at all, and the raster no longer erases over anything that survives.
+  await page.evaluate(() => {
+    const hook = (window as unknown as Win).__OREKENOID__;
+    hook.warpTo(23, 15);
+    hook.game.player.heading = -2.7301;
+  });
+  await page.waitForTimeout(1200);
+  await page.keyboard.press("KeyF");
+  await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__.state.arena),
+    null, { timeout: 15_000 });
+  await page.waitForFunction(() => !(window as unknown as Win).__OREKENOID__.state.cameraTransition,
+    null, { timeout: 25_000 });
+  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.finishArena("lost"));
+  await page.waitForFunction(() => (window as unknown as Win).__OREKENOID__.state.mode === "survey",
+    null, { timeout: 25_000 });
+  await page.waitForTimeout(2500);
+
+  const report = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.probeReport(23, 15));
+  expect(report.ghosts, `blocking with an empty canvas: ${JSON.stringify(report.rows)}`).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("nothing in the world is indestructible", async ({ page }) => {
+  test.setTimeout(120_000);
+  await intoCaverns(page);
+  expect(await page.evaluate(() => {
+    const world = (window as unknown as Win).__OREKENOID__.world;
+    let persistent = 0;
+    for (let y = 0; y < 144; y++) for (let x = 0; x < 240; x++) if (world.cells[y][x].persistent) persistent++;
+    return persistent;
+  })).toBe(0);
+});

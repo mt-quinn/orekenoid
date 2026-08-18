@@ -129,7 +129,7 @@ export class ChunkedTerrain {
     chunk.sprite.destroy();
     chunk.texture.destroy(true);
     this.chunks.delete(key);
-    this.queue.push({ cx, cy });
+    if (!this.queue.some((entry) => entry.cx === cx && entry.cy === cy)) this.queue.push({ cx, cy });
   }
 
   /**
@@ -295,6 +295,39 @@ export class ChunkedTerrain {
    * without rebuilding terrain.
    */
   private applyCut(footprint: OrientedFootprint): void {
+    // A landmark under this cut survives it, so the canvas must not lose it.
+    //
+    // The erase below is an unconditional `destination-out` over the whole footprint, and claim
+    // resolution cuts every lattice cell -- including the ones a landmark sits under, deliberately,
+    // because `solidAt` short-circuits on `persistent` and the flag protects the landmark rather than
+    // the footprint. The model therefore kept the Refit Bay solid and drawable while the raster wiped
+    // it, which is a wall you cannot see, cannot break, and still collide with -- and it still cast a
+    // shadow, because the shadow is traced from the model.
+    //
+    // There is no un-erase to composite, so the honest answer is to throw the chunk away and let it
+    // rasterise again from current state: a fresh raster draws the landmark and applies every cut.
+    // Rare enough to be free -- only claims that overlap authored structure pay it.
+    if (this.world.footprintContainsPersistent(footprint)) {
+      this.rebuildAround(footprint);
+      return;
+    }
+    this.eraseCut(footprint);
+  }
+
+  /** Drop every chunk a footprint touches, so they rasterise again from current world state. */
+  private rebuildAround(footprint: OrientedFootprint): void {
+    const cosine = Math.abs(Math.cos(footprint.angle));
+    const sine = Math.abs(Math.sin(footprint.angle));
+    const extentX = cosine * footprint.halfWidth + sine * footprint.halfHeight + 1;
+    const extentY = sine * footprint.halfWidth + cosine * footprint.halfHeight + 1;
+    for (let y = footprint.center.y - extentY; y <= footprint.center.y + extentY; y++) {
+      for (let x = footprint.center.x - extentX; x <= footprint.center.x + extentX; x++) {
+        this.invalidateAt(x, y);
+      }
+    }
+  }
+
+  private eraseCut(footprint: OrientedFootprint): void {
     const cosine = Math.abs(Math.cos(footprint.angle));
     const sine = Math.abs(Math.sin(footprint.angle));
     const extentX = cosine * footprint.halfWidth + sine * footprint.halfHeight + 0.5;

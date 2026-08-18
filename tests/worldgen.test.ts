@@ -163,7 +163,7 @@ describe("generator contract", () => {
     }
   });
 
-  it("marks every structural landmark persistent and non-liable", () => {
+  it("marks every structural landmark non-liable, and none of it indestructible", () => {
     const world = generateWorld("bounceworld-01");
     for (const site of CORNERSTONES) {
       let found = 0;
@@ -172,8 +172,11 @@ describe("generator contract", () => {
           const cell = world.cells[y]?.[x];
           if (cell?.kind === "mechanism") {
             found++;
-            expect(cell.persistent).toBe(true);
+            // Non-liable, so leaving one standing is free. Not persistent: a wall the player can
+            // neither see through, break, nor walk past is an obstruction rather than a landmark.
+            expect(cell.persistent).toBe(false);
             expect(materialOf(cell.kind).liable).toBe(false);
+            expect(materialOf(cell.kind).hp).toBeGreaterThan(1);
           }
         }
       }

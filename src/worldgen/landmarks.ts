@@ -101,13 +101,13 @@ export function stampLanding(cells: Grid, open: Uint8Array): void {
     for (let x = LANDING.x - 3; x <= LANDING.x + 3; x++) {
       const edge = y === LANDING.y + 2 || x === LANDING.x - 3 || x === LANDING.x + 3;
       if (!edge) continue;
-      paintCell(cells, x, y, { kind: "lander", solid: true, persistent: true, hp: 1 });
+      paintCell(cells, x, y, { kind: "lander", solid: false, persistent: false, hp: 1 });
       open[y * WORLD_COLS + x] = 0;
     }
   }
 
   // 1b. The bank chest. Cargo becomes safe only once it is deposited here.
-  paintCell(cells, BANK.x, BANK.y, { kind: "lander", solid: true, persistent: true, hp: 1 });
+  paintCell(cells, BANK.x, BANK.y, { kind: "lander", solid: false, persistent: false, hp: 1 });
   open[BANK.y * WORLD_COLS + BANK.x] = 0;
 
   // 2. The Chalk Face -- pure chalk, low density, no slate. A clean first clear.
@@ -147,7 +147,7 @@ export function stampLanding(cells: Grid, open: Uint8Array): void {
 
   // 6. Three survey stakes in a triangle, in their own small alcove.
   for (const [x, y] of [[34, 20], [38, 20], [36, 23]] as const) {
-    paintCell(cells, x, y, { kind: "stake", solid: true, persistent: true, hp: 1 });
+    paintCell(cells, x, y, { kind: "stake", solid: false, persistent: false, hp: 1 });
     open[y * WORLD_COLS + x] = 0;
   }
 
@@ -163,7 +163,7 @@ function stampMechanismRing(cells: Grid, open: Uint8Array, cx: number, cy: numbe
     const x = Math.round(cx + Math.cos(angle) * radius);
     const y = Math.round(cy + Math.sin(angle) * radius * 0.78);
     if (x < 1 || y < 1 || x >= WORLD_COLS - 1 || y >= WORLD_ROWS - 1) continue;
-    paintCell(cells, x, y, { kind: "mechanism", solid: true, persistent: true, hp: 1 });
+    paintCell(cells, x, y, { kind: "mechanism", solid: true, persistent: false, hp: 4 });
     open[y * WORLD_COLS + x] = 0;
   }
 }
@@ -172,21 +172,21 @@ export function stampCornerstones(cells: Grid, open: Uint8Array): void {
   // The Echo Observatory -- three dishes teaching triangulation.
   for (const [x, y] of [[48, 23], [56, 23], [52, 30]] as const) {
     stampMechanismRing(cells, open, x, y, 2.2, 6);
-    paintCell(cells, x, y, { kind: "mechanism", solid: true, persistent: true, hp: 1 });
+    paintCell(cells, x, y, { kind: "mechanism", solid: true, persistent: false, hp: 4 });
   }
 
   // The Twin Engine -- paired chambers straddling the Bright Fault, so impacts
   // echo between halves. Its internal relationship is fixed; its approach is not.
   for (const x of [92, 104]) {
     stampMechanismRing(cells, open, x, 46, 3, 8);
-    paintCell(cells, x, 46, { kind: "mechanism", solid: true, persistent: true, hp: 1 });
+    paintCell(cells, x, 46, { kind: "mechanism", solid: true, persistent: false, hp: 4 });
   }
 
   // The Root Choir -- a persistent organism spanning many possible claims.
   for (let voice = 0; voice < 5; voice++) {
     const x = 122 + voice * 3;
     const y = 96 + (voice % 2) * 4;
-    paintCell(cells, x, y, { kind: "mechanism", solid: true, persistent: true, hp: 1 });
+    paintCell(cells, x, y, { kind: "mechanism", solid: true, persistent: false, hp: 4 });
     open[y * WORLD_COLS + x] = 0;
   }
 }

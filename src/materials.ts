@@ -88,9 +88,16 @@ export const MATERIALS: Record<MaterialKind, MaterialDefinition> = {
   }),
 
   // --- Structural -------------------------------------------------------
-  lander: define("lander", "Lander", 1, 0x2b3335, PALETTE.machine, null, { liable: false, persistent: true }),
-  mechanism: define("mechanism", "Mechanism", 1, 0x2f3a3c, PALETTE.rail, null, { liable: false, persistent: true }),
-  stake: define("stake", "Survey Stake", 1, 0x4a4438, PALETTE.ink, null, { liable: false, persistent: true }),
+  // Authored structure. None of it is indestructible: a wall the player can neither see through, break,
+  // nor walk past is not a landmark, it is an obstruction -- and the Refit Bay's own lander was exactly
+  // that, sealing off most of the bay it was supposed to be.
+  //
+  // The lander and the stakes are not terrain at all now; the bay's readable form comes from the
+  // landmark layer. Mechanisms remain rock so a claim can still frame and strike them, but four hits
+  // takes one down like any other hard stone.
+  lander: define("lander", "Lander", 1, 0x2b3335, PALETTE.machine, null, { liable: false }),
+  mechanism: define("mechanism", "Mechanism", 4, 0x2f3a3c, PALETTE.rail, null, { liable: false }),
+  stake: define("stake", "Survey Stake", 1, 0x4a4438, PALETTE.ink, null, { liable: false }),
 };
 
 export const materialOf = (kind: MaterialKind): MaterialDefinition => MATERIALS[kind];
