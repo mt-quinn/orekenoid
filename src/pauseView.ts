@@ -92,8 +92,9 @@ const TOUCH_CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string
   {
     group: "IN THE MINE",
     rows: [
-      ["DRAG · LEFT HALF", "Fly the drone"],
-      ["DRAG · RIGHT HALF", "Turn the survey frame"],
+      ["DRAG ANYWHERE", "Fly the drone"],
+      ["TURN THE WHEEL", "Face the drone, and aim the frame"],
+      ["FLICK THE WHEEL", "Keep turning. Touch it to stop"],
       ["COMMIT", "Claim the framed rock"],
       ["TAP THE WORLD", "Also commits"],
       ["ATLAS · FORGE", "Top right. Forge needs an anchor"],

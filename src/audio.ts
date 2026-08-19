@@ -166,6 +166,16 @@ export const SOUNDS = {
   // rather than a collection. Written but never heard, like the rest of the fit vocabulary.
   salvageGrind: { frequency: 210, duration: 0.13, volume: 0.03, end: 70, spread: 0.06 },
   verbAcquired: { frequency: 180, duration: 0.5, volume: 0.06, end: 900 },
+  /**
+   * One tooth of the facing wheel passing the index mark.
+   *
+   * Short, dry and quiet, because it fires up to a dozen times a second during a spin. This is carrying
+   * the wheel's tactility on its own on an iPhone: Safari has never supported the Vibration API, so a web
+   * game gets no haptic there, and a detent nobody can feel has to be one they can hear.
+   */
+  dialDetent: { frequency: 1400, duration: 0.018, volume: 0.014, end: 1150, spread: 0.06 },
+  /** The wheel stopped by a thumb, which is a different event from the wheel being turned. */
+  dialCatch: { frequency: 320, duration: 0.05, volume: 0.02, end: 190 },
   tutorialStep: { frequency: 520, duration: 0.08, volume: 0.022, end: 720 },
   arrival: { frequency: 210, duration: 0.3, volume: 0.028, end: 320 },
 

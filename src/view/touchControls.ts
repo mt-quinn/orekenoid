@@ -1,3 +1,4 @@
+import { DIAL } from "../dial";
 // Drawing the fingers.
 //
 // A gesture the player cannot see is a gesture they have to be told about, and a control they have
@@ -19,6 +20,8 @@ import { STICK_RADIUS, type TouchState } from "../touch";
 import { view } from "../viewport";
 
 const BRASS = PALETTE.machine;
+/** The bright rail tone, for the parts of the wheel that have to read as lit metal. */
+const RAIL = PALETTE.rail;
 
 export class TouchControls {
   readonly container = new Container();
@@ -52,7 +55,11 @@ export class TouchControls {
     // Appearing is fast and leaving is slow: a control that lags its own touch feels broken, and
     // one that vanishes the instant a thumb lifts flickers during the small gaps in a drag.
     this.stickAlpha = approach(this.stickAlpha, state.stick ? 1 : 0, state.stick ? 26 : 7);
-    this.turnAlpha = approach(this.turnAlpha, state.turning ? 1 : 0, state.turning ? 26 : 7);
+    // The wheel is always there, so its alpha answers whether it is being used rather than whether it
+    // exists: gripped or coasting is bright, idle is a quiet instrument on the panel.
+    const busy = state.dial.gripped || Math.abs(state.dial.spin) > 0.2;
+    const wanted = this.wheelVisible ? (busy ? 1 : 0.42) : 0;
+    this.turnAlpha = approach(this.turnAlpha, wanted, busy ? 26 : 5);
     this.hintAlpha = approach(this.hintAlpha, resting ? 1 : 0, resting ? 2.2 : 9);
 
     this.drawStick(state);
@@ -100,39 +107,82 @@ export class TouchControls {
       .fill({ color: BRASS, alpha: 0.25 + clamped * 0.5 });
   }
 
+  /**
+   * The facing wheel, mounted half off the screen's edge.
+   *
+   * Drawn as a machine part rather than as a hint: it is always on the panel, it is gripped and released,
+   * and it coasts. The rim's teeth passing a fixed index mark are what carry the tactility -- Safari on
+   * iPhone gives a web game no vibration at all, so the detents have to be seen and heard rather than
+   * felt, and this is the seen half.
+   */
   private drawTurn(state: TouchState): void {
     this.turn.clear();
     if (this.turnAlpha < 0.01) return;
     this.turn.alpha = this.turnAlpha;
-    const live = state.turning;
-    if (!live) return;
+    const dial = state.dial;
+    if (dial.radius <= 0 || !this.wheelVisible) return;
 
-    // An arc under the thumb, leaning the way the frame is turning. The turn drag is relative, so
-    // there is no absolute position to draw -- what the player needs to see is direction and that
-    // it registered.
-    const lean = Math.max(-1, Math.min(1, live.amount * 26));
-    const radius = 44;
-    const from = -Math.PI * 0.62 + lean * 0.5;
-    const to = Math.PI * 0.62 + lean * 0.5;
+    const busy = dial.gripped || Math.abs(dial.spin) > 0.2;
+    // The rim, and a heavier band inside it so the wheel reads as having thickness rather than being a
+    // drawn circle.
     this.turn
-      .arc(live.x, live.y, radius, from, to)
-      .stroke({ width: 3, color: BRASS, alpha: 0.32 + Math.abs(lean) * 0.4 })
-      .circle(live.x, live.y, 7)
-      .fill({ color: BRASS, alpha: 0.5 });
-    // A tick at the leading end, so which way it is going is unambiguous even at a small lean.
-    const tip = lean >= 0 ? to : from;
+      .circle(dial.x, dial.y, dial.radius)
+      .stroke({ width: 3, color: BRASS, alpha: busy ? 0.9 : 0.5 })
+      .circle(dial.x, dial.y, dial.radius - 9)
+      .stroke({ width: 1, color: BRASS, alpha: busy ? 0.4 : 0.2 })
+      .circle(dial.x, dial.y, dial.radius * DIAL.innerGuard)
+      .stroke({ width: 1, color: BRASS, alpha: 0.14 });
+
+    // Teeth, laid out in world-facing angles so they turn with the heading. Only the ones on the visible
+    // crescent are drawn, which is most of the cost saved for free.
+    const step = (Math.PI * 2) / DIAL.detents;
+    for (let index = 0; index < DIAL.detents; index++) {
+      const angle = this.heading + index * step;
+      const outer = dial.radius;
+      const inner = dial.radius - 16;
+      const x1 = dial.x + Math.cos(angle) * inner;
+      const y1 = dial.y + Math.sin(angle) * inner;
+      const x2 = dial.x + Math.cos(angle) * outer;
+      const y2 = dial.y + Math.sin(angle) * outer;
+      if (x1 > dial.x) continue;
+      this.turn.moveTo(x1, y1).lineTo(x2, y2);
+    }
+    this.turn.stroke({ width: 2, color: BRASS, alpha: busy ? 0.7 : 0.34 });
+
+    // The index mark: a fixed pointer the teeth pass, which is the thing that makes a rotation legible.
+    // Without it a smooth ring gives no sense of having moved at all.
+    const markX = dial.x - dial.radius;
     this.turn
-      .circle(live.x + Math.cos(tip) * radius, live.y + Math.sin(tip) * radius, 5)
-      .fill({ color: BRASS, alpha: 0.55 + Math.abs(lean) * 0.4 });
+      .moveTo(markX - 14, dial.y)
+      .lineTo(markX + 10, dial.y - 9)
+      .lineTo(markX + 10, dial.y + 9)
+      .fill({ color: RAIL, alpha: busy ? 0.95 : 0.5 });
+
+    // A short arc showing which way it is coasting, so a spinning wheel looks spun.
+    if (Math.abs(dial.spin) > 0.2) {
+      const sweep = Math.min(1.1, Math.abs(dial.spin) * 0.12) * Math.sign(dial.spin);
+      this.turn
+        .arc(dial.x, dial.y, dial.radius + 7, Math.PI - sweep, Math.PI + (sweep > 0 ? 0 : -sweep))
+        .stroke({ width: 2, color: RAIL, alpha: 0.5 });
+    }
+  }
+
+  /** The heading the wheel is showing, kept here so the teeth can be drawn turned. */
+  private heading = 0;
+
+  /** Told the drone's heading each frame, since the teeth are drawn in world angles. */
+  setHeading(heading: number): void {
+    this.heading = heading;
   }
 
   /**
-   * The resting hint: two faint marks showing which half does what.
+   * Whether the wheel belongs on screen at all.
    *
-   * Shown only while the player is in the survey with nothing touched, and it fades in slowly --
-   * so it reads as an offer rather than an interruption, and never competes with the world while
-   * they are actually flying.
+   * False inside a claim. The paddle is dragged directly there and facing means nothing, so leaving the
+   * wheel up would be an instrument that does not answer -- worse than no instrument.
    */
+  wheelVisible = true;
+
   private drawHint(): void {
     this.hint.clear();
     if (this.hintAlpha < 0.01) return;

@@ -50,6 +50,7 @@ import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
 import { Bindings, type Action } from "./bindings";
+import { detentsCrossed } from "./dial";
 import { BayView } from "./bayView";
 import { TouchControls } from "./view/touchControls";
 import { Gate, Pulse, Shudder } from "./view/feel";
@@ -212,7 +213,8 @@ export class OrekenoidGame {
    * would hand the rotation to whichever caller got there first and nothing to the other.
    */
   private touchState: TouchState = {
-    moveX: 0, moveY: 0, turn: 0, paddle: null, stick: null, turning: null,
+    moveX: 0, moveY: 0, turn: 0, paddle: null, stick: null,
+    dial: { x: 0, y: 0, radius: 0, spin: 0, gripped: false, caught: false },
   };
   readonly frameWash = new Graphics();
   readonly frameGrid = new Graphics();
@@ -299,12 +301,12 @@ export class OrekenoidGame {
    */
   readonly tutorial: TutorialStep[] = [
     // --- Inside the Berth. Sealed, and nothing here can hurt anyone. -----------------------------
-    { id: "move", keys: "WASD / ARROWS", teaches: ["moveUp", "moveLeft", "moveDown", "moveRight"], gesture: "DRAG · LEFT HALF", demo: "stick", label: "FLY THE DRONE", why: "The Seal is the way out.", where: "survey", done: false },
+    { id: "move", keys: "WASD / ARROWS", teaches: ["moveUp", "moveLeft", "moveDown", "moveRight"], gesture: "DRAG ANYWHERE", demo: "stick", label: "FLY THE DRONE", why: "The Seal is the way out.", where: "survey", done: false },
     // One rung, two keys, because fitting a frame to the Seal is one act. The Seal is drawn on a
     // diagonal precisely so that a frame left square cannot cover it: the rock asks for the rotation,
     // and the prompt only has to name the keys. This is also the rung that opens the world, so it
     // refuses a frame that is not on the door -- see `frameCoversSeal`.
-    { id: "commit", also: ["aim"], keys: "Q / E, THEN F", teaches: ["aimLeft", "aimRight", "commit"], gesture: "DRAG · RIGHT HALF, THEN COMMIT", demo: "swipe", label: "FIT THE FRAME TO THE SEAL", why: "Cut the Seal and the mine is open.", where: "survey", done: false },
+    { id: "commit", also: ["aim"], keys: "Q / E, THEN F", teaches: ["aimLeft", "aimRight", "commit"], gesture: "TURN THE WHEEL, THEN COMMIT", demo: "swipe", label: "FIT THE FRAME TO THE SEAL", why: "Cut the Seal and the mine is open.", where: "survey", done: false },
     { id: "paddle", keys: "A / D", teaches: ["paddleLeft", "paddleRight"], gesture: "DRAG ANYWHERE", demo: "swipe", label: "MOVE THE PADDLE", why: "It is the drone, edge on.", where: "play", done: false },
     // Likewise one act: the aim steers the ball off the paddle and is fixed the moment it is live, so
     // a rung that taught aiming after serving was teaching something already spent.
@@ -377,6 +379,8 @@ export class OrekenoidGame {
    * Only counts while a ball is actually served: a docked ball has not gone anywhere.
    */
   private ballAwayFor = 0;
+  /** The heading the wheel last ticked at, so detent crossings can be counted between frames. */
+  private wheelHeading = 0;
   /** How long the current step has been on screen, for advancing the optional ones. */
   private tutorialShownFor = 0;
   private tutorialFadeTimer = 0;
@@ -827,6 +831,24 @@ export class OrekenoidGame {
     this.renderFramePreview();
     this.deploymentPreviews.setSelected(index);
     this.updateUI();
+  }
+
+  /**
+   * Tick the wheel's teeth past the index mark.
+   *
+   * Capped per frame rather than played once per tooth crossed. A hard flick can cross a dozen detents in
+   * a frame and firing them all at once is not a texture, it is a burst of noise -- and they would all
+   * land on the same millisecond anyway, so nobody could hear them as separate.
+   */
+  private soundTheWheel(): void {
+    if (!this.touch.used || this.mode !== "survey") {
+      this.wheelHeading = this.player.heading;
+      return;
+    }
+    const crossed = detentsCrossed(this.wheelHeading, this.player.heading);
+    this.wheelHeading = this.player.heading;
+    if (this.touchState.dial.caught) this.audio.play(SOUNDS.dialCatch);
+    for (let tick = 0; tick < Math.min(crossed, 2); tick++) this.audio.play(SOUNDS.dialDetent);
   }
 
   private showToast(message: string): void {
@@ -1891,12 +1913,17 @@ export class OrekenoidGame {
     // no movement yet to infer one from.
     this.touch.mode = this.mode === "play" ? "play" : "survey";
     this.touch.enabled = this.started && !this.craftingOpen && !this.atlasOpen && !this.paused;
-    this.touchState = this.touch.read(this.camera);
+    this.touchState = this.touch.read(this.camera, dt);
     this.answerTaps();
     // Only while a claim is actually running. Holding the lock through the deployment screen or a
     // pause would be asking to keep somebody's screen on for a game they are not playing.
     this.awake.set(this.started && !this.paused && this.arena !== null);
     this.renderTouchActions(dt);
+    // The wheel's teeth are drawn at world angles so they turn with the drone, and it only exists out in
+    // the mine: inside a claim the paddle is dragged directly and a facing wheel has nothing to do.
+    this.touchControls.setHeading(this.player.heading);
+    this.soundTheWheel();
+    this.touchControls.wheelVisible = this.mode === "survey";
     this.touchControls.update(
       dt,
       this.touchState,
