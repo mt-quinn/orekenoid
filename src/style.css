@@ -2071,3 +2071,14 @@ button { color: inherit; font: inherit; }
 }
 .audio-gate-row button.quiet:hover { color: var(--ink, #f1eadb); border-color: var(--ink, #f1eadb); }
 .shell[data-layout="phone"] .audio-gate-row button { min-height: 46px; }
+/* Per-element audio detail, shown only when something is wrong. Monospaced digits because it is read by
+   comparing two lines against each other. */
+.audio-voices {
+  display: block;
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(9px, 0.85cqw, 11px);
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 52%, transparent);
+}

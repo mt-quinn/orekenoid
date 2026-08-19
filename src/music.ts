@@ -233,6 +233,42 @@ export class Music {
     return this.voices !== null;
   }
 
+  /**
+   * Try again to start anything that is not playing. Called on every gesture, and cheap when there is nothing
+   * to do.
+   *
+   * The first attempt was a single shot: if the browser refused it -- and browsers refuse for reasons that have
+   * nothing to do with whether a human clicked, including having refused once already -- the score stayed
+   * silent for the rest of the session with nobody trying again. A sibling project whose music works in the
+   * browser this one was silent in retries on every gesture, and that is the difference worth copying.
+   */
+  nudge(): void {
+    if (!this.voices) return;
+    for (const voice of [this.voices.survey, this.voices.framed]) {
+      if (voice.element.paused) void tryPlay(voice.element);
+    }
+  }
+
+  /**
+   * Everything each element will admit about itself.
+   *
+   * Written because four rounds of diagnosis from the outside got the wrong answer three times. `paused` alone
+   * cannot distinguish "refused to start" from "started and produced no sound", and nothing else here was
+   * reported at all.
+   */
+  get voiceDetail(): Array<{ src: string; paused: boolean; volume: number; muted: boolean; ready: number; error: number | null; at: number }> {
+    if (!this.voices) return [];
+    return [this.voices.survey, this.voices.framed].map(({ element }) => ({
+      src: element.currentSrc.split("/").pop() ?? "",
+      paused: element.paused,
+      volume: Number(element.volume.toFixed(3)),
+      muted: element.muted,
+      ready: element.readyState,
+      error: element.error?.code ?? null,
+      at: Number(element.currentTime.toFixed(2)),
+    }));
+  }
+
   /** How far the framed mix is from the exploration mix right now, in seconds. Diagnostic. */
   get drift(): number {
     if (!this.voices) return 0;
@@ -258,7 +294,10 @@ export class Music {
       surveyGain: this.voices ? this.voices.survey.element.volume : 0,
       framedGain: this.voices ? this.voices.framed.element.volume : 0,
       drift: this.drift,
-      playing: Boolean(this.voices && !this.voices.survey.element.paused),
+      // Both, not just the exploration mix. Reading only that one meant a framed mix the browser refused
+      // reported the score as healthy, and the silence waited until the player committed a claim -- which is
+      // both the worst moment to discover it and the hardest to connect back to a cause.
+      playing: Boolean(this.voices && !this.voices.survey.element.paused && !this.voices.framed.element.paused),
       at: this.voices ? this.voices.survey.element.currentTime : 0,
     };
   }
@@ -460,7 +499,7 @@ async function tryPlay(element: HTMLAudioElement): Promise<void> {
   try {
     await element.play();
   } catch {
-    // Autoplay policy, or no output. The score stays silent and the game does not care.
+    // Not a qualifying gesture yet, or no output. `nudge` will try again on the next one.
   }
 }
 
@@ -471,13 +510,17 @@ async function tryPlay(element: HTMLAudioElement): Promise<void> {
  * the way there spends it.
  */
 function openStream(base: string, extension: string): HTMLAudioElement {
-  const element = document.createElement("audio");
+  // `new Audio(src)` rather than `createElement` plus a `src`, and deliberately *not* `hidden`.
+  //
+  // Both copied from a sibling project whose music demonstrably plays in the browser this one was silent in,
+  // which is a better authority than my reasoning has been. `hidden` is `display: none`, and WebKit has a long
+  // history of treating media it is not rendering differently from media it is; an audio element without
+  // `controls` draws nothing anyway, so the attribute was buying nothing and possibly costing everything.
+  const element = new Audio(`${base}.${extension}`);
   element.preload = "auto";
   element.loop = true;
-  element.hidden = true;
-  // Attached because some mobile browsers will not play a detached element, and hidden because it has no
-  // business being a visible control.
-  element.src = `${base}.${extension}`;
+  element.dataset.orekanoidScore = base;
+  // Attached because some mobile browsers will not play a detached element.
   document.body.appendChild(element);
   return element;
 }

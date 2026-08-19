@@ -336,6 +336,7 @@ export class OrekenoidGame {
       musicFormat: this.music.format,
       musicRefusal: this.music.refusal,
       musicPlaying: this.music.diagnostics.playing,
+      voices: this.music.voiceDetail,
       samplesLoaded: this.audio.loadedSamples.length,
       samplesExpected: Object.keys(SAMPLES).length,
     };
@@ -737,9 +738,16 @@ export class OrekenoidGame {
       if (this.started) this.holds.audioLost();
       else this.checkAudio();
     };
-    // Any gesture at all, once. Both listeners share the guard inside `start`, which is idempotent.
+    // Every gesture, not just the first.
+    //
+    // `openSound` is idempotent, and the part that is not -- asking the elements to play -- is exactly the part
+    // that has to be retried: a browser can refuse a play for reasons unrelated to whether a human clicked, and
+    // one refusal used to mean silence for the rest of the session with nothing trying again.
     for (const event of ["pointerdown", "keydown"] as const) {
-      window.addEventListener(event, () => this.openSound(), { capture: true, once: true });
+      window.addEventListener(event, () => {
+        this.openSound();
+        this.music.nudge();
+      }, { capture: true });
     }
     this.audioGate.attach({
       onRetry: () => {

@@ -61,10 +61,20 @@ export function audioStatusHtml(status: AudioStatus | null): string {
     // Not asked for yet is not the same as having failed, though after the first click it is a brief state.
     : `SCORE · ${status.musicRefusal ?? (status.musicRequested ? "loading" : "opens on your first click")}`;
   const impacts = `IMPACTS · ${status.samplesLoaded} of ${status.samplesExpected}`;
+  // Per element, and only when something is off. Four rounds of diagnosing this from the outside got the wrong
+  // answer three times, because `paused` alone cannot tell "refused to start" from "started and made no sound"
+  // -- and a screenshot of this line is the only instrument that reaches the browser it actually fails in.
+  const detail = status.voices.length
+    ? `<span class="audio-voices">${status.voices.map((voice) =>
+        `${voice.src.replace(/\.[a-z0-9]+$/, "").replace("bgm-", "")}: `
+        + `${voice.paused ? "paused" : "playing"} vol ${voice.volume.toFixed(2)}`
+        + `${voice.muted ? " MUTED" : ""} ready ${voice.ready}`
+        + `${voice.error !== null ? ` ERROR ${voice.error}` : ""} at ${voice.at.toFixed(1)}s`).join("<br />")}</span>`
+    : "";
   const bad = status.samplesLoaded < status.samplesExpected
     || Boolean(status.musicRefusal)
     || (status.musicRequested && !status.musicPlaying);
-  return `<p class="audio-status${bad ? " warn" : ""}">${score}<i>·</i>${impacts}</p>`;
+  return `<p class="audio-status${bad ? " warn" : ""}">${score}<i>·</i>${impacts}${bad ? detail : ""}</p>`;
 }
 
 export interface AudioStatus {
@@ -77,6 +87,8 @@ export interface AudioStatus {
   musicPlaying: boolean;
   samplesLoaded: number;
   samplesExpected: number;
+  /** What each score element says about itself. Shown only when something is wrong. */
+  voices: Array<{ src: string; paused: boolean; volume: number; muted: boolean; ready: number; error: number | null; at: number }>;
 }
 
 export function audioPanelHtml(prefs: AudioPrefs, status: AudioStatus | null = null): string {
