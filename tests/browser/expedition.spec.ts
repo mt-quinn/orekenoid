@@ -24,12 +24,14 @@ test("an expedition survives a reload, and the Atlas records only what was surve
   // --- No save yet ---------------------------------------------------------
   // Import is still offered: a player arriving with a save file in hand has
   // nowhere else to put it.
-  await expect(page.locator("#expeditionTitle")).toHaveText("NO SAVED EXPEDITION");
-  await expect(page.locator("#continueButton")).toBeHidden();
-  await expect(page.locator("#abandonButton")).toBeHidden();
+  // Loading stays in the row and goes inert, so the menu holds its shape and the absence reads as
+  // "nothing to load" rather than as an option that came and went.
+  await expect(page.locator("#loadButton")).toBeDisabled();
+  await expect(page.locator("#loadDetail")).toHaveText("No saved expedition");
+  await expect(page.locator("#newDetail")).toHaveText("A fresh mine");
   await expect(page.locator("#importButton")).toBeVisible();
 
-  await page.click("#beginButton");
+  await page.click("#newButton");
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 
   // --- Play enough to have something worth losing --------------------------
@@ -75,10 +77,12 @@ test("an expedition survives a reload, and the Atlas records only what was surve
   await page.reload();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await expect(page.locator("#briefing")).toHaveAttribute("data-render-state", "ready");
-  await expect(page.locator("#expeditionTitle")).toContainText("EXPEDITION");
-  await expect(page.locator("#continueButton")).toBeVisible();
+  // The save describes itself inside the button that loads it, and starting over now says what it costs.
+  await expect(page.locator("#loadButton")).toBeEnabled();
+  await expect(page.locator("#loadDetail")).toContainText("elapsed");
+  await expect(page.locator("#newDetail")).toHaveText("Replaces the saved expedition");
 
-  await page.click("#continueButton");
+  await page.click("#loadButton");
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 
   // A save means this player has already been taught. The opening sequence must not run again,

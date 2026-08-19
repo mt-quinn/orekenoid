@@ -11,7 +11,7 @@ interface Win {
 
 const deploy = async (page: any) => {
   await page.goto("/");
-  await page.locator("#beginButton").click();
+  await page.locator("#newButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(700);
   await page.evaluate(() => {

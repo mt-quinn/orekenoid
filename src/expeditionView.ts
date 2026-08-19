@@ -14,55 +14,27 @@ import { readSave } from "./persistence";
 export interface ExpeditionActions {
   onContinue: () => void;
   onImport: () => void;
-  onAbandon: () => void;
+  /** Start a fresh expedition, replacing any saved one. */
+  onNewGame: () => void;
   onExport: () => void;
   /** A chassis card was clicked. */
-  onSelectChassis: (index: number) => void;
   /** The pointer entered a chassis card. */
-  onHoverChassis: (index: number) => void;
   /** The pointer left a chassis card. The index is passed so the caller can tell
    *  a genuine exit from the leave that fires while entering a neighbour. */
-  onUnhoverChassis: (index: number) => void;
-  /** DEPLOY was pressed. */
-  onDeploy: () => void;
 }
 
 export class ExpeditionView {
   private readonly screen = document.querySelector<HTMLElement>("#briefing");
-  private readonly deployButton = document.querySelector<HTMLButtonElement>("#beginButton");
-  private readonly deployLabel = document.querySelector<HTMLElement>("#beginLabel");
-  private readonly chassisCards = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-chassis]"));
-  private readonly panel = document.querySelector<HTMLElement>("#expedition");
-  private readonly title = document.querySelector<HTMLElement>("#expeditionTitle");
-  private readonly detail = document.querySelector<HTMLElement>("#expeditionDetail");
-  private readonly continueButton = document.querySelector<HTMLButtonElement>("#continueButton");
-  private readonly abandonButton = document.querySelector<HTMLButtonElement>("#abandonButton");
+  private readonly loadButton = document.querySelector<HTMLButtonElement>("#loadButton");
+  private readonly loadDetail = document.querySelector<HTMLElement>("#loadDetail");
+  private readonly newButton = document.querySelector<HTMLButtonElement>("#newButton");
+  private readonly newDetail = document.querySelector<HTMLElement>("#newDetail");
+  private readonly menu = document.querySelector<HTMLElement>("#menu");
 
   bind(actions: ExpeditionActions): void {
-    this.continueButton?.addEventListener("click", () => actions.onContinue());
-    this.abandonButton?.addEventListener("click", () => actions.onAbandon());
+    this.loadButton?.addEventListener("click", () => actions.onContinue());
+    this.newButton?.addEventListener("click", () => actions.onNewGame());
     document.querySelector("#importButton")?.addEventListener("click", () => actions.onImport());
-    // The Atlas footer carries the same two file actions, because that is where a
-    // player already deep in an expedition will look for them.
-    document.querySelector("#atlasImport")?.addEventListener("click", () => actions.onImport());
-    document.querySelector("#atlasExport")?.addEventListener("click", () => actions.onExport());
-
-    for (const card of this.chassisCards) {
-      const index = Number(card.dataset.chassis);
-      card.addEventListener("click", () => actions.onSelectChassis(index));
-      card.addEventListener("pointerenter", () => actions.onHoverChassis(index));
-      card.addEventListener("pointerleave", () => actions.onUnhoverChassis(index));
-    }
-    this.deployButton?.addEventListener("click", () => actions.onDeploy());
-  }
-
-  /** Reflect the chosen chassis, and arm DEPLOY. */
-  showChassisSelected(index: number): void {
-    for (const card of this.chassisCards) {
-      card.setAttribute("aria-pressed", String(Number(card.dataset.chassis) === index));
-    }
-    if (this.deployLabel) this.deployLabel.textContent = "DEPLOY";
-    if (this.deployButton) this.deployButton.disabled = false;
   }
 
   /**
@@ -84,24 +56,36 @@ export class ExpeditionView {
     this.screen?.classList.add("hidden");
   }
 
-  /** Read the stored expedition and reflect it. Safe to call at any time. */
+  /**
+   * Read the stored expedition and reflect it. Safe to call at any time.
+   *
+   * The save's details sit inside the LOAD GAME button rather than in a panel above it, because they are
+   * a description of that button and nothing else. Without a save the button stays visible and disabled,
+   * so the menu keeps its shape and the absence reads as "nothing to load" rather than as a missing
+   * option the player has to wonder about.
+   */
   refresh(): void {
-    if (!this.panel) return;
     const stored = readSave();
     const data = stored.ok ? stored.data : undefined;
-    this.panel.hidden = false;
-    if (this.continueButton) this.continueButton.hidden = !data;
-    if (this.abandonButton) this.abandonButton.hidden = !data;
+    if (this.menu) this.menu.hidden = false;
 
+    if (this.loadButton) {
+      this.loadButton.disabled = !data;
+      this.loadButton.setAttribute("aria-disabled", String(!data));
+    }
+    if (this.newDetail) {
+      // Said before it is done, not confirmed after. A player who has a save wants to know this button
+      // costs them something before they press it.
+      this.newDetail.textContent = data ? "Replaces the saved expedition" : "A fresh mine";
+    }
+    if (this.newButton) this.newButton.classList.toggle("hazard", Boolean(data));
+
+    if (!this.loadDetail) return;
     if (!data) {
-      if (this.title) this.title.textContent = "NO SAVED EXPEDITION";
-      if (this.detail) {
-        // A genuine storage failure is worth showing verbatim; "no save yet" is not
-        // an error and gets an instruction instead.
-        this.detail.textContent = stored.reason === "No saved expedition."
-          ? "Choose a paddle below, or import a save file."
-          : (stored.reason ?? "");
-      }
+      // A genuine storage failure is worth showing verbatim; "no save yet" is not an error.
+      this.loadDetail.textContent = stored.reason && stored.reason !== "No saved expedition."
+        ? stored.reason
+        : "No saved expedition";
       return;
     }
 
@@ -109,15 +93,12 @@ export class ExpeditionView {
     const banked = Object.values(data.economy.banked ?? {})
       .reduce((total, count) => total + (count ?? 0), 0);
     const depth = Math.round((data.player.y / CELL) * 14);
-    if (this.title) this.title.textContent = `EXPEDITION · ${data.seedLabel.toUpperCase()}`;
-    if (this.detail) {
-      this.detail.textContent = [
-        `${minutes}m elapsed`,
-        `${depth}m deep`,
-        `${banked} banked`,
-        `${data.economy.verbs?.length ?? 0} verbs`,
-        `${data.progress.deaths} losses`,
-      ].join(" · ");
-    }
+    this.loadDetail.textContent = [
+      data.seedLabel.toUpperCase(),
+      `${minutes}m elapsed`,
+      `${depth}m deep`,
+      `${banked} banked`,
+      `${data.progress.deaths} losses`,
+    ].join(" · ");
   }
 }

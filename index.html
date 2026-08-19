@@ -184,33 +184,38 @@
         </section>
 
         <section class="deployment loading" id="briefing" aria-labelledby="deploymentTitle" aria-busy="true" data-render-state="loading">
+          <!-- The gate is honest about what it is waiting for. It used to say INITIALIZING PADDLES and
+               wait on three chassis previews being rasterised; there is no paddle to choose any more, so
+               what is left is the renderer coming up and the mine being generated. -->
           <div class="deployment-loader" id="deploymentLoader" role="status">
-            <b>INITIALIZING PADDLES</b>
+            <b>GENERATING THE MINE</b>
             <i aria-hidden="true"></i>
           </div>
           <header class="deployment-heading">
             <div>
-              <h1 id="deploymentTitle">Choose a paddle</h1>
+              <h1 id="deploymentTitle">Orekenoid</h1>
             </div>
           </header>
 
-          <section class="expedition" id="expedition" hidden>
-            <div class="expedition-read">
-              <b id="expeditionTitle">EXPEDITION IN PROGRESS</b>
-              <small id="expeditionDetail"></small>
-            </div>
-            <div class="expedition-actions">
-              <button id="continueButton" type="button" class="primary">CONTINUE <i>→</i></button>
-              <button id="importButton" type="button">IMPORT SAVE</button>
-              <button id="abandonButton" type="button" class="danger">NEW EXPEDITION</button>
-            </div>
-          </section>
+          <!-- Three ways in, at equal weight, each carrying its own detail underneath. Ranking them
+               would be guessing which one the player wants, and the answer changes every visit: a
+               returning player wants the top one and a new one wants the middle. -->
+          <nav class="menu" id="menu" aria-label="Start">
+            <button id="loadButton" type="button" class="menu-option">
+              <b>LOAD GAME</b>
+              <small id="loadDetail">No saved expedition</small>
+            </button>
+            <button id="newButton" type="button" class="menu-option">
+              <b>NEW GAME</b>
+              <small id="newDetail">A fresh mine</small>
+            </button>
+            <button id="importButton" type="button" class="menu-option">
+              <b>IMPORT SAVE</b>
+              <small>From a save file</small>
+            </button>
+          </nav>
 
           <p class="armor-rule">At the end of a claim, any bricks left standing over your Armor are deducted from your Health.</p>
-
-          <footer class="deploy-row">
-            <button id="beginButton" type="button"><span id="beginLabel">DEPLOY</span> <i>→</i></button>
-          </footer>
         </section>
       </section>
     </main>

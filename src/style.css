@@ -306,10 +306,14 @@ button { color: inherit; font: inherit; }
   z-index: auto;
   inset: 0;
   display: grid;
-  /* heading, expedition, paddle bay, armor rule, deploy row. Only the bay flexes:
-     the chassis previews are the point of this screen, so everything else is
-     content-height and the bay takes whatever is left. */
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  /* Heading, then the way in, then the rule, with flexible space above and below so the block sits in
+     the middle of the screen.
+     This used to be five rows with the paddle bay flexing to fill the middle -- the chassis previews
+     were the point of the screen. With the choice gone the bay went with it, and the same template left
+     three small cards pinned to the top of an otherwise empty plate. */
+  grid-template-rows: auto minmax(0, 1fr) auto auto minmax(0, 1.2fr);
+  align-content: stretch;
+  justify-items: center;
   gap: clamp(10px, 1.4cqw, 20px);
   padding: clamp(20px, 2.8cqw, 40px) clamp(24px, 3.4cqw, 48px) clamp(18px, 2.4cqw, 34px);
   background:
@@ -318,13 +322,15 @@ button { color: inherit; font: inherit; }
   transition: opacity .3s ease, transform .72s cubic-bezier(.16, 1, .3, 1);
 }
 .deployment.hidden { opacity: 0; transform: translateY(-4%); pointer-events: none; }
-.deployment-heading, .paddle-bay, .armor-rule, .deploy-row, .expedition { transition: opacity .18s ease; }
-.deployment-heading, .paddle-bay, .deploy-row { position: relative; z-index: 3; }
+.deployment-heading, .armor-rule, .menu { transition: opacity .18s ease; }
+.deployment-heading, .menu { position: relative; z-index: 3; }
+/* The heading keeps the top row; the menu takes the row after the flexible gap, so it lands centred. */
+.deployment-heading { justify-self: start; grid-row: 1; }
+.menu { grid-row: 3; }
+.armor-rule { grid-row: 4; }
 .deployment.loading .deployment-heading,
-.deployment.loading .paddle-bay,
 .deployment.loading .armor-rule,
-.deployment.loading .expedition,
-.deployment.loading .deploy-row { opacity: 0; pointer-events: none; }
+.deployment.loading .menu { opacity: 0; pointer-events: none; }
 .deployment-loader {
   position: absolute;
   z-index: 3;
@@ -1572,3 +1578,64 @@ button { color: inherit; font: inherit; }
   color: var(--danger, #ff655b);
 }
 .shell[data-layout="phone"] .pause-rebind { display: none; }
+
+/* --- The way in ----------------------------------------------------------
+   Three options at equal weight. Ranking them would be guessing which one the player wants, and the
+   answer changes every visit: a returning player wants the first and a new one wants the second. So
+   they are one row of equal cards, each carrying its own detail rather than leaning on a panel above
+   them to explain which is which. */
+.menu {
+  width: min(100%, 1080px);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: clamp(10px, 1.2cqw, 16px);
+  padding: clamp(14px, 1.6cqw, 22px) 0;
+}
+.menu-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: clamp(13px, 1.5cqw, 19px) clamp(15px, 1.7cqw, 22px);
+  text-align: left;
+  font: inherit;
+  color: var(--ink, #f1eadb);
+  background: color-mix(in srgb, var(--ink, #f1eadb) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 38%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.menu-option b {
+  font-size: clamp(15px, 1.5cqw, 19px);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+/* The detail is the button's own description, so it is quiet and it wraps rather than truncating --
+   a save's readout is the one thing on this screen a returning player actually reads. */
+.menu-option small {
+  font-size: clamp(10px, 0.95cqw, 12px);
+  letter-spacing: 0.06em;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 58%, transparent);
+}
+.menu-option:hover:not(:disabled) {
+  border-color: var(--ink, #f1eadb);
+  background: color-mix(in srgb, var(--ink, #f1eadb) 9%, transparent);
+}
+.menu-option:focus-visible { outline: 2px solid var(--rail, #e7dbc0); outline-offset: 2px; }
+/* Disabled keeps its place in the row rather than vanishing, so the menu holds its shape and the
+   absence reads as "nothing to load" instead of an option the player has to wonder about. */
+.menu-option:disabled {
+  cursor: default;
+  opacity: 0.42;
+  border-style: dashed;
+}
+/* Starting over when there is something to lose. Warm rather than alarming: it is a legitimate choice,
+   it just costs something, and the cost is named in the detail line underneath. */
+.menu-option.hazard { border-color: color-mix(in srgb, var(--danger, #ff655b) 46%, transparent); }
+.menu-option.hazard:hover:not(:disabled) {
+  border-color: var(--danger, #ff655b);
+  background: color-mix(in srgb, var(--danger, #ff655b) 10%, transparent);
+}
+.shell[data-layout="phone"] .menu { grid-template-columns: 1fr; }

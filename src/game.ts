@@ -621,16 +621,17 @@ export class OrekenoidGame {
       onOrientation: () => this.reshape(),
     });
     this.bindInterfaceUI();
-    await this.deploymentPreviews.build(this.chassisRoster);
-    // The world stays hidden until deployment so the previews read cleanly.
+    // The previews are no longer built on the way in.
+    //
+    // That build was the load pause -- three chassis Arenas rasterised through the production terrain
+    // path, then two frames to lay them out, behind a spinner that said INITIALIZING PADDLES. It bought
+    // the start screen three cards to illustrate a choice, and the choice is gone, so all it bought was
+    // the wait. The code stays and so does what it covers: `deploymentPreviews.build` still constructs
+    // real Arenas when something asks it to, which is how the vertical-slice test keeps that coverage.
     this.worldRoot.visible = false;
     this.app.ticker.add((ticker) => this.update(Math.min(0.25, ticker.deltaMS / 1000)));
     this.updateUI();
     this.exposeDebug();
-    await new Promise<void>((resolve) => requestAnimationFrame(() => {
-      this.deploymentPreviews.layout();
-      requestAnimationFrame(() => resolve());
-    }));
     this.expeditionView.markReady();
   }
 
@@ -824,7 +825,6 @@ export class OrekenoidGame {
     this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.actorLayer.addChild(this.drone);
     this.renderFramePreview();
-    this.expeditionView.showChassisSelected(index);
     this.deploymentPreviews.setSelected(index);
     this.updateUI();
   }
@@ -3450,16 +3450,29 @@ export class OrekenoidGame {
    * and it points at export first: a player who wants a fresh world usually still
    * wants the old one on disk.
    */
-  private abandonExpedition(): void {
+  /**
+   * Start a fresh expedition, replacing a saved one if there is one.
+   *
+   * The confirmation lives in `abandonExpedition` and this only proceeds if it cleared the save, so a
+   * player who cancels lands back on the menu with their expedition intact rather than deployed into a
+   * new one.
+   */
+  private newExpedition(): void {
+    if (!this.abandonExpedition()) return;
+    this.start();
+  }
+
+  private abandonExpedition(): boolean {
     const stored = readSave();
     if (stored.ok && stored.data) {
       const proceed = window.confirm(
         "Delete the saved expedition and start a new one?\n\nThis cannot be undone. Cancel and use EXPORT SAVE first if you want to keep it.",
       );
-      if (!proceed) return;
+      if (!proceed) return false;
     }
     clearSave();
     this.expeditionView.refresh();
+    return true;
   }
 
   // --- Atlas --------------------------------------------------------------
@@ -3529,16 +3542,8 @@ export class OrekenoidGame {
     this.expeditionView.bind({
       onContinue: () => this.continueExpedition(),
       onImport: () => void this.importExpedition(),
-      onAbandon: () => this.abandonExpedition(),
+      onNewGame: () => this.newExpedition(),
       onExport: () => this.exportExpedition(),
-      onSelectChassis: (index) => this.selectChassis(index),
-      onHoverChassis: (index) => { this.hoveredChassisIndex = index; },
-      // Guarded: leaving one card while entering another must not clear the hover
-      // the new card has already set.
-      onUnhoverChassis: (index) => {
-        if (this.hoveredChassisIndex === index) this.hoveredChassisIndex = null;
-      },
-      onDeploy: () => this.start(),
     });
     // A save on the way out costs nothing and covers a closed tab or a refresh.
     window.addEventListener("beforeunload", () => {

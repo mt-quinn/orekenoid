@@ -19,7 +19,7 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await expect(page.locator("#briefing")).not.toHaveClass(/loading|failed/);
   await expect(page.locator(".game-canvas")).toBeVisible();
   // Armed from the first frame: there is no chassis to choose any more, so there is nothing to wait for.
-  await expect(page.locator("#beginButton")).toBeEnabled();
+  await expect(page.locator("#newButton")).toBeEnabled();
 
   // --- Deployment previews -------------------------------------------------
   // These run the production Arena, terrain raster, brick, paddle, ball and
@@ -29,6 +29,16 @@ test("deployment previews, generated world, province rules, and the crafting cha
   // kept and so is this coverage, which is the whole reason the previews exist as a test surface. The
   // hosts the previews attach to are supplied here instead of by the briefing markup, sized explicitly
   // because a zero-height host renders a zero-pixel board and would pass every assertion below.
+  // Built here, because the start screen no longer builds them.
+  //
+  // That build was the load pause and it bought three cards to illustrate a choice that no longer
+  // exists. What it also bought is the coverage below, which is worth keeping -- so the walkthrough asks
+  // for it explicitly instead of the player paying for it on every boot.
+  await page.evaluate(async () => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    await game.deploymentPreviews.build(game.chassisRoster);
+  });
+
   // Detached from the start screen, still built and still drawn.
   //
   // There is no chassis choice at deployment any more, so there are no cards and no canvases to check
@@ -72,10 +82,14 @@ test("deployment previews, generated world, province rules, and the crafting cha
   expect(viewportFit.height).toBeLessThanOrEqual(viewportFit.innerHeight);
   expect(viewportFit.width / viewportFit.height).toBeCloseTo(16 / 9, 2);
 
-  await expect(page.locator("#beginLabel")).toHaveText("DEPLOY");
+  // Three ways in at equal weight, each describing itself. With no save, loading is offered but inert.
+  await expect(page.locator("#loadButton")).toBeDisabled();
+  await expect(page.locator("#loadDetail")).toHaveText("No saved expedition");
+  await expect(page.locator("#newButton")).toBeEnabled();
+  await expect(page.locator("#importButton")).toBeEnabled();
   await page.screenshot({ path: "webgl-opening.png", fullPage: true });
 
-  await page.click("#beginButton");
+  await page.click("#newButton");
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 
   // --- The opening sequence --------------------------------------------------

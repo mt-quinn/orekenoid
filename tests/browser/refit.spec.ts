@@ -21,9 +21,13 @@ const HOLD = 0.07;
 const RETRACT = 0.46;
 
 async function boot(page: import("@playwright/test").Page): Promise<void> {
+  // This test boots twice, and the first boot writes a save on its way out of the page. NEW GAME now asks
+  // before replacing a save, and Playwright dismisses an unhandled dialog -- which left the second boot
+  // sitting on the menu with nothing deployed, and the pose reading a machine that was never there.
+  page.once("dialog", (dialog) => void dialog.accept().catch(() => {}));
   await page.goto("/");
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
-  await page.click("#beginButton");
+  await page.click("#newButton");
   await page.waitForTimeout(900);
   await page.evaluate(() => {
     const api = (window as unknown as Win).__OREKENOID__;

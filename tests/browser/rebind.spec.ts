@@ -5,7 +5,7 @@ type Win = Window & typeof globalThis & { __OREKENOID__: any };
 async function deploy(page: import("@playwright/test").Page) {
   await page.goto("/?seed=bounceworld-01");
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
-  await page.click("#beginButton");
+  await page.click("#newButton");
   await page.waitForTimeout(1200);
   await page.evaluate(() => {
     const hook = (window as unknown as Win).__OREKENOID__;
@@ -49,7 +49,7 @@ test("the prompt teaches whatever the key is bound to now", async ({ page }) => 
   test.setTimeout(180_000);
   await page.goto("/?seed=bounceworld-01");
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
-  await page.click("#beginButton");
+  await page.click("#newButton");
   await page.waitForTimeout(1500);
   // The opening rung teaches flight, so its hint has to name the flight keys.
   const before = await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.coach.prompt?.keys ?? "");

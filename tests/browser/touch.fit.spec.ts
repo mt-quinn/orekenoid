@@ -14,7 +14,7 @@ interface Win {
 
 test("a committed board sits inside the stage with room for the thumbs", async ({ page }) => {
   await page.goto("/");
-  await page.locator("#beginButton").tap();
+  await page.locator("#newButton").tap();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(700);
 
