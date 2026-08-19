@@ -26,6 +26,14 @@ export interface HudModel {
   region: { name: string; band: number; depthMetres: number };
   /** Clearable, liable bricks still standing. Zero outside an arena. */
   remainingLoad: number;
+  /**
+   * The opening is currently explaining what leaving rock behind costs.
+   *
+   * Lights the load and damage readouts while it says so. The sentence is about the difference between two
+   * numbers that are already on screen, and a player who has just lost a ball should be looking at them
+   * rather than reading a description of them.
+   */
+  teachingLiability: boolean;
   projectedDamage: number;
   integrity: number;
   maxIntegrity: number;
@@ -70,6 +78,9 @@ export class Hud {
   private readonly claimLabel = document.querySelector<HTMLElement>("#claimValue");
   private readonly claimDetail = document.querySelector<HTMLElement>("#claimDetail");
   private readonly damageStat = document.querySelector<HTMLElement>("#damageStat");
+  private readonly loadStat = document.querySelector<HTMLElement>("#loadStat");
+  /** The armour figure, which is the other half of the arithmetic being taught. */
+  private readonly soakField = document.querySelector<HTMLElement>("#soakValue");
   private readonly damageLabel = document.querySelector<HTMLElement>("#damageValue");
   private readonly integrityStat = document.querySelector<HTMLElement>("#integrityStat");
   private readonly healthLabel = document.querySelector<HTMLElement>("#healthValue");
@@ -109,6 +120,9 @@ export class Hud {
     if (this.claimDetail) this.claimDetail.textContent = "REMAINING";
     // Damage is an alarm, so it is absent at zero rather than reading "00".
     this.damageStat?.classList.toggle("active", model.projectedDamage > 0);
+    this.loadStat?.classList.toggle("teaching", model.teachingLiability);
+    this.damageStat?.classList.toggle("teaching", model.teachingLiability);
+    this.soakField?.classList.toggle("teaching", model.teachingLiability);
     if (this.damageLabel) this.damageLabel.textContent = String(model.projectedDamage);
 
     if (this.healthLabel) this.healthLabel.textContent = String(model.integrity);

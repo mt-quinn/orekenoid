@@ -1716,3 +1716,36 @@ button { color: inherit; font: inherit; }
   background: color-mix(in srgb, var(--danger, #ff655b) 10%, transparent);
 }
 .shell[data-layout="phone"] .menu { width: 100%; }
+
+/* --- Teaching a readout ----------------------------------------------------
+   Lit while the opening is explaining what leaving rock behind costs. The sentence is about the
+   difference between two numbers that are already on the glass -- the load and the armour -- so the
+   prompt names them and this points at them.
+
+   A slow breath rather than a flash: the player has just lost a ball and is watching the board, and
+   something urgent in the corner of their eye would pull them off it. This is meant to be found when
+   they look, not to demand that they look. */
+@keyframes teach-breathe {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+.stat.teaching,
+.health-head b.teaching {
+  position: relative;
+  animation: teach-breathe 1.9s ease-in-out infinite;
+}
+.stat.teaching::after,
+.health-head b.teaching::after {
+  content: "";
+  position: absolute;
+  inset: -4px -6px;
+  border: 1px solid var(--ore-hot, #e1a263);
+  border-radius: 2px;
+  pointer-events: none;
+}
+/* Motion is a preference, and a pulse nobody asked for is the first thing to drop. The outline stays,
+   because that is what carries the meaning. */
+@media (prefers-reduced-motion: reduce) {
+  .stat.teaching,
+  .health-head b.teaching { animation: none; opacity: 1; }
+}

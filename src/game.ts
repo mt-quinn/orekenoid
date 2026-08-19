@@ -329,11 +329,16 @@ export class OrekenoidGame {
     // with nothing to take: the player was left hunting a cavern for an enemy that could be forty cells
     // away behind a wall. Armed by proximity, and `drawTargetMark` says which one.
     { id: "face", keys: "MEET IT HEAD ON", gesture: "MEET IT HEAD ON", label: "TAKE IT ON THE FACE", why: "The front deflects. Anywhere else and it hurts.", where: "survey", deferred: true, done: false },
-    // Shown, not demanded, and deliberately about a number rather than a control. The liability gauge
-    // and the damage read-out have always been on screen and nothing ever said what they were, so the
-    // first time a player left rock behind the cost arrived as a surprise. Named on the Overload Face,
-    // where it is legibly larger than the armour, it is a thing understood before it is ever charged.
-    { id: "liability", keys: "WATCH THE DAMAGE", gesture: "WATCH THE DAMAGE", label: "ROCK LEFT STANDING COSTS ARMOUR", why: "Bricks left, less armour. Slate is free.", where: "play", optional: true, done: false },
+    // Armed by the first ball going down, which is the moment the stakes stop being hypothetical.
+    //
+    // Shown rather than demanded, and about a number rather than a control. The liability gauge and the
+    // damage read-out have always been on screen with nothing ever saying what they were, so the first time
+    // a player left rock behind the cost arrived as a surprise. It used to be told on any claim at all,
+    // which is a worse moment: nothing is at stake while there is still a spare, and a warning arriving
+    // before it can matter is a warning nobody reads. Losing the first ball is the sentence "one left, and
+    // this is what the second one costs" -- and `render` lights the two readouts it is about while it is up,
+    // because "the load over your armour" is an arithmetic the player should see rather than parse.
+    { id: "liability", keys: "LOAD - ARMOR = DAMAGE", gesture: "LOAD - ARMOR = DAMAGE", label: "ONE BALL LEFT", why: "Lose it and the load over your armour comes back at you.", where: "play", optional: true, deferred: true, done: false },
     { id: "bank", keys: "FLY HOME", gesture: "FLY HOME", label: "BANK THE HAUL", why: "Ore only counts once it is banked.", where: "survey", done: false },
   ];
   /**
@@ -2732,6 +2737,15 @@ export class OrekenoidGame {
         arena.serveAim = 0.08;
         this.showToast(`SEQUENTIAL BALL · ${arena.spareBalls} REMAINING`);
         this.audio.play(SOUNDS.sequentialBall);
+        // The last spare going in is the moment the cost of leaving rock behind becomes a real number.
+        if (arena.spareBalls === 0) {
+          const rung = this.tutorial.find((step) => step.id === "liability");
+          if (rung?.deferred && !rung.done) {
+            rung.deferred = false;
+            this.tutorialShownFor = 0;
+            this.renderTutorial();
+          }
+        }
         return;
       }
       this.finishArena("lost");
@@ -3103,6 +3117,13 @@ export class OrekenoidGame {
       region: { name: reading.regionName, band: reading.band, depthMetres: reading.depthMetres },
       remainingLoad: remaining,
       projectedDamage: calculateClaimDamage(remaining, this.soakCapacity),
+      // True while the rung about the cost of leaving rock behind is on screen, so the HUD can light the
+      // two readouts the sentence is about. "The load over your armour" is an arithmetic between two numbers
+      // already on the glass; pointing at them beats describing them.
+      teachingLiability: (() => {
+        const rung = this.tutorial.find((step) => step.id === "liability");
+        return Boolean(rung && !rung.done && !rung.deferred && !this.tutorialComplete);
+      })(),
       integrity: this.integrity,
       maxIntegrity: this.maxIntegrity,
       soakCapacity: this.soakCapacity,
