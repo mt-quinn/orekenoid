@@ -217,12 +217,35 @@ export class ChunkedTerrain {
     const data = image.data;
     const seed = this.world.generated.seed;
 
+    // Solidity sampled once per pixel into a grid, instead of five times per pixel in the loop.
+    //
+    // This is the whole cost of streaming a chunk. Every solid pixel used to ask `visualSolidAt` five
+    // times -- itself, then four probes a tenth of a cell out to find its edges -- and each of those is a
+    // bilinear reconstruction plus three octaves of noise. Over a 24-cell chunk that is several million
+    // noise evaluations, and it measured at a mean of 28ms and a peak of 390ms per `pump`, against
+    // 0.77ms for the entire shadow layer. The probes land four pixels away, so they can be read out of
+    // the same grid: one sample per pixel, four array lookups, identical output to within the rounding
+    // of a probe position that was never pixel-aligned to begin with.
+    const probe = Math.max(1, Math.round(0.1 * PIXELS_PER_CELL));
+    const gridWidth = width + probe * 2;
+    const gridHeight = height + probe * 2;
+    const solidGrid = new Uint8Array(gridWidth * gridHeight);
+    for (let gy = 0; gy < gridHeight; gy++) {
+      const wy = cellOriginY + (gy - probe) / PIXELS_PER_CELL;
+      const row = gy * gridWidth;
+      for (let gx = 0; gx < gridWidth; gx++) {
+        const wx = cellOriginX + (gx - probe) / PIXELS_PER_CELL;
+        if (this.world.visualSolidAt(wx, wy)) solidGrid[row + gx] = 1;
+      }
+    }
+    const solidAtPixel = (px: number, py: number) => solidGrid[(py + probe) * gridWidth + (px + probe)] === 1;
+
     for (let py = 0; py < height; py++) {
       for (let px = 0; px < width; px++) {
         const wx = cellOriginX + px / PIXELS_PER_CELL;
         const wy = cellOriginY + py / PIXELS_PER_CELL;
         const offset = (py * width + px) * 4;
-        if (!this.world.visualSolidAt(wx, wy)) continue;
+        if (!solidAtPixel(px, py)) continue;
         const cell = this.world.cellAt(wx, wy);
         if (!cell) continue;
         const definition = materialOf(cell.kind);
@@ -252,10 +275,10 @@ export class ChunkedTerrain {
 
         // Directional edge light: lit from up-left, shadowed down-right. Sampled
         // tightly so the rim stays a crisp line on the silhouette.
-        const openLeft = !this.world.visualSolidAt(wx - 0.1, wy);
-        const openRight = !this.world.visualSolidAt(wx + 0.1, wy);
-        const openUp = !this.world.visualSolidAt(wx, wy - 0.1);
-        const openDown = !this.world.visualSolidAt(wx, wy + 0.1);
+        const openLeft = !solidAtPixel(px - probe, py);
+        const openRight = !solidAtPixel(px + probe, py);
+        const openUp = !solidAtPixel(px, py - probe);
+        const openDown = !solidAtPixel(px, py + probe);
         if (openLeft || openUp) {
           const edge = paint.edge;
           r += (((edge >> 16) & 0xff) - r) * 0.42;
