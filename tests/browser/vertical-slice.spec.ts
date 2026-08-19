@@ -18,25 +18,23 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await expect(page.locator("#briefing")).toHaveAttribute("data-render-state", "ready");
   await expect(page.locator("#briefing")).not.toHaveClass(/loading|failed/);
   await expect(page.locator(".game-canvas")).toBeVisible();
-  await expect(page.locator("#beginButton")).toBeDisabled();
-  await expect(page.locator(".paddle-option")).toHaveCount(3);
+  // Armed from the first frame: there is no chassis to choose any more, so there is nothing to wait for.
+  await expect(page.locator("#beginButton")).toBeEnabled();
 
   // --- Deployment previews -------------------------------------------------
   // These run the production Arena, terrain raster, brick, paddle, ball and
   // collision code. They must never regress to a stub or a second renderer.
-  await expect(page.locator(".field-window")).toHaveCount(3);
-  await expect(page.locator(".deployment-preview-canvas")).toHaveCount(3);
-  await page.waitForFunction(() => {
-    const game = (window as unknown as Win).__OREKENOID__.game;
-    const arenas = game.deploymentPreviews.arenas;
-    return arenas.length === 3
-      && arenas.every((arena: any) => arena.bricks.length > 0 && arena.balls.length === 1);
-  });
-
-  // Holding brick data is not the same as drawing it, and this is the gap a real regression walked
-  // through: the crumble wavefront gave every board a mask, previews never run the loop that opens
-  // one, and all three cards rendered bare terrain with a paddle on it. The brick assertion above
-  // passed, and so did the readiness check, because terrain is perfectly good visible pixels.
+  //
+  // The start screen no longer shows them -- there is no chassis choice to illustrate -- but the code is
+  // kept and so is this coverage, which is the whole reason the previews exist as a test surface. The
+  // hosts the previews attach to are supplied here instead of by the briefing markup, sized explicitly
+  // because a zero-height host renders a zero-pixel board and would pass every assertion below.
+  // Detached from the start screen, still built and still drawn.
+  //
+  // There is no chassis choice at deployment any more, so there are no cards and no canvases to check
+  // the layout of. What this section is actually for survives that: the previews still construct three
+  // real Arenas through the production terrain raster, brick, paddle and ball code, and the assertions
+  // below are the ones that would catch it regressing to a stub.
   const previewDrawn = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     return game.deploymentPreviews.arenas.map((arena: any) => ({
@@ -48,44 +46,22 @@ test("deployment previews, generated world, province rules, and the crafting cha
     expect(preview.masked, "a preview board is behind a mask nothing will ever open").toBe(false);
     expect(preview.drawn, "a preview board has nothing in it").toBeGreaterThan(3);
   }
-  const previewAlignment = await page.evaluate(() => {
+  // Material variety, read off the arenas rather than off the cards. The sampled frame is the Berth
+  // and the Seal, which are chalk by design -- the slate in the hand-drawn Landing is out on the
+  // Gallery's island, past the door, and not in view of the drone's starting position.
+  const previewKinds = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
-    return [...document.querySelectorAll<HTMLElement>(".field-window")].map((element, index) => {
-      const rect = element.getBoundingClientRect();
-      const preview = game.deploymentPreviews.arenas[index];
-      const bounds = game.deploymentPreviews.contents[index].getBounds();
-      const contentRect = {
-        left: rect.left + bounds.x,
-        top: rect.top + bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-      };
-      return {
-        centerError: Math.abs(contentRect.left + contentRect.width / 2 - (rect.left + rect.width / 2)),
-        bottomGap: rect.bottom - (contentRect.top + contentRect.height),
-        widthCoverage: contentRect.width / rect.width,
-        heightCoverage: contentRect.height / rect.height,
-        contained: contentRect.left >= rect.left - 1 && contentRect.top >= rect.top - 1
-          && contentRect.left + contentRect.width <= rect.right + 1
-          && contentRect.top + contentRect.height <= rect.bottom + 1,
-        hasTerrainAndArena: preview.container.children.length >= 2,
-        bricks: preview.bricks.length,
-        // The preview must show real material variety from the real Landing.
-        kinds: [...new Set(preview.bricks.map((brick: any) => brick.kind))].sort(),
-      };
-    });
+    return game.deploymentPreviews.arenas.map((arena: any) => ({
+      bricks: arena.bricks.length,
+      hasTerrainAndArena: arena.container.children.length >= 2,
+      kinds: [...new Set(arena.bricks.map((brick: any) => brick.kind))].sort(),
+    }));
   });
-  for (const alignment of previewAlignment) {
-    expect(alignment.centerError).toBeLessThan(2);
-    expect(alignment.bottomGap).toBeGreaterThan(5);
-    expect(alignment.bottomGap).toBeLessThan(20);
-    expect(Math.max(alignment.widthCoverage, alignment.heightCoverage)).toBeGreaterThan(0.9);
-    expect(alignment.contained).toBe(true);
-    expect(alignment.hasTerrainAndArena).toBe(true);
-    expect(alignment.bricks).toBeGreaterThan(20);
-    // Chalk crossed by slate is the Landing's teaching board; both must appear.
-    expect(alignment.kinds).toContain("chalk");
-    expect(alignment.kinds).toContain("slate");
+  expect(previewKinds).toHaveLength(3);
+  for (const preview of previewKinds) {
+    expect(preview.bricks).toBeGreaterThan(20);
+    expect(preview.hasTerrainAndArena).toBe(true);
+    expect(preview.kinds).toContain("chalk");
   }
 
   const viewportFit = await page.locator("#gameHost").evaluate((element) => {
@@ -96,14 +72,9 @@ test("deployment previews, generated world, province rules, and the crafting cha
   expect(viewportFit.height).toBeLessThanOrEqual(viewportFit.innerHeight);
   expect(viewportFit.width / viewportFit.height).toBeCloseTo(16 / 9, 2);
 
-  await expect(page.locator(".option-name b")).toHaveText(["Needle", "Surveyor", "Bastion"]);
-  await expect(page.locator("#beginLabel")).toHaveText("CHOOSE");
-  await page.click('[data-chassis="0"]');
-  await expect(page.locator('[data-chassis="0"]')).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#beginLabel")).toHaveText("DEPLOY");
   await page.screenshot({ path: "webgl-opening.png", fullPage: true });
 
-  await page.click('[data-chassis="1"]');
   await page.click("#beginButton");
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 
@@ -182,24 +153,25 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await page.waitForTimeout(600);
   await page.keyboard.up("KeyS");
   await page.keyboard.up("KeyE");
-  // Moving and aiming hand the sequence on to the Atlas, which is taught out here in the survey
-  // rather than after a claim has started -- asking a player to stop reading a live board and go
-  // and open a map is a strange thing to do in the middle of a rally.
+  // Moving hands the sequence straight to the door. Turning the frame and committing it are one rung,
+  // and the Atlas is taught after the Seal is cut, where there is more world than the player can see.
   await page.waitForFunction(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
-    return game.coach.prompt?.goal === "OPEN THE ATLAS";
+    return game.coach.prompt?.goal === "FIT THE FRAME TO THE SEAL";
   }, null, { timeout: 5_000 });
-  await page.keyboard.press("KeyM");
-  await expect(page.locator("#atlas")).toHaveClass(/open/);
-  await page.keyboard.press("KeyM");
-  await expect(page.locator("#atlas")).not.toHaveClass(/open/);
 
-  // Then the commit rung, whose prompt points at the framed rock out in front rather than at the
-  // machine -- "commit the claim" is about the rectangle of rock, and the drone is the wrong noun.
-  await page.waitForFunction(() => {
-    const game = (window as unknown as Win).__OREKENOID__.game;
-    return game.coach.prompt?.goal === "COMMIT THE CLAIM";
-  }, null, { timeout: 5_000 });
+  // The first claim is the door, so the frame has to be on the door. Fly into reach -- from the Berth's
+  // middle the Seal's far edge is past the frame's depth -- and turn until it is covered.
+  await page.evaluate(() => {
+    const hook = (window as unknown as { __OREKENOID__: any }).__OREKENOID__;
+    const game = hook.game;
+    hook.warpTo(30, 14.5);
+    for (let index = 0; index < 720; index++) {
+      game.player.heading = (index / 720) * Math.PI * 2;
+      if (game.frameCoversSeal(game.frameGeometry())) return;
+    }
+  });
+  await page.waitForTimeout(250);
   const commitAnchor = await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     const prompt = game.coach.prompt;
@@ -216,10 +188,29 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await page.screenshot({ path: "webgl-framing.png", fullPage: true });
 
   // --- A Karst claim, at a non-cardinal heading ----------------------------
+  // Past the opening for the rest of the tour.
+  //
+  // The Seal-only rule on the first claim is the opening's business, and the opening has already been
+  // walked above. Everything from here is about geology, the economy and the crafting chain, and it
+  // stakes claims wherever it needs to.
+  // Only the commit rung, not the whole sequence. Marking everything done would also hand over the
+  // serve, and the gate that refuses a serve before the paddle has been taught is asserted further
+  // down -- this needs the Seal rule lifted and nothing else.
   await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
-    game.player.x = 24 * 42;
-    game.player.y = 14 * 42;
+    const commit = game.tutorial.find((step: any) => step.id === "commit");
+    if (commit) commit.done = true;
+  });
+
+  // The Gallery's ore island, framed from its west face at a heading no axis shares.
+  //
+  // This used to claim the Berth, which was a speckle of chalk and slate before the Landing was drawn
+  // by hand. The Berth is deliberately plain chalk now -- it is a room, not a teaching face -- so the
+  // slate this section is about lives on the island past the Seal.
+  await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    game.player.x = 44 * 42;
+    game.player.y = 24.5 * 42;
     game.player.heading = Math.PI / 2 + 0.18;
   });
   await page.keyboard.press("Enter");
@@ -428,7 +419,9 @@ test("deployment previews, generated world, province rules, and the crafting cha
     api.giveResource("copper", 40);
     api.giveResource("coal", 40);
     api.giveResource("iron", 40);
-    api.warpTo(21, 15);
+    // The chest, on the Berth's west wall. It sat three cells from the spawn point before the Landing
+    // was drawn by hand; it is a short flight across the room now.
+    api.warpTo(14, 16);
     await new Promise((resolve) => setTimeout(resolve, 400));
     return { carried: api.game.economy.carriedTotal, copper: api.game.economy.amount("copper") };
   });
@@ -590,8 +583,20 @@ test("deployment previews, generated world, province rules, and the crafting cha
   await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
     game.economy.add("copper", 3);
-    game.player.x = 21 * 42;
-    game.player.y = 15 * 42;
+    // Every rung but the last is settled here rather than played out.
+    //
+    // What this section is for is the *final* rung and what happens when the sequence ends: banking
+    // completes it without a keypress, and the prompt then goes away for good. The rungs before it --
+    // meeting a Bounder on the paddle's face, reading the liability number off an overloaded board,
+    // holding to speed up a long tail -- are the opening's subject and are covered in their own specs,
+    // and playing all of them out here would make this a second tutorial test with a world tour
+    // attached.
+    for (const step of game.tutorial) {
+      if (step.id !== "bank") step.done = true;
+    }
+    // The chest on the Berth's west wall.
+    game.player.x = 14 * 42;
+    game.player.y = 16 * 42;
   });
   await page.waitForFunction(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;

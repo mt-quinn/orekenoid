@@ -12,7 +12,6 @@ interface Win {
 
 test("the Atlas can be opened and closed with a thumb", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").tap();
   await page.locator("#beginButton").tap();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);
@@ -44,7 +43,6 @@ test("the Atlas can be opened and closed with a thumb", async ({ page }) => {
 
 test("a notch pushes both the interface and the drawn layer clear of it", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").tap();
   await page.locator("#beginButton").tap();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(500);

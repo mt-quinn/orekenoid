@@ -14,13 +14,14 @@ interface Win {
 
 test("a committed board sits inside the stage with room for the thumbs", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").tap();
   await page.locator("#beginButton").tap();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(700);
 
   await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
+    game.tutorialComplete = true;
+    for (const step of game.tutorial) step.done = true;
     game.tutorialComplete = true;
     for (const step of game.tutorial) step.done = true;
     game.establishArena();

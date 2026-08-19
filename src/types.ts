@@ -21,6 +21,16 @@ export interface TutorialStep {
    * one idea, which is most of why nine rungs felt like nine things to remember. `also` lets one rung
    * own both controls without the input gate and the prompt drifting apart.
    */
+  /**
+   * Held back from the sequence until the game arms it.
+   *
+   * A rung whose subject is a *situation* rather than the next thing to do. Hold-to-speed-up is only
+   * worth knowing once a rally has gone long, so asking for it straight after the serve taught a
+   * control nobody yet had a reason for -- and put a rung in the way of the rest of the opening to do
+   * it. Deferred rungs sit out of the order until the moment they are about, and `currentStep` skips
+   * them until then.
+   */
+  deferred?: boolean;
   also?: Array<"move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas" | "bank" | "face" | "liability">;
   keys: string;
   /**

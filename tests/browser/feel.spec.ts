@@ -12,7 +12,6 @@ interface Win {
 
 const deploy = async (page: any) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);
@@ -68,7 +67,21 @@ test("being refused produces a reaction, and grinding does not hammer", async ({
 
 test("catching ore shows something, and a run escalates without running away", async ({ page }) => {
   await deploy(page);
-  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.establishArena());
+  // Past the opening, and framed on the Gallery's ore island.
+  //
+  // Two things changed under this test at once. A claim can only be staked away from the Seal once the
+  // commit rung is done, and the Berth the drone wakes in is deliberately plain chalk -- so a claim
+  // taken where it stands has no resource brick in it at all, which is what this test needs one of. The
+  // island is the nearest authored ore, west face, framed by looking east.
+  await page.evaluate(() => {
+    const hook = (window as unknown as { __OREKENOID__: any }).__OREKENOID__;
+    const game = hook.game;
+    game.tutorialComplete = true;
+    for (const step of game.tutorial) step.done = true;
+    hook.warpTo(44, 24.5);
+    game.player.heading = Math.PI / 2;
+    game.establishArena();
+  });
   await page.waitForFunction(
     () => (window as unknown as Win).__OREKENOID__.game.camera.transition === null,
     null, { timeout: 25_000 },
@@ -142,7 +155,21 @@ test("the cargo readout answers a catch, and the health bar answers being nearly
 
 test("a cleared board waits for ore still in the air", async ({ page }) => {
   await deploy(page);
-  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.establishArena());
+  // Past the opening, and framed on the Gallery's ore island.
+  //
+  // Two things changed under this test at once. A claim can only be staked away from the Seal once the
+  // commit rung is done, and the Berth the drone wakes in is deliberately plain chalk -- so a claim
+  // taken where it stands has no resource brick in it at all, which is what this test needs one of. The
+  // island is the nearest authored ore, west face, framed by looking east.
+  await page.evaluate(() => {
+    const hook = (window as unknown as { __OREKENOID__: any }).__OREKENOID__;
+    const game = hook.game;
+    game.tutorialComplete = true;
+    for (const step of game.tutorial) step.done = true;
+    hook.warpTo(44, 24.5);
+    game.player.heading = Math.PI / 2;
+    game.establishArena();
+  });
   await page.waitForFunction(
     () => (window as unknown as Win).__OREKENOID__.game.camera.transition === null,
     null, { timeout: 25_000 },

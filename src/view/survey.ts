@@ -225,3 +225,60 @@ export function drawFramePreview(
       .circle(point.x * CELL, point.y * CELL, 9).stroke({ width: 1, color: signal, alpha: 0.3 });
   }
 }
+
+/**
+ * Mark the Seal, so the door the opening is built around is a thing the player can see.
+ *
+ * It had no indication at all: a band of chalk that looked like the rock either side of it, in a room
+ * lit only ahead of the paddle, with a refusal ("FRAME THE SEAL") that arrived without ever having said
+ * where the Seal was. This is the fix for that, and it is drawn above the shadow layer on purpose --
+ * the one thing the game is currently asking for must not be something the dark can hide.
+ *
+ * `armed` is whether the frame is actually covering it, which turns the mark from a request into a
+ * confirmation and is the feedback the rotation lesson was missing.
+ */
+export function drawSealMarker(
+  marker: Graphics,
+  cells: ReadonlyArray<{ x: number; y: number }>,
+  time: number,
+  armed: boolean,
+): void {
+  marker.clear();
+  if (!cells.length) return;
+  // Bright in both states. The first version used the dim machine tone unarmed, which put the one thing
+  // the game was asking for at roughly the brightness of the wall it sits in.
+  const colour = PALETTE.rail;
+  // Breathing rather than static. A steady outline on a dark wall reads as part of the art; something
+  // that moves reads as being addressed to you.
+  const pulse = armed ? 1 : 0.62 + Math.sin(time * 3.4) * 0.26;
+
+  for (const cell of cells) {
+    marker.rect(cell.x * CELL, cell.y * CELL, CELL, CELL)
+      .fill({ color: colour, alpha: armed ? 0.34 : 0.16 });
+  }
+
+  // One outline around the whole band rather than a grid of boxes, so it reads as a single door.
+  const minX = Math.min(...cells.map((cell) => cell.x));
+  const maxX = Math.max(...cells.map((cell) => cell.x)) + 1;
+  const minY = Math.min(...cells.map((cell) => cell.y));
+  const maxY = Math.max(...cells.map((cell) => cell.y)) + 1;
+  const corner = 1.1 * CELL;
+  const left = minX * CELL;
+  const top = minY * CELL;
+  const right = maxX * CELL;
+  const bottom = maxY * CELL;
+  // Corner brackets, which is the language the claim frame already uses for "this rectangle matters".
+  // Armed, the brackets close into a full outline: the frame is on the door and the player should be
+  // able to see that without reading a word.
+  if (armed) {
+    marker.rect(left, top, right - left, bottom - top).stroke({ width: 3, color: colour, alpha: 1 });
+  }
+  for (const [cx, cy, sx, sy] of [
+    [left, top, 1, 1], [right, top, -1, 1], [right, bottom, -1, -1], [left, bottom, 1, -1],
+  ] as const) {
+    marker.moveTo(cx + sx * corner, cy)
+      .lineTo(cx, cy)
+      .lineTo(cx, cy + sy * corner)
+      .stroke({ width: 3, color: colour, alpha: pulse });
+  }
+}

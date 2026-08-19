@@ -351,3 +351,33 @@ describe("what blocks is what is drawn", () => {
     expect(solidPoints).toBeGreaterThan(200);
   });
 });
+
+describe("what the Atlas can see", () => {
+  it("counts cut ground as surveyed", () => {
+    // The Atlas draws only what has been discovered, and discovery used to come only from where the
+    // drone had flown. A claim is staked out in front of the machine, so an excavation could be
+    // finished and banked while the map still showed unsurveyed void over the hole.
+    const world = new WorldModel("atlas-discovery");
+    const at = { x: 120, y: 70 };
+    expect(world.isDiscovered(at.x, at.y)).toBe(false);
+    world.removeFootprint({ center: { x: at.x + 0.5, y: at.y + 0.5 }, halfWidth: 0.5, halfHeight: 0.5, angle: 0 }, true);
+    expect(world.isDiscovered(at.x, at.y)).toBe(true);
+  });
+
+  it("reads a cut cell as excavated rather than as natural cave", () => {
+    // Excavated is `solidAt` false with `baseSolid` still true, which is the pair the Atlas keys its
+    // warmer tone off. If a cut cleared the geology too, mined ground would be indistinguishable from
+    // a cavern the player never touched.
+    const world = new WorldModel("atlas-excavated");
+    let solid: { x: number; y: number } | null = null;
+    for (let y = 40; y < 90 && !solid; y++) {
+      for (let x = 40; x < 200; x++) {
+        if (world.solidAt(x + 0.5, y + 0.5)) { solid = { x, y }; break; }
+      }
+    }
+    expect(solid).not.toBeNull();
+    world.removeFootprint({ center: { x: solid!.x + 0.5, y: solid!.y + 0.5 }, halfWidth: 0.5, halfHeight: 0.5, angle: 0 }, true);
+    expect(world.solidAt(solid!.x + 0.5, solid!.y + 0.5)).toBe(false);
+    expect(world.cells[solid!.y][solid!.x].baseSolid).toBe(true);
+  });
+});

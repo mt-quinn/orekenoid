@@ -11,7 +11,6 @@ interface Win {
 
 test("the pause panel fills a phone and lists gestures, not keys", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").tap();
   await page.locator("#beginButton").tap();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);

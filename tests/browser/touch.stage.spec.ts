@@ -39,7 +39,6 @@ test("the stage fills a portrait phone rather than letterboxing into a strip", a
 
 test("the renderer is sized to the stage, not to a constant", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(800);

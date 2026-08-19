@@ -68,8 +68,19 @@ export class ShadowLayer {
   /** Occluder count from the last rebuild, for the render diagnostics. */
   lastOccluders = 0;
 
-  /** Traced faces per chunk, keyed `cx,cy`. Missing means not traced yet or invalidated. */
+  /** Traced faces per chunk, keyed `cx,cy`. Missing means never traced. */
   private readonly tracedChunks = new Map<string, Occluder[]>();
+  /**
+   * Chunks whose faces are out of date but still being used.
+   *
+   * Invalidation used to *delete* the cached faces, and a chunk with no faces casts no shadow at all.
+   * At two chunk traces a frame, breaking a single brick dropped a block of chunks and then took several
+   * frames to rebuild them -- and for those frames light poured out through every wall in them, as
+   * though the whole region had been mined out, before snapping back. Keeping the stale faces means the
+   * error goes the other way for a frame or two: a sliver of shadow from rock that has just gone, which
+   * is invisible next to a wall's worth of light that should not be there.
+   */
+  private readonly staleChunks = new Set<string>();
   /** Face count across the cached chunks, for the render diagnostics. */
   lastTracedFaces = 0;
 
@@ -105,7 +116,7 @@ export class ShadowLayer {
 
   invalidate(minX?: number, minY?: number, maxX?: number, maxY?: number): void {
     if (minX === undefined || minY === undefined || maxX === undefined || maxY === undefined) {
-      this.tracedChunks.clear();
+      for (const key of this.tracedChunks.keys()) this.staleChunks.add(key);
       return;
     }
     const left = Math.floor((minX - 1) / CHUNK_CELLS);
@@ -113,7 +124,7 @@ export class ShadowLayer {
     const top = Math.floor((minY - 1) / CHUNK_CELLS);
     const bottom = Math.floor((maxY + 1) / CHUNK_CELLS);
     for (let cy = top; cy <= bottom; cy++) {
-      for (let cx = left; cx <= right; cx++) this.tracedChunks.delete(`${cx},${cy}`);
+      for (let cx = left; cx <= right; cx++) this.staleChunks.add(`${cx},${cy}`);
     }
   }
 
@@ -235,9 +246,17 @@ export class ShadowLayer {
       for (let cx = left; cx <= right; cx++) {
         const key = `${cx},${cy}`;
         let traced = this.tracedChunks.get(key);
-        if (!traced) {
-          if (budget <= 0) { untraced++; continue; }
+        // Re-traced when stale and there is budget for it, but *used* either way. Only a chunk that has
+        // never been traced has nothing to contribute, and that is the one case that still leaks -- on
+        // a first visit, where there was no shadow there a moment ago anyway.
+        if (!traced || this.staleChunks.has(key)) {
+          if (budget <= 0) {
+            if (!traced) untraced++;
+            else { total += traced.length; for (const face of traced) faces.push(face); }
+            continue;
+          }
           budget--;
+          this.staleChunks.delete(key);
           // Exact chunk bounds, no overlap. The sample step divides the chunk evenly, so adjacent
           // chunks share their seam sample line exactly: the contour is contiguous across the join
           // with neither a gap nor a doubled face.

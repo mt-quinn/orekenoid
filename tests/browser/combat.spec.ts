@@ -18,7 +18,6 @@ async function intoCaverns(page: import("@playwright/test").Page): Promise<{ x: 
   // seen to take most of half a minute. Every test in the file goes through here, so a tight bound
   // fails an arbitrary one of them rather than the one with a problem.
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
-  await page.locator(".paddle-option").first().click();
   await page.click("#beginButton");
   await page.waitForTimeout(900);
   await page.evaluate(() => {
@@ -322,7 +321,6 @@ test("a claim over the Refit Bay leaves nothing invisible behind", async ({ page
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/?seed=bounceworld-01");
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
-  await page.locator(".paddle-option").first().click();
   await page.click("#beginButton");
   await page.waitForTimeout(900);
   await page.evaluate(() => {
@@ -375,7 +373,6 @@ test("a cornerstone mechanism registers its strike and still takes the hit", asy
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/?seed=bounceworld-01");
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
-  await page.locator(".paddle-option").first().click();
   await page.click("#beginButton");
   await page.waitForTimeout(900);
   await page.evaluate(() => {

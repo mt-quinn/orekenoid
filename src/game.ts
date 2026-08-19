@@ -12,6 +12,7 @@ import {
   DRONE_NOSE_PX,
   DEFAULT_SEED,
   PADDLE_CHASSIS,
+  STARTER_CHASSIS,
   PALETTE,
   PHYSICS_STEP,
   PROVINCE_PALETTE,
@@ -39,7 +40,7 @@ import { attachBall, attachMembrane, createDrone, spawnDrop } from "./view/actor
 import { buildArenaDisplay, drawLiabilityGauge, drawTrajectory } from "./view/board";
 import { createBrickDisplay, showDamage } from "./view/brick";
 import { applyReaction, impulse, newReaction, stepReactions } from "./view/feedback";
-import { buildFarGeology, buildLandmarks, drawFramePreview } from "./view/survey";
+import { buildFarGeology, buildLandmarks, drawFramePreview, drawSealMarker } from "./view/survey";
 import { buildFeatureMarks, updateFeatureMarks, type FeatureMark } from "./view/features";
 import { gradeOf, Hud, REGION_RULES, type HudModel } from "./hud";
 import { objectiveFor, type Standing } from "./objectives";
@@ -118,6 +119,15 @@ const VERB_NAMES: Record<VerbId, string> = {
 };
 
 
+/**
+ * Seconds a ball may be away from the paddle before the speed rung arms, in a claim.
+ *
+ * Ten, because that is roughly when a rally stops being a rally and starts being a wait. Shorter and it
+ * fires during ordinary play, when the answer to a long ball is to move the paddle rather than to speed
+ * up time.
+ */
+const SPEED_RUNG_AFTER = 10;
+
 export class OrekenoidGame {
   readonly app = new Application();
   readonly world: WorldModel;
@@ -133,6 +143,14 @@ export class OrekenoidGame {
   readonly framePreview = new Container();
   /** The opening sequence's prompt, anchored in the world rather than pinned to a corner. */
   readonly coach = new Coach();
+  /**
+   * The Seal's marker, drawn above the shadows.
+   *
+   * Above them deliberately. The Berth is lit only ahead of the paddle, so a door marked underneath the
+   * shadow layer is a door the player cannot see until they are already pointing at it -- which is the
+   * bug this exists to fix.
+   */
+  private readonly sealMark = new Graphics();
   /** Fingers. Answers the same questions the key set does, from a different device. */
   readonly touch = new TouchInput();
   /** And what they look like. Screen furniture: outside the camera, so it never rotates or scales. */
@@ -211,8 +229,22 @@ export class OrekenoidGame {
   readonly cornerstoneProgress = new Map<string, Set<string>>();
   readonly anchors: Array<{ id: string; x: number; y: number; name: string }> = [];
 
-  chassisIndex = 0;
-  selectedChassisIndex: number | null = null;
+  /**
+   * The paddle in the bay.
+   *
+   * Defaults to the Surveyor rather than to whatever sits first in the roster. There is no chassis
+   * choice at deployment any more -- the opening has enough to teach without asking the player to pick
+   * a loadout out of three sets of numbers they have no way to evaluate yet -- so this is where an
+   * expedition begins, and the other chassis are things to fabricate and refit into.
+   */
+  chassisIndex = Math.max(0, PADDLE_CHASSIS.findIndex((chassis) => chassis.id === STARTER_CHASSIS.id));
+  /**
+   * Which chassis the start screen has confirmed, or null before it has.
+   *
+   * Set from the first frame now that there is nothing to choose: `start` refuses to deploy without it,
+   * and with the selection UI gone there would otherwise be nothing to satisfy that guard.
+   */
+  selectedChassisIndex: number | null = Math.max(0, PADDLE_CHASSIS.findIndex((chassis) => chassis.id === STARTER_CHASSIS.id));
   hoveredChassisIndex: number | null = null;
   mode: Mode = "survey";
   started = false;
@@ -262,7 +294,10 @@ export class OrekenoidGame {
     // Likewise one act: the aim steers the ball off the paddle and is fixed the moment it is live, so
     // a rung that taught aiming after serving was teaching something already spent.
     { id: "serve", also: ["arenaAim"], keys: "Q / E TO AIM, SPACE TO SERVE", gesture: "TAP WHERE IT SHOULD GO", label: "AIM AND SERVE", where: "play", done: false },
-    { id: "speed", keys: "W / S", gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "For the long tail of a claim.", where: "play", optional: true, done: false },
+    // Deferred: armed the first time a ball has been away from the paddle for ten seconds, which is the
+    // first moment the player has a reason to want it. Taught right after the serve it was an answer to
+    // a question nobody had asked yet.
+    { id: "speed", keys: "W / S", gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "The tail of this claim is long.", where: "play", optional: true, deferred: true, done: false },
 
     // --- Through the Seal. Dark, and no longer empty. --------------------------------------------
     // The Atlas comes after the door and not before it. A map is worth having the moment there is
@@ -326,6 +361,12 @@ export class OrekenoidGame {
    * meant the animation appeared for exactly one frame and was then suppressed forever.
    */
   private gestureDemo: { kind: string; left: number } | null = null;
+  /**
+   * Seconds since a live ball last touched the paddle.
+   *
+   * Only counts while a ball is actually served: a docked ball has not gone anywhere.
+   */
+  private ballAwayFor = 0;
   /** How long the current step has been on screen, for advancing the optional ones. */
   private tutorialShownFor = 0;
   private tutorialFadeTimer = 0;
@@ -411,7 +452,9 @@ export class OrekenoidGame {
    */
   private get currentStep(): TutorialStep | null {
     if (this.tutorialComplete) return null;
-    return this.tutorial.find((step) => !step.done) ?? null;
+    // Deferred rungs are skipped until the game arms them, so a rung about a situation never blocks the
+    // rungs about what to do next.
+    return this.tutorial.find((step) => !step.done && !step.deferred) ?? null;
   }
 
   /**
@@ -531,7 +574,7 @@ export class OrekenoidGame {
     // take an instrument off the player.
     this.worldRoot.addChild(
       this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer,
-      this.actorLayer, this.shadows.container, this.framePreview, this.coach.container,
+      this.actorLayer, this.shadows.container, this.sealMark, this.framePreview, this.coach.container,
     );
     this.terrainLayer.addChild(this.terrain.container);
     buildFarGeology(this.farLayer);
@@ -947,12 +990,18 @@ export class OrekenoidGame {
 
   /** Redraw the survey projection for wherever the drone is now pointing. */
   private renderFramePreview(): void {
+    const frame = this.frameGeometry();
     drawFramePreview(
       { wash: this.frameWash, grid: this.frameGrid, scan: this.frameScan, returns: this.frameReturns },
       this.world,
-      this.frameGeometry(),
+      frame,
       this.time,
     );
+    // Marked until it is cut, and only while there is still a Seal to cut. Not tied to the tutorial
+    // rung: a player who wanders off and comes back should still be able to find the door.
+    const show = this.started && this.mode === "survey" && !this.sealBreached;
+    this.sealMark.visible = show;
+    if (show) drawSealMarker(this.sealMark, SEAL_CELLS, this.time, this.frameCoversSeal(frame));
   }
 
   /**
@@ -1323,7 +1372,12 @@ export class OrekenoidGame {
     // wall beside it instead.
     if (!this.tutorialComplete && !this.tutorial.find((step) => step.id === "commit")?.done
       && !this.frameCoversSeal(frame)) {
-      this.showToast("FRAME THE SEAL");
+      // Two refusals, because they ask for two different things. From the Berth's middle the Seal's far
+      // edge is fifteen cells out and the frame is eleven deep, so the first thing a player needs to be
+      // told is not "aim better" but "come closer" -- and being told to frame something they cannot yet
+      // reach is how a refusal turns into a dead end.
+      const reach = Math.hypot(SEAL_CENTRE.x - frame.origin.x, SEAL_CENTRE.y - frame.origin.y);
+      this.showToast(reach > frame.depth ? "TOO FAR · FLY TO THE SEAL" : "TURN THE FRAME ONTO THE SEAL");
       this.coach.refused();
       return;
     }
@@ -1465,6 +1519,7 @@ export class OrekenoidGame {
     const accent = PROVINCE_PALETTE[arena.province].accent;
 
     if (events.paddle) {
+      this.ballAwayFor = 0;
       this.audio.play(SOUNDS.paddleHit);
       // The paddle is driven into the board and springs back, so a return is something the machine
       // visibly did rather than something that happened to the ball.
@@ -2471,6 +2526,22 @@ export class OrekenoidGame {
   }
 
   private stepArena(arena: Arena, dt: number): void {
+    // Ten seconds without a return is the first moment the tail of a claim is a felt problem, and that
+    // is when the rung about it arrives. Armed rather than shown: the player still has to hold the keys
+    // for it to tick off, so the rung teaches a control at the moment the control has a use.
+    if (arena.balls.some((ball) => ball.served)) {
+      this.ballAwayFor += dt;
+      if (this.ballAwayFor >= SPEED_RUNG_AFTER) {
+        const speed = this.tutorial.find((step) => step.id === "speed");
+        if (speed?.deferred && !speed.done) {
+          speed.deferred = false;
+          this.tutorialShownFor = 0;
+          this.renderTutorial();
+        }
+      }
+    } else {
+      this.ballAwayFor = 0;
+    }
     if (this.simulationRate > 1) this.markTutorial("speed");
     const canPaddle = this.can("paddle");
     const input = canPaddle

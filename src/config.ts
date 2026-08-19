@@ -233,6 +233,19 @@ export const PALETTE = {
    * `void`, which is where the darkness gets its depth from.
    */
   floor: 0x232c31,
+  /**
+   * The floor of a live claim.
+   *
+   * Deliberately lighter than `floor`. The board used to be painted with a heavy dark wash -- the
+   * excavation reading as a hole cut into rock -- which was fine when nothing else in the world was
+   * dark. With real shadows in the game it stopped reading as a hole and started reading as *unlit*:
+   * the one rectangle of ground the player is actively working, and the one place the lighting
+   * exempts from shadow entirely, looked like the only place the lamp could not reach.
+   *
+   * So the sign is flipped. The rim stays dark, because that is what gives the cut its edge; the
+   * inside is lifted, because the claim is lit while it is being worked.
+   */
+  board: 0x38474f,
   ink: 0xf1eadb,
   machine: 0x9a927d,
   rail: 0xe7dbc0,

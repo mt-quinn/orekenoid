@@ -29,7 +29,6 @@ test("an expedition survives a reload, and the Atlas records only what was surve
   await expect(page.locator("#abandonButton")).toBeHidden();
   await expect(page.locator("#importButton")).toBeVisible();
 
-  await page.click('[data-chassis="1"]');
   await page.click("#beginButton");
   await expect(page.locator("#briefing")).toHaveClass(/hidden/);
 

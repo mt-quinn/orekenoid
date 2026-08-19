@@ -12,7 +12,6 @@ interface Win {
 
 const deploy = async (page: any) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);
@@ -71,8 +70,10 @@ test("the compass retires once the haul is home", async ({ page }) => {
   // Fly home. Banking is automatic on arrival, so the hold empties and the prompt should let go.
   await page.evaluate(() => {
     const game = (window as unknown as Win).__OREKENOID__.game;
-    game.player.x = game.world.start.x * 42;
-    game.player.y = game.world.start.y * 42;
+    // The bank, not the spawn point. They used to be three cells apart; the hand-drawn Berth puts the
+    // chest on the west wall and wakes the drone in the middle of the room, which is a short flight.
+    game.player.x = game.anchors.find((anchor: any) => anchor.id === "refitBay").x * 42;
+    game.player.y = game.anchors.find((anchor: any) => anchor.id === "refitBay").y * 42;
   });
   await page.waitForFunction(
     () => (window as unknown as Win).__OREKENOID__.game.economy.carriedTotal === 0,
@@ -85,7 +86,6 @@ test("the compass retires once the haul is home", async ({ page }) => {
 
 test("the opening sequence teaches the first haul home", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);

@@ -16,7 +16,6 @@ interface Win {
 
 test("a claim that hangs off the edge of the world is committed, not refused", async ({ page }) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);
@@ -43,7 +42,14 @@ test("a claim that hangs off the edge of the world is committed, not refused", a
   });
   expect(framed.hasMaterial, "no rock at the edge to claim in this seed").toBe(true);
 
-  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.establishArena());
+  // Past the opening, so a claim can be staked anywhere. Until the commit rung is done the only
+  // legal frame is the one on the Seal, which is the door and not a test fixture.
+  await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    game.tutorialComplete = true;
+    for (const step of game.tutorial) step.done = true;
+    game.establishArena();
+  });
   await page.waitForFunction(
     () => (window as unknown as Win).__OREKENOID__.state.mode === "play",
     null, { timeout: 20_000 },

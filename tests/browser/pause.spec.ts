@@ -12,7 +12,6 @@ type Win = Window & typeof globalThis & { __OREKENOID__: any };
 async function intoClaim(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
-  await page.locator(".paddle-option").first().click();
   await page.click("#beginButton");
   await page.waitForTimeout(900);
   // Straight past the opening sequence: it has its own coverage, and every control being gated

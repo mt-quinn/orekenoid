@@ -18,7 +18,6 @@ interface Win {
 
 const start = async (page: any) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(600);
@@ -44,23 +43,13 @@ test("the opening prompt points at the thing it is talking about", async ({ page
   expect(Math.hypot(flying.x - drone.x, flying.y - drone.y)).toBeLessThan(1);
   await page.screenshot({ path: "coach-fly.png" });
 
-  // Move, turn, and read the Atlas to reach the commit rung. The Atlas is taught out here rather
-  // than mid-claim, so the sequence never asks the player to leave a live board.
+  // Move, and the sequence is already on the door. Turning the frame and committing it are one rung
+  // now, and the Atlas moved behind the Seal -- a map means nothing over a room you can see all of.
   await page.keyboard.down("KeyD");
   await page.waitForTimeout(420);
   await page.keyboard.up("KeyD");
-  await page.keyboard.down("KeyE");
-  await page.waitForTimeout(360);
-  await page.keyboard.up("KeyE");
   await page.waitForFunction(
-    () => (window as unknown as Win).__OREKENOID__.game.coach.prompt?.goal === "OPEN THE ATLAS",
-    null, { timeout: 6_000 },
-  );
-  await page.keyboard.press("KeyM");
-  await page.waitForTimeout(300);
-  await page.keyboard.press("KeyM");
-  await page.waitForFunction(
-    () => (window as unknown as Win).__OREKENOID__.game.coach.prompt?.goal === "COMMIT THE CLAIM",
+    () => (window as unknown as Win).__OREKENOID__.game.coach.prompt?.goal === "FIT THE FRAME TO THE SEAL",
     null, { timeout: 6_000 },
   );
 
@@ -77,6 +66,18 @@ test("the opening prompt points at the thing it is talking about", async ({ page
 
   // Into the claim. The paddle is taught before the serve, so the player is holding the thing they
   // control before anything is launched with it.
+  // The first claim is the door, so the frame has to be on the door. Fly into reach -- from the Berth's
+  // middle the Seal's far edge is past the frame's depth -- and turn until it is covered.
+  await page.evaluate(() => {
+    const hook = (window as unknown as { __OREKENOID__: any }).__OREKENOID__;
+    const game = hook.game;
+    hook.warpTo(30, 14.5);
+    for (let index = 0; index < 720; index++) {
+      game.player.heading = (index / 720) * Math.PI * 2;
+      if (game.frameCoversSeal(game.frameGeometry())) return;
+    }
+  });
+  await page.waitForTimeout(250);
   await page.keyboard.press("KeyF");
   await page.waitForFunction(
     () => (window as unknown as Win).__OREKENOID__.state.mode === "play",

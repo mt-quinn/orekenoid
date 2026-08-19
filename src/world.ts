@@ -508,6 +508,17 @@ export class WorldModel {
 
   removeFootprint(footprint: OrientedFootprint, exhausted = false, includePersistent = false): void {
     this.cuts.push(footprint);
+    // Ground you have cut is ground you have surveyed.
+    //
+    // The Atlas draws nothing it has not discovered, and discovery came only from where the drone had
+    // physically flown -- so a claim taken eleven cells out in front of the machine was excavated,
+    // banked and left behind while the map still showed unsurveyed void over the hole. Marking the cut
+    // is what makes the excavated tone the Atlas already knows how to draw actually reachable.
+    this.markDiscovered(
+      footprint.center.x,
+      footprint.center.y,
+      Math.hypot(footprint.halfWidth, footprint.halfHeight) + 0.5,
+    );
     if (this.recording) {
       const edit: WorldEdit = {
         t: "cut",

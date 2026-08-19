@@ -11,7 +11,6 @@ interface Win {
 
 const deploy = async (page: any) => {
   await page.goto("/");
-  await page.locator(".paddle-option.surveyor").click();
   await page.locator("#beginButton").click();
   await page.waitForFunction(() => Boolean((window as unknown as Win).__OREKENOID__), null, { timeout: 90_000 });
   await page.waitForTimeout(700);
@@ -34,7 +33,14 @@ test("the pause panel, out in the mine and inside a claim", async ({ page }) => 
   await page.waitForTimeout(300);
 
   // In a claim: the hazard panel appears, carrying the real cost.
-  await page.evaluate(() => (window as unknown as Win).__OREKENOID__.game.establishArena());
+  // Past the opening, so a claim can be staked anywhere. Until the commit rung is done the only
+  // legal frame is the one on the Seal, which is the door and not a test fixture.
+  await page.evaluate(() => {
+    const game = (window as unknown as Win).__OREKENOID__.game;
+    game.tutorialComplete = true;
+    for (const step of game.tutorial) step.done = true;
+    game.establishArena();
+  });
   await page.waitForFunction(
     () => (window as unknown as Win).__OREKENOID__.game.camera.transition === null,
     null, { timeout: 25_000 },

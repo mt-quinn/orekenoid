@@ -44,12 +44,15 @@ export function buildArenaDisplay(
     .map(([u, v]) => toWorld(u, v));
   const polygon = flatPoints(corners.map((point) => ({ x: point.x * CELL, y: point.y * CELL })));
 
-  // The extracted section reads as a hole cut into rock: a heavy dark rim outside,
-  // a slight darkening inside, and the world still visible through it.
+  // The extracted section reads as a hole cut into rock and *lit*: a heavy dark rim outside, a lifted
+  // floor inside, and the world still visible through it.
+  //
+  // The fill used to be 0x020506 at a bit over half alpha, which put the live board at about the
+  // brightness of shadowed rock. Since the claim is the one region the shadow layer exempts, that made
+  // the brightest-lit ground in the game look like the darkest, and the board read as being in shadow.
   const cutShadow = new Graphics().poly(polygon)
-    .fill({ color: 0x020506, alpha: 0.54 })
-    .stroke({ width: 12, color: 0x020405, alpha: 0.52 });
-  const section = new Graphics().poly(polygon).fill({ color: 0x0d1011, alpha: 0.28 });
+    .stroke({ width: 12, color: 0x020405, alpha: 0.62 });
+  const section = new Graphics().poly(polygon).fill({ color: PALETTE.board, alpha: 0.5 });
 
   const lattice = new Graphics();
   for (let column = 1; column < arena.width; column++) {
