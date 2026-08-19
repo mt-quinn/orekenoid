@@ -1131,6 +1131,9 @@ button { color: inherit; font: inherit; }
 /* --- The control reference ------------------------------------------------ */
 .pause-body { display: grid; gap: clamp(14px, 1.8cqw, 22px); }
 /* Two columns, not three. Three across 900px is what made the text small and the gaps enormous. */
+/* Empty on a desktop now that the keyboard reference is gone -- the rebinding list is the reference. Left
+   in the markup because a touchscreen still fills it with gestures. */
+.pause-controls:empty { display: none; }
 .pause-controls {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));

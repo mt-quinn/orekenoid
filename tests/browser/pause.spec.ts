@@ -60,8 +60,12 @@ test("pause stops the simulation, and resuming counts back in", async ({ page })
   });
   expect(after).toEqual(before);
 
-  // The menu is a controls reference and a set of session actions.
-  await expect(page.locator("#pauseBody .pause-group")).toHaveCount(3);
+  // The menu is a controls reference and a set of session actions. On a keyboard the reference *is* the
+  // rebinding list -- the three-group keycap legend that used to sit above it said the same things a second
+  // time, in the copy the player could not edit.
+  await expect(page.locator("#pauseBody .pause-group")).toHaveCount(0);
+  await expect(page.locator("#pauseBody .pause-rebind")).toBeVisible();
+  await expect(page.locator('#pauseBody .pause-rebind button[data-bind="commit"]')).toHaveText(/F/);
   await expect(page.locator('#pauseBody button[data-act="save"]')).toBeVisible();
   await expect(page.locator('#pauseBody button[data-act="export"]')).toBeVisible();
   await expect(page.locator('#pauseBody button[data-act="import"]')).toBeVisible();

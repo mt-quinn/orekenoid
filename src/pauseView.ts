@@ -1,4 +1,4 @@
-import { ACTION_LABEL, keyName, type Action, type Bindings } from "./bindings";
+import { ACTION_LABEL, type Action, type Bindings } from "./bindings";
 // The pause menu, and the countdown that gives the claim back.
 //
 // DOM rather than drawn in the world, deliberately, and the opposite call from the refit bay. The
@@ -44,50 +44,6 @@ export interface PauseModel {
  * Grouped by where they work, because "which of these can I press right now" is the question
  * somebody opens this menu to answer.
  */
-/**
- * The keyboard reference, naming actions rather than keys.
- *
- * It used to spell the keycaps out -- `["F", "Commit the claim"]` -- which was fine while they could not
- * change and became a lie the moment they could. A row carries the actions it is about and the caps are
- * composed from the live bindings, so this panel and the rebinding list below it cannot disagree.
- *
- * `text` is for the rows that are not a binding at all: holding both speed keys, and Escape.
- */
-interface ControlRow {
-  actions?: Action[];
-  text?: string;
-  label: string;
-}
-
-const CONTROLS: ReadonlyArray<{ group: string; rows: readonly ControlRow[] }> = [
-  {
-    group: "In the mine",
-    rows: [
-      { actions: ["moveUp", "moveLeft", "moveDown", "moveRight"], label: "Move" },
-      { actions: ["aimLeft", "aimRight"], label: "Aim the survey frame" },
-      { actions: ["commit"], label: "Commit the claim" },
-      { actions: ["atlas"], label: "Open the Atlas" },
-      { actions: ["forge"], label: "Refit bay, at an anchor" },
-    ],
-  },
-  {
-    group: "In a claim",
-    rows: [
-      { actions: ["aimLeft", "aimRight"], label: "Aim the serve" },
-      { actions: ["serve"], label: "Serve" },
-      { actions: ["paddleLeft", "paddleRight"], label: "Move the paddle" },
-      { actions: ["fast", "slow"], label: "Hold to run at \u00d72 / \u00d74" },
-      { text: "BOTH", label: "Hold both to run at \u00d78" },
-      { actions: ["blast"], label: "Detonate a blast charge" },
-      { actions: ["railSeed"], label: "Place the rail seed" },
-    ],
-  },
-  {
-    group: "Any time",
-    rows: [{ text: "ESC", label: "Pause" }],
-  },
-];
-
 const TOUCH_CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string, string]> }> = [
   {
     group: "IN THE MINE",
@@ -213,43 +169,22 @@ export class PauseView {
     if (!this.body) return;
     this.model = model;
 
-    // Whichever device the player is actually holding. Listing keys to somebody on a phone
-    // describes hardware they do not have, and hides the controls they do.
-    // Touch rows still spell their gestures out: a gesture is not a binding and there is nothing to look
-    // up. Keyboard rows resolve their actions through the live bindings.
-    const rows = model.touch
-      ? TOUCH_CONTROLS.map((section) => ({
-        group: section.group,
-        rows: section.rows.map(([keys, label]) => ({ keys, label })),
-      }))
-      : CONTROLS.map((section) => ({
-        group: section.group,
-        rows: section.rows.map((row) => ({
-          keys: row.text ?? (row.actions ?? [])
-            // One cap per distinct key, in the order the row names them, without repeating a key that two
-            // actions share.
-            .flatMap((action) => model.bindings.codesFor(action))
-            .filter((code, index, all) => all.indexOf(code) === index)
-            .map(keyName)
-            .join(" / "),
-          label: row.label,
-        })),
-      }));
-    // Each key gets its own cap rather than sitting in a run of bold text. "WASD / ARROWS  Move"
-    // read as one undifferentiated line; a capped key and a plain description read as two things,
-    // which is the whole job of this table.
-    const caps = (keys: string) => keys
-      .split(/\s*·\s*/)
-      .map((group) => group
-        .split(/\s*\/\s*/)
-        .map((key) => `<kbd>${key}</kbd>`)
-        .join('<span class="pause-or">/</span>'))
-      .join('<span class="pause-dot">·</span>');
-    const controls = rows.map((section) => `<section class="pause-group">
-      <h3><span>${section.group}</span></h3>
-      <dl>${section.rows.map((row) =>
-        `<dt>${model.touch ? `<kbd class="wide">${row.keys}</kbd>` : caps(row.keys)}</dt><dd>${row.label}</dd>`).join("")}</dl>
-    </section>`).join("");
+    // The keyboard reference is gone; the rebinding list below *is* the reference.
+    //
+    // It listed every key beside its meaning, which is exactly what the KEYS list does, so the panel said
+    // everything twice -- and the copy that could not be edited was the one drawn as keycaps, which had
+    // started overlapping its own labels as rows wrapped.
+    //
+    // The gesture reference stays, and only on a touchscreen. A gesture is not a binding: there is nothing
+    // to rebind and therefore nothing in the list below, so removing this as well would leave a phone with
+    // no control reference at all.
+    const controls = model.touch
+      ? TOUCH_CONTROLS.map((section) => `<section class="pause-group">
+        <h3><span>${section.group}</span></h3>
+        <dl>${section.rows.map(([keys, label]) =>
+          `<dt><kbd class="wide">${keys}</kbd></dt><dd>${label}</dd>`).join("")}</dl>
+      </section>`).join("")
+      : "";
 
     // Ending a claim is offered only when there is one, and the cost is stated before the button
     // that charges it -- so the confirmation is informative rather than merely obstructive.
