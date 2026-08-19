@@ -1,4 +1,6 @@
-import { ACTION_LABEL, type Action, type Bindings } from "./bindings";
+import type { Bindings } from "./bindings";
+import type { AudioSettings } from "./audioSettings";
+import { audioPanelHtml, touchControlsHtml, wireAudioPanel, type KeyRebinder } from "./settingsView";
 // The pause menu, and the countdown that gives the claim back.
 //
 // DOM rather than drawn in the world, deliberately, and the opposite call from the refit bay. The
@@ -11,9 +13,6 @@ import { ACTION_LABEL, type Action, type Bindings } from "./bindings";
 
 export interface PauseActions {
   onResume(): void;
-  /** Bind a key to an action. Returns why it was refused, if it was. */
-  onBind(action: Action, code: string): { ok: boolean; reason?: string };
-  onResetBindings(): void;
   onSaveNow(): void;
   onExport(): void;
   onImport(): void;
@@ -44,43 +43,6 @@ export interface PauseModel {
  * Grouped by where they work, because "which of these can I press right now" is the question
  * somebody opens this menu to answer.
  */
-const TOUCH_CONTROLS: ReadonlyArray<{ group: string; rows: ReadonlyArray<[string, string]> }> = [
-  {
-    group: "IN THE MINE",
-    rows: [
-      ["DRAG ANYWHERE", "Fly the drone"],
-      ["TURN THE WHEEL", "Face the drone, and aim the frame"],
-      ["FLICK THE WHEEL", "Keep turning. Touch it to stop"],
-      ["COMMIT", "Claim the framed rock"],
-      ["TAP THE WORLD", "Also commits"],
-      ["ATLAS · FORGE", "Top right. Forge needs an anchor"],
-    ],
-  },
-  {
-    group: "IN A CLAIM",
-    rows: [
-      ["DRAG", "Slide the paddle. It rides above your thumb"],
-      ["TAP THE BOARD", "Before serving, aims where the ball goes"],
-      ["SERVE", "Launch it"],
-      ["HOLD FAST", "Runs at ×2, then ×4, then ×8"],
-    ],
-  },
-  {
-    group: "ANY TIME",
-    rows: [["PAUSE", "Top right"]],
-  },
-];
-
-
-/**
- * Actions the rebinding list leaves out.
- *
- * The paired halves of a control are hidden rather than removed: flying left and sliding the paddle left
- * are one key to the player, so the list shows the survey row and binding it moves both. The diagnostic
- * probe is a developer key and not part of the game's vocabulary.
- */
-const HIDDEN_FROM_REBIND: readonly Action[] = ["paddleLeft", "paddleRight", "fast", "slow", "probe"];
-
 export class PauseView {
   private readonly panel = document.querySelector<HTMLElement>("#pause");
   private readonly body = document.querySelector<HTMLElement>("#pauseBody");
@@ -89,42 +51,33 @@ export class PauseView {
   /** True once the player has been shown the cost and is being asked to confirm. */
   private confirmingEnd = false;
   private model: PauseModel | null = null;
-  /** The action waiting for a keystroke, or null. */
-  private listening: Action | null = null;
+
+  /**
+   * The key list and the audio panel are the title screen's, shown here as well.
+   *
+   * Handed in rather than built here because the rebinder owns a capture-phase key listener that has to
+   * outlive any one panel, and because two copies of the audio state would be two answers to what the volume
+   * is.
+   */
+  constructor(
+    private readonly settings: AudioSettings,
+    private readonly rebinder: KeyRebinder,
+  ) {}
 
   bind(actions: PauseActions): void {
     this.actions = actions;
-    // Captured here rather than in the game's own handler, and at capture phase, so the keystroke that
-    // is *becoming* a binding never also fires whatever it is currently bound to.
-    window.addEventListener("keydown", (event) => {
-      if (!this.listening) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const action = this.listening;
-      this.listening = null;
-      if (event.code === "Escape") {
-        // Escape backs out of the rebind rather than becoming one -- it is reserved.
-        if (this.model) this.render(this.model);
-        return;
-      }
-      const result = this.actions?.onBind(action, event.code);
-      this.refusal = result && !result.ok ? (result.reason ?? "that key is taken") : null;
-      if (this.model) this.render(this.model);
-    }, { capture: true });
   }
-
-  /** Why the last rebind was refused, shown under the list. */
-  private refusal: string | null = null;
 
   /** Is the panel waiting for a keystroke? The game asks, so it can hold its own input off. */
   get isRebinding(): boolean {
-    return this.listening !== null;
+    return this.rebinder.isRebinding;
   }
 
   setOpen(open: boolean, model?: PauseModel): void {
     this.panel?.classList.toggle("open", open);
     if (!open) {
       this.confirmingEnd = false;
+      this.rebinder.cancel();
       return;
     }
     if (model) this.render(model);
@@ -178,13 +131,7 @@ export class PauseView {
     // The gesture reference stays, and only on a touchscreen. A gesture is not a binding: there is nothing
     // to rebind and therefore nothing in the list below, so removing this as well would leave a phone with
     // no control reference at all.
-    const controls = model.touch
-      ? TOUCH_CONTROLS.map((section) => `<section class="pause-group">
-        <h3><span>${section.group}</span></h3>
-        <dl>${section.rows.map(([keys, label]) =>
-          `<dt><kbd class="wide">${keys}</kbd></dt><dd>${label}</dd>`).join("")}</dl>
-      </section>`).join("")
-      : "";
+    const controls = model.touch ? touchControlsHtml() : "";
 
     // Ending a claim is offered only when there is one, and the cost is stated before the button
     // that charges it -- so the confirmation is informative rather than merely obstructive.
@@ -224,25 +171,11 @@ export class PauseView {
     // it is the largest and the first thing under the hand; the save utilities are rare and quiet.
     // Rebinding lives here because this is the only screen the player can reach mid-expedition, and a
     // control they cannot reach is a control they cannot fix.
-    const rebinds = model.touch ? "" : `
-      <div class="pause-rebind">
-        <h4>KEYS<button type="button" data-act="resetKeys">RESET</button></h4>
-        <ul>
-          ${model.bindings.actions
-            .filter((action) => !HIDDEN_FROM_REBIND.includes(action))
-            .map((action) => `
-              <li>
-                <span>${ACTION_LABEL[action]}</span>
-                <button type="button" data-bind="${action}" class="${this.listening === action ? "listening" : ""}">
-                  ${this.listening === action ? "PRESS A KEY" : model.bindings.label(action)}
-                </button>
-              </li>`).join("")}
-        </ul>
-        ${this.refusal ? `<em class="pause-refusal">${this.refusal}</em>` : ""}
-      </div>`;
+    const rebinds = model.touch ? "" : this.rebinder.html(model.bindings);
 
     this.body.innerHTML = `
-      <div class="pause-controls">${controls}</div>
+      ${controls}
+      ${audioPanelHtml(this.settings.current)}
       ${rebinds}
       <div class="pause-actions">
         <button type="button" data-act="resume" class="pause-resume">
@@ -259,10 +192,11 @@ export class PauseView {
     for (const button of this.body.querySelectorAll<HTMLButtonElement>("button[data-act]")) {
       button.addEventListener("click", () => this.press(button.dataset.act ?? ""));
     }
-    for (const button of this.body.querySelectorAll<HTMLButtonElement>("button[data-bind]")) {
-      button.addEventListener("click", () => {
-        this.refusal = null;
-        this.listening = button.dataset.bind as Action;
+    wireAudioPanel(this.body, this.settings, () => {
+      if (this.model) this.render(this.model);
+    });
+    if (!model.touch) {
+      this.rebinder.wire(this.body, () => {
         if (this.model) this.render(this.model);
       });
     }
@@ -282,12 +216,6 @@ export class PauseView {
         break;
       case "endCancel":
         this.confirmingEnd = false;
-        this.render(this.model);
-        break;
-      case "resetKeys":
-        this.listening = null;
-        this.refusal = null;
-        actions.onResetBindings();
         this.render(this.model);
         break;
       case "endConfirm":

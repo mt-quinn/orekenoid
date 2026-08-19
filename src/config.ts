@@ -39,7 +39,7 @@ export const BALL_SPEED = 9.35;
  *
  * This is an opaque token, not a name: its exact characters are hashed to produce
  * the geology, so changing the string rerolls the entire world. It kept its
- * original value through the rename to Orekenoid deliberately, so the map does
+ * original value through the rename to Orekanoid deliberately, so the map does
  * not silently change underneath anyone playtesting it.
  */
 export const DEFAULT_SEED = "bounceworld-01";

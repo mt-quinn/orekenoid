@@ -1749,3 +1749,248 @@ button { color: inherit; font: inherit; }
   .stat.teaching,
   .health-head b.teaching { animation: none; opacity: 1; }
 }
+
+/* --- Audio settings -------------------------------------------------------
+   The same block in the pause panel and in the title screen's sheet. A switch and a level per
+   channel, laid out as a list rather than a form: name on the left, the level taking the slack, the
+   readout and the switch at a fixed width on the right so two rows line up with each other. */
+.settings-block { grid-column: 1 / -1; }
+.audio-settings h4,
+.settings-block > h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: clamp(8px, 1cqw, 14px) 0 8px;
+  font-size: clamp(11px, 1cqw, 13px);
+  letter-spacing: 0.18em;
+  color: var(--brass, #9a927d);
+}
+.audio-settings ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.audio-settings li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, 1.5fr) 42px auto;
+  align-items: center;
+  gap: clamp(8px, 1cqw, 14px);
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--ink, #f1eadb) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 22%, transparent);
+  border-radius: 3px;
+}
+/* Muted is stated by the row going quiet as well as by the word, so the state is readable without
+   reading -- the same reason the pips dim rather than disappear. */
+.audio-settings li.muted { opacity: 0.62; }
+.audio-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.audio-name span {
+  font-size: clamp(12px, 1.1cqw, 14px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--ink, #f1eadb);
+}
+.audio-name small {
+  font-size: clamp(10px, 0.95cqw, 12px);
+  letter-spacing: 0.05em;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 50%, transparent);
+}
+.audio-read {
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(11px, 1cqw, 13px);
+  letter-spacing: 0.08em;
+  text-align: right;
+  color: var(--brass, #9a927d);
+}
+/* Drawn rather than left to the browser, because the native track on a dark page is a light grey slab
+   that belongs to no part of this game. The thumb is deliberately larger than it looks it needs to be:
+   this is dragged with a thumb on a phone, where 44px is the floor and the visible part can be
+   smaller than the thing you are actually hitting. */
+.audio-settings input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: none;
+  cursor: pointer;
+}
+.audio-settings input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--brass, #9a927d) 30%, transparent);
+}
+.audio-settings input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--brass, #9a927d) 30%, transparent);
+}
+.audio-settings input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink, #f1eadb) 70%, transparent);
+  background: var(--brass, #9a927d);
+}
+.audio-settings input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink, #f1eadb) 70%, transparent);
+  background: var(--brass, #9a927d);
+}
+.audio-settings input[type="range"]:focus-visible { outline: 1px solid var(--ink, #f1eadb); outline-offset: 3px; }
+.audio-settings li button[data-audio-toggle] {
+  /* 44px minimum, even though the label is two characters: this is the one control in the row that is
+     tapped rather than dragged. */
+  min-width: 52px;
+  min-height: 34px;
+  font: inherit;
+  font-size: clamp(11px, 1cqw, 13px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.audio-settings li button.on {
+  color: #10130f;
+  background: var(--brass, #9a927d);
+  border: 1px solid var(--brass, #9a927d);
+}
+.audio-settings li button.off {
+  color: color-mix(in srgb, var(--ink, #f1eadb) 55%, transparent);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 40%, transparent);
+}
+.shell[data-layout="phone"] .audio-settings li {
+  /* Two rows on a narrow screen: name and switch above, the level across the full width below, so the
+     slider is as long as the screen allows rather than being squeezed into a third of it. */
+  grid-template-columns: minmax(0, 1fr) 42px auto;
+}
+.shell[data-layout="phone"] .audio-settings input[type="range"] {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: 30px;
+}
+
+/* --- The title screen's gear, and the sheet behind it ---------------------
+   Small and cornered. Settings are a thing you go and find; the three menu options have to stay the
+   only things on this screen with any weight. */
+.gear {
+  position: absolute;
+  z-index: 4;
+  top: calc(env(safe-area-inset-top, 0px) + clamp(12px, 1.6cqw, 20px));
+  right: calc(env(safe-area-inset-right, 0px) + clamp(12px, 1.6cqw, 20px));
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--brass, #9a927d);
+  background: color-mix(in srgb, var(--ink, #f1eadb) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 34%, transparent);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, transform 200ms ease;
+}
+.gear:hover { color: var(--ink, #f1eadb); border-color: var(--ink, #f1eadb); transform: rotate(35deg); }
+.deployment.loading .gear { opacity: 0; pointer-events: none; }
+
+/* A sibling of the title screen rather than a child of it. `.deployment` is a grid, and an absolutely
+   positioned grid item resolves `inset` against its own grid area rather than against the screen -- which
+   put this in a 230px box in the top-left corner. */
+.settings-sheet {
+  position: absolute;
+  z-index: 12;
+  inset: 0;
+  /* Flex rather than a centred grid, which is what the pause panel does and for the reason it does it: a grid
+     item's percentage `max-height` resolves against its grid area, and an auto-sized row grows to fit the
+     item -- so `max-height: 100%` clamped the frame to itself and it ran off the bottom of a short window. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+  background: color-mix(in srgb, #06080a 78%, transparent);
+  backdrop-filter: blur(3px);
+}
+.settings-sheet[hidden] { display: none; }
+.settings-frame {
+  width: min(100%, 560px);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+  background: linear-gradient(168deg, #1d1c16 0, #14140f 100%);
+  border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 42%, transparent);
+  border-radius: 4px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.settings-frame > header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px clamp(12px, 2cqw, 20px);
+  border-bottom: 1px solid color-mix(in srgb, var(--brass, #9a927d) 26%, transparent);
+}
+.settings-frame > header b {
+  font-size: clamp(14px, 1.4cqw, 17px);
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: var(--ink, #f1eadb);
+}
+.settings-frame > header button {
+  width: 40px;
+  height: 40px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--brass, #9a927d);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 34%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.settings-frame > header button:hover { color: var(--ink, #f1eadb); border-color: var(--ink, #f1eadb); }
+.settings-body {
+  /* `min-height: 0` is the whole reason this scrolls. A flex item's default `min-height: auto` refuses to
+     shrink below its content, so the frame grew past the screen and the overflow never engaged -- the panel
+     simply ran off the bottom with no way to reach the rest of it. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Claimed explicitly, because the game takes `touch-action` off most of the page so a drag flies the drone
+     rather than scrolling it. Inside a settings list a vertical drag is a scroll again. */
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  padding: clamp(6px, 1cqw, 12px) clamp(12px, 2cqw, 20px) clamp(14px, 2cqw, 20px);
+}
+/* The key list is hidden on a phone by a `.shell[data-layout="phone"]` rule, which outranks a plain
+   descendant selector -- so the sheet's copy has to match that weight to survive on a desktop. It should never
+   be rendered on a phone anyway; this is belt and braces on a specificity fight that already cost one silent
+   empty panel. */
+.shell[data-layout] .settings-body .pause-rebind { display: block; padding-top: 4px; }
+.settings-body .pause-controls { margin-top: clamp(8px, 1cqw, 14px); }
+
+/* On a phone the sheet is the screen, like the pause panel it mirrors, and every target clears 44px. */
+.shell[data-layout="phone"] .settings-sheet { padding: 0; }
+.shell[data-layout="phone"] .settings-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+.shell[data-layout="phone"] .settings-frame > header {
+  padding: calc(12px + var(--safe-top)) 14px 12px;
+}
+.shell[data-layout="phone"] .settings-body {
+  padding-bottom: calc(18px + var(--safe-bottom));
+}
+.shell[data-layout="phone"] .settings-frame > header button { width: 44px; height: 44px; }
+.shell[data-layout="phone"] .gear {
+  /* Clear of the notch and comfortably inside the corner, where a reaching thumb can find it. */
+  width: 46px;
+  height: 46px;
+}

@@ -21,7 +21,7 @@ async function boot(): Promise<void> {
 }
 
 void boot().catch((error: unknown) => {
-  console.error("Orekenoid renderer failed to initialize", error);
+  console.error("Orekanoid renderer failed to initialize", error);
   const briefing = document.querySelector<HTMLElement>("#briefing");
   const loader = document.querySelector<HTMLElement>("#deploymentLoader b");
   briefing?.classList.remove("loading");

@@ -193,6 +193,19 @@
           </footer>
         </section>
 
+        <!-- The same two sections the pause menu offers, before there is anything to pause. Both are things a
+             player wants set before they start rather than after they have been surprised by them, and on a
+             phone the pause menu is several taps into an expedition. -->
+        <section class="settings-sheet" id="settingsSheet" aria-label="Settings" hidden>
+          <div class="settings-frame">
+            <header>
+              <b>SETTINGS</b>
+              <button id="settingsClose" type="button" aria-label="Close settings">✕</button>
+            </header>
+            <div class="settings-body" id="settingsBody"></div>
+          </div>
+        </section>
+
         <section class="deployment loading" id="briefing" aria-labelledby="deploymentTitle" aria-busy="true" data-render-state="loading">
           <!-- The gate is honest about what it is waiting for. It used to say INITIALIZING PADDLES and
                wait on three chassis previews being rasterised; there is no paddle to choose any more, so
@@ -201,9 +214,13 @@
             <b>GENERATING THE MINE</b>
             <i aria-hidden="true"></i>
           </div>
+          <!-- Small, in the corner, and last in the tab order: settings are a thing you go and find rather
+               than one of the ways in, and the three menu options must stay the only things with weight here. -->
+          <button id="settingsButton" type="button" class="gear" aria-label="Settings">⚙</button>
+
           <header class="deployment-heading">
             <div>
-              <h1 id="deploymentTitle">Orekenoid</h1>
+              <h1 id="deploymentTitle">Orekanoid</h1>
             </div>
           </header>
 
@@ -226,6 +243,7 @@
           </nav>
 
           <p class="armor-rule">At the end of a claim, any bricks left standing over your Armor are deducted from your Health.</p>
+
         </section>
       </section>
     </main>

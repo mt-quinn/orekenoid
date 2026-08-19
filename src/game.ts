@@ -35,6 +35,8 @@ import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Music, layerFor } from "./music";
 import { RAIL_VOICE } from "./sfx";
+import { AudioSettings } from "./audioSettings";
+import { KeyRebinder, SettingsSheet } from "./settingsView";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
 import { Effects } from "./effects";
 import { clamp, normalizeAngle } from "./maths";
@@ -238,7 +240,38 @@ export class OrekenoidGame {
   readonly loadStrike = new LoadStrike();
   /** The bright line of stress travelling ahead of the crumble. */
   private readonly crumbleEdge = new Graphics();
-  readonly pauseView = new PauseView();
+  /**
+   * What the player has decided about the sound, and the two panels that let them decide it.
+   *
+   * The rebinder is shared rather than owned by either panel: it holds a capture-phase key listener that must
+   * outlive whichever panel is open, so that the keystroke *becoming* a binding never also fires whatever it is
+   * bound to now.
+   */
+  readonly audioSettings = new AudioSettings();
+  private readonly rebinder = new KeyRebinder(
+    (action, code) => {
+      const result = this.bindings.bind(action, code);
+      // The prompts carry their key hints from the bindings, so a rebind has to redraw them.
+      if (result.ok) this.renderTutorial();
+      return result;
+    },
+    () => {
+      this.bindings.reset();
+      this.renderTutorial();
+    },
+  );
+  readonly pauseView = new PauseView(this.audioSettings, this.rebinder);
+  readonly settingsSheet = new SettingsSheet(
+    this.audioSettings,
+    this.rebinder,
+    this.bindings,
+    // The layout, not whether a touch has landed yet.
+    //
+    // The pause menu can ask `touch.used` because by the time it opens the player has been flying the drone with
+    // their thumb for a while. The title screen cannot: nobody has touched anything, so a phone was shown the key
+    // list -- which the phone stylesheet then hides, leaving the sheet with no control reference at all.
+    () => this.touch.used || this.shell?.dataset.layout === "phone",
+  );
   /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
   private forgeSelection: StationId | null = null;
   readonly atlasView = new AtlasView(this);
@@ -772,6 +805,7 @@ export class OrekenoidGame {
         if (!event.repeat && event.code === "Digit1") this.selectChassis(0);
         if (!event.repeat && event.code === "Digit2") this.selectChassis(1);
         if (!event.repeat && event.code === "Digit3") this.selectChassis(2);
+        if (this.settingsSheet.isOpen) return;
         if (!event.repeat && event.code === "Enter" && this.selectedChassisIndex !== null) this.start();
         return;
       }
@@ -791,11 +825,12 @@ export class OrekenoidGame {
       // claim were seconds the player could not stop the game, and that is exactly when somebody
       // reaches for Escape.
       if (event.code === "Escape" && !this.atlasOpen && !this.craftingOpen) { this.togglePause(); return; }
-      if (this.paused) {
-        // While paused the only key that does anything is the one that unpauses.
-        if (this.bindings.matches("pause", event.code)) this.togglePause();
-        return;
-      }
+      // The bound pause key, in both directions. It used to be honoured only in the branch below -- that is,
+      // only while already paused -- so the key the panel lists as PAUSE would unpause the game and never pause
+      // it, and Escape was the only way in.
+      if (this.bindings.matches("pause", event.code)) { this.togglePause(); return; }
+      // While paused, nothing else does anything.
+      if (this.paused) return;
       if (this.cameraTransition) return;
       if (!event.repeat && this.bindings.matches("atlas", event.code)) {
         if (!this.can("atlas")) { this.refuseControl(); return; }
@@ -1218,7 +1253,9 @@ export class OrekenoidGame {
       endCost: calculateClaimDamage(remaining, this.soakCapacity),
       integrity: this.integrity,
       maxIntegrity: this.maxIntegrity,
-      touch: this.touch.used,
+      // Same rule as the settings sheet: a phone layout gets the gesture reference whether or not a touch has
+      // landed yet, since the key list is hidden there and the alternative is no reference at all.
+      touch: this.touch.used || this.shell?.dataset.layout === "phone",
       bindings: this.bindings,
     };
   }
@@ -3759,17 +3796,14 @@ export class OrekenoidGame {
       onExport: () => this.exportExpedition(),
       onImport: () => void this.importExpedition(),
       onEndClaim: () => this.endClaimNow(),
-      onBind: (action, code) => {
-        const result = this.bindings.bind(action, code);
-        // The prompts carry their key hints from the bindings, so a rebind has to redraw them.
-        if (result.ok) this.renderTutorial();
-        return result;
-      },
-      onResetBindings: () => {
-        this.bindings.reset();
-        this.renderTutorial();
-      },
     });
+    // Set before either output exists: both hold the level and apply it when their graph is built, so the
+    // player's choice survives the gesture the browser makes us wait for.
+    this.audioSettings.onChange = (music, sfx) => {
+      this.music.setVolume(music);
+      this.audio.setVolume(sfx);
+    };
+    this.audioSettings.apply();
     this.expeditionView.bind({
       onContinue: () => this.continueExpedition(),
       onImport: () => void this.importExpedition(),

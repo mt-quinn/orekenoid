@@ -1,6 +1,6 @@
 // Expedition persistence.
 //
-// Orekenoid uses the forgiving expedition model: one persistent world per seed.
+// Orekanoid uses the forgiving expedition model: one persistent world per seed.
 // Death costs cargo, never geography or capability, so a save is the record of an
 // ongoing expedition rather than a checkpoint in a run.
 //

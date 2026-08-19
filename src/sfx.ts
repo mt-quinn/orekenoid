@@ -240,6 +240,7 @@ export class SampleBank {
    */
   play(
     context: AudioContext,
+    destination: AudioNode,
     id: SampleId,
     options: { gain?: number; rate?: number } = {},
     random: () => number = Math.random,
@@ -258,29 +259,36 @@ export class SampleBank {
     source.playbackRate.value = rate;
     const gain = context.createGain();
     gain.gain.value = baseGain(spec) * crowd * (options.gain ?? 1);
-    source.connect(gain).connect(this.output(context));
+    source.connect(gain).connect(this.output(context, destination));
     source.start(now);
     return true;
   }
 
-  private output(context: AudioContext): AudioNode {
+  private output(context: AudioContext, destination: AudioNode): AudioNode {
     if (!this.bus) {
       const shaper = context.createWaveShaper();
       shaper.curve = clipCurve();
       // Off, because the curve is smooth and 1024 points across four units of range is already finer than the
       // ear; oversampling here would only cost latency.
       shaper.oversample = "none";
-      shaper.connect(context.destination);
+      // Before the player's own level, not after: the curve's job is to stop a cascade summing past full scale,
+      // and a volume slider applied first would move the point at which it starts doing that.
+      shaper.connect(destination);
       this.bus = shaper;
     }
     return this.bus;
   }
 
   /** Everything sounding is forgotten, so a resumed context does not think it is crowded. */
+  /**
+   * Forget what is sounding. Called when the context comes back from a suspension.
+   *
+   * Only the bookkeeping: end times measured against a clock that stopped are stale, and a bank that thinks it
+   * is crowded comes back quiet. The nodes themselves survive a suspension perfectly well -- it is the same
+   * context, and rebuilding the bus here would churn a fresh shaper and curve on every phone call.
+   */
   reset(): void {
     this.voices.clear();
-    // The bus belonged to a context that may not be the live one any more.
-    this.bus = null;
   }
 
   private async fetchAll(context: AudioContext): Promise<void> {

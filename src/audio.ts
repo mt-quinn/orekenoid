@@ -38,6 +38,14 @@ export class GameAudio {
    */
   private samples = new SampleBank();
   /**
+   * The player's effects level, applied to the tones and the recordings alike.
+   *
+   * One node for both because they are one instrument: a slider that quietened the recorded impacts and left
+   * the synthesised bank at full would be a volume control that makes the mix worse as it goes down.
+   */
+  private master: GainNode | null = null;
+  private sfxScale = 1;
+  /**
    * Told when the context stops on its own.
    *
    * Mobile browsers suspend audio for reasons that have nothing to do with this game -- a call, a
@@ -90,9 +98,34 @@ export class GameAudio {
   impact(id: SampleId, options: { gain?: number; rate?: number; fallback?: ToneSpec | null } = {}): void {
     const context = this.context;
     if (!context) return;
-    if (this.samples.play(context, id, options)) return;
+    if (this.samples.play(context, this.bus(context), id, options)) return;
     const fallback = options.fallback === undefined ? SOUNDS[SAMPLES[id].fallback] : options.fallback;
     if (fallback) this.play(fallback);
+  }
+
+  /**
+   * Set the effects level, 0..1.
+   *
+   * Ramped over a few milliseconds rather than assigned. A gain stepped instantaneously while something is
+   * sounding is a click, and this is dragged by a finger, so it is stepped many times a second.
+   */
+  setVolume(scale: number): void {
+    this.sfxScale = Math.min(1, Math.max(0, scale));
+    const context = this.context;
+    if (!context || !this.master) return;
+    const now = context.currentTime;
+    this.master.gain.cancelScheduledValues(now);
+    this.master.gain.setValueAtTime(this.master.gain.value, now);
+    this.master.gain.linearRampToValueAtTime(this.sfxScale, now + 0.02);
+  }
+
+  private bus(context: AudioContext): AudioNode {
+    if (!this.master) {
+      this.master = context.createGain();
+      this.master.gain.value = this.sfxScale;
+      this.master.connect(context.destination);
+    }
+    return this.master;
   }
 
   /** Which recordings are in memory, for the diagnostics overlay. */
@@ -158,7 +191,7 @@ export class GameAudio {
     // Exponential rather than linear: a linear tail reads as a click at these
     // durations, and several of these fire per second during a cascade.
     gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    oscillator.connect(gain).connect(context.destination);
+    oscillator.connect(gain).connect(this.bus(context));
     oscillator.start(now);
     oscillator.stop(now + duration);
   }

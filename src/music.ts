@@ -157,6 +157,8 @@ export class Music {
   private master: GainNode | null = null;
   private layer: MusicLayer | null = null;
   private ducked = false;
+  /** The player's level, 0..1, multiplying the score's own. Zero is the switch turned off. */
+  private scale = 1;
   private started = false;
   private tried = false;
   private sinceSync = 0;
@@ -223,7 +225,7 @@ export class Music {
       );
     }
     this.master = context.createGain();
-    this.master.gain.value = MUSIC.volume;
+    this.master.gain.value = this.masterTarget;
     this.master.connect(context.destination);
     const voice = (element: HTMLAudioElement): Voice => {
       const gain = context.createGain();
@@ -261,9 +263,32 @@ export class Music {
   duck(on: boolean): void {
     if (on === this.ducked) return;
     this.ducked = on;
+    this.applyMaster(MUSIC.duckFade);
+  }
+
+  /**
+   * Set the player's level, 0..1. Zero is the score switched off.
+   *
+   * Multiplies the mix's own gain rather than replacing it, so the balance the score was mastered against
+   * survives the slider, and it goes through the same node as ducking -- two things writing the same gain
+   * independently is how a pause leaves the music quiet after it resumes.
+   */
+  setVolume(scale: number): void {
+    const next = Math.min(1, Math.max(0, scale));
+    if (next === this.scale) return;
+    this.scale = next;
+    // Quick, because this is a slider under a finger and a slow ramp reads as an unresponsive control.
+    this.applyMaster(0.08);
+  }
+
+  private get masterTarget(): number {
+    return MUSIC.volume * this.scale * (this.ducked ? MUSIC.duckTo : 1);
+  }
+
+  private applyMaster(seconds: number): void {
     const context = this.context();
     if (!context || !this.master) return;
-    ramp(context, this.master.gain, on ? MUSIC.volume * MUSIC.duckTo : MUSIC.volume, MUSIC.duckFade);
+    ramp(context, this.master.gain, this.masterTarget, seconds);
   }
 
   /**
