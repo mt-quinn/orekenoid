@@ -119,6 +119,45 @@ export function audioFault(report: AudioReport): AudioFault | null {
   return null;
 }
 
+/**
+ * How long a fault has to persist before it is worth a plate.
+ *
+ * Everything this gate watches passes through a bad-looking moment on the way to working. A stream that has just
+ * been asked to play has not moved its clock yet; a context resuming is suspended until it is not; the score's
+ * loop drops `currentTime` to zero once a pass. Judged on a single reading, the plate flashed up and vanished
+ * over a game that was playing perfectly -- which is worse than not having it, because it teaches the player
+ * that it lies.
+ */
+export const GATE = { settle: 2.5 } as const;
+
+/**
+ * Only reports a fault that has been true for a while.
+ *
+ * Separated from the plate so the rule is testable without a DOM: what it does is entirely about time, and
+ * time is the part that was wrong.
+ */
+export class FaultSettler {
+  private pending: { code: AudioFault["code"]; since: number } | null = null;
+
+  /** The fault worth showing, or null. `now` is in seconds. */
+  see(fault: AudioFault | null, now: number): AudioFault | null {
+    if (!fault) {
+      this.pending = null;
+      return null;
+    }
+    if (!this.pending || this.pending.code !== fault.code) {
+      this.pending = { code: fault.code, since: now };
+      return null;
+    }
+    return now - this.pending.since >= GATE.settle ? fault : null;
+  }
+
+  /** Forget what was building, so a dismissed or recovered fault starts its clock again. */
+  clear(): void {
+    this.pending = null;
+  }
+}
+
 export interface AudioGateActions {
   /** Open or reopen everything: resume the context, refetch the recordings, restart the score. */
   onRetry(): void;
@@ -139,6 +178,7 @@ export class AudioGate {
   private actions: AudioGateActions | null = null;
   private showing: AudioFault["code"] | null = null;
   private silenced = new Set<AudioFault["code"]>();
+  private settler = new FaultSettler();
 
   attach(actions: AudioGateActions): void {
     this.actions = actions;
@@ -154,12 +194,16 @@ export class AudioGate {
   }
 
   /** Give the gate the current state. Idempotent: called whenever something might have changed. */
-  check(report: AudioReport): void {
-    const fault = audioFault(report);
-    if (!fault || this.silenced.has(fault.code)) {
+  check(report: AudioReport, now: number = performance.now() / 1000): void {
+    const raw = audioFault(report);
+    // Held for `GATE.settle` before it counts. Startup, a resuming context and the score's own loop all look
+    // briefly wrong, and a plate that appears for one frame during normal play is a plate nobody believes.
+    const fault = this.settler.see(raw, now);
+    if (!raw || (raw && this.silenced.has(raw.code))) {
       if (this.showing) this.hide();
       return;
     }
+    if (!fault) return;
     if (fault.code === this.showing) return;
     this.showing = fault.code;
     if (this.titleText) this.titleText.textContent = fault.title;
@@ -176,6 +220,7 @@ export class AudioGate {
 
   private hide(): void {
     this.showing = null;
+    this.settler.clear();
     if (!this.plate) return;
     this.plate.hidden = true;
     this.plate.classList.remove("open");

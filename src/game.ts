@@ -2223,7 +2223,9 @@ export class OrekenoidGame {
     // Cheap and idempotent, and the only way a fault that appears mid-session -- a context the browser
     // suspended and never told us about -- reaches the player rather than sitting in a console.
     this.audioWatch += dt;
-    if (this.audioWatch > 2) {
+    // Once a second rather than every two, because the gate now insists a fault persists before it says anything
+    // -- so polling slowly would delay a real problem by the settle time on top of the poll interval.
+    if (this.audioWatch > 1) {
       this.audioWatch = 0;
       this.checkAudio();
     }

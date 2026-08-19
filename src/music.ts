@@ -558,8 +558,12 @@ export class Music {
       const wanted = MUSIC.volume * this.scale * this.duckLevel * voice.level;
       voice.element.volume = Math.max(0, Math.min(1, wanted));
       // Watched rather than assumed. This is the measurement whose absence cost the most.
+      //
+      // A backwards jump counts as progress, not a stall: the score loops, so once every eight and a half
+      // minutes `currentTime` drops to near zero, and reading that as "stopped" made the gate accuse a perfectly
+      // healthy score of not playing.
       const at = voice.element.currentTime;
-      voice.advancing = at > voice.lastAt + 0.0005;
+      voice.advancing = at > voice.lastAt + 0.0005 || at < voice.lastAt - 0.5;
       voice.lastAt = at;
       // Never paused, whatever its level. An inaudible mix that keeps running is what makes the next transition
       // free; one that was stopped and restarted would have to be seeked back into place, and a seek cannot be
