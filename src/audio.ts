@@ -78,6 +78,17 @@ export class GameAudio {
   }
 
   /**
+   * The live context, for anything that needs to build its own graph.
+   *
+   * Shared rather than handed a context of its own, because the browser's rules about gestures and suspension
+   * apply per context: a second one would need its own gesture to start and its own recovery when the phone
+   * takes the output away, and would then be a second thing that can be silently muted.
+   */
+  get audioContext(): AudioContext | null {
+    return this.context;
+  }
+
+  /**
    * Play one shaped sweep. Silently does nothing before `start()`, so callers in
    * the pre-deployment UI never have to check.
    */

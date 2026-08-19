@@ -33,6 +33,7 @@ import { SEAL_CELLS, SEAL_CENTRE } from "./worldgen/landing";
 import { shadowQuad, visibleFrom } from "./light/shadow";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
+import { Music, layerFor } from "./music";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
 import { Effects } from "./effects";
 import { clamp, normalizeAngle } from "./maths";
@@ -223,6 +224,13 @@ export class OrekenoidGame {
   readonly frameReturns = new Graphics();
   readonly keys = new Set<string>();
   readonly audio = new GameAudio();
+  /**
+   * The score: one track in two mixes, crossfaded by gain.
+   *
+   * Given the game's own context rather than one of its own, so it starts on the same gesture and recovers
+   * from the same interruptions as everything else that makes a noise.
+   */
+  readonly music = new Music(() => this.audio.audioContext);
   readonly hud = new Hud();
   readonly gantry = new Gantry();
   readonly salvage = new SalvageDrone();
@@ -842,6 +850,9 @@ export class OrekenoidGame {
     this.hud.markDeployed();
     this.renderTutorial();
     this.audio.start();
+    // After the gesture, because that is when there is a context to decode into. Not awaited: a score that
+    // takes a moment to arrive should not hold up the deployment, and it fades in when it lands.
+    void this.music.load();
     this.showToast(`${this.chassis.name} DEPLOYED · SURVEY LIVE`);
     this.updateUI();
   }
@@ -2017,6 +2028,15 @@ export class OrekenoidGame {
     // Only while a claim is actually running. Holding the lock through the deployment screen or a
     // pause would be asking to keep somebody's screen on for a game they are not playing.
     this.awake.set(this.started && !this.paused && this.arena !== null);
+    // Asked every frame and idempotent: the score only moves when the answer changes. Ducked rather than
+    // stopped for a hold or a map, because both are things the player is doing *inside* the expedition and the
+    // music going away would say they had left it.
+    this.music.setLayer(layerFor({
+      started: this.started,
+      mode: this.craftingOpen ? "forge" : this.mode,
+      dying: this.dying,
+    }));
+    this.music.duck(this.paused || this.atlasOpen);
     this.renderTouchActions(dt);
     // The wheel's teeth are drawn at world angles so they turn with the drone, and it only exists out in
     // the mine: inside a claim the paddle is dragged directly and a facing wheel has nothing to do.

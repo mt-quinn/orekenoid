@@ -1,0 +1,76 @@
+import { describe, expect, it } from "vitest";
+import { MUSIC, crossfadeGains, durationsAgree, layerFor, sharedLoopLength } from "../src/music";
+
+describe("which layer is playing", () => {
+  const state = (over: Partial<Parameters<typeof layerFor>[0]> = {}) =>
+    layerFor({ started: true, mode: "survey", dying: false, ...over });
+
+  it("is silent before the expedition starts", () => {
+    expect(state({ started: false })).toBeNull();
+  });
+
+  it("plays the mine out in the mine", () => {
+    expect(state({ mode: "survey" })).toBe("survey");
+  });
+
+  it("leans into a live claim", () => {
+    expect(state({ mode: "play" })).toBe("framed");
+  });
+
+  it("keeps the mine's music under the forge", () => {
+    // The Refit Bay is a panel over the mine rather than a place of its own, and swapping the score for a
+    // menu would announce it as somewhere you have travelled to.
+    expect(state({ mode: "forge" })).toBe("survey");
+  });
+
+  it("stops when the drone is going down", () => {
+    expect(state({ dying: true })).toBeNull();
+  });
+});
+
+describe("the crossfade", () => {
+  it("holds the level flat, because the two mixes are the same track", () => {
+    // Linear, not equal-power. Correlated material adds amplitudes, so `a + b` is what has to stay at one;
+    // the usual `a² + b² = 1` would put a bulge in the middle of every transition.
+    for (const mix of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+      const gains = crossfadeGains(mix);
+      expect(gains.survey + gains.framed).toBeCloseTo(1, 6);
+    }
+  });
+
+  it("is fully one thing at each end", () => {
+    expect(crossfadeGains(0)).toEqual({ survey: 1, framed: 0 });
+    expect(crossfadeGains(1)).toEqual({ survey: 0, framed: 1 });
+  });
+
+  it("is not equal-power, which would be louder in the middle", () => {
+    // Stated as a test because it is the one thing about this file somebody will "fix" later.
+    const half = crossfadeGains(0.5);
+    expect(half.survey).toBeCloseTo(0.5, 6);
+    expect(half.survey).not.toBeCloseTo(Math.SQRT1_2, 2);
+  });
+
+  it("survives a mix outside the range", () => {
+    expect(crossfadeGains(-3)).toEqual({ survey: 1, framed: 0 });
+    expect(crossfadeGains(9)).toEqual({ survey: 0, framed: 1 });
+  });
+});
+
+describe("keeping the two in step", () => {
+  it("loops both on the shorter one", () => {
+    // A file a few samples longer than its partner would otherwise walk them apart one loop at a time, and
+    // the symptom -- two mixes of one recording slowly turning into a flam -- reads as a playback bug.
+    expect(sharedLoopLength(90.0, 90.02)).toBeCloseTo(90.0, 6);
+    expect(sharedLoopLength(90.02, 90.0)).toBeCloseTo(90.0, 6);
+  });
+
+  it("forgives an encoder rounding a few samples", () => {
+    expect(durationsAgree(90, 90 + MUSIC.lengthTolerance / 2)).toBe(true);
+  });
+
+  it("does not forgive a real mismatch", () => {
+    // Worth complaining about: the two mixes are supposed to be the same piece at the same length, and this
+    // is the one failure whose cause nobody would guess from its symptom.
+    expect(durationsAgree(90, 96)).toBe(false);
+  });
+});
