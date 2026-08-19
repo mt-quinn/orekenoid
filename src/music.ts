@@ -50,6 +50,26 @@ export const MUSIC = {
    * the mixes drifting apart, and nobody would guess the cause from the symptom.
    */
   lengthTolerance: 0.05,
+  /** Seconds between drift checks. Cheap, and drift accumulates far slower than this. */
+  syncCheck: 0.5,
+  /**
+   * Drift past this gets a gentle correction, in seconds.
+   *
+   * Twelve milliseconds is under the threshold where two copies of one recording read as a flam, and the two
+   * are only ever audible together during a crossfade -- so this is about being in step at the moment it
+   * matters rather than being sample-locked at every instant.
+   */
+  syncNudge: 0.012,
+  /** Drift past this is not drift, it is a jump: a backgrounded tab, or one track wrapping first. */
+  syncSnap: 0.25,
+  /**
+   * How hard to nudge, as a fraction of playback rate.
+   *
+   * Three parts in a thousand is about five cents of pitch -- inaudible on music, and it closes twelve
+   * milliseconds in four seconds. Correcting harder would be audible as a wobble, which is a worse artefact
+   * than the drift it is fixing.
+   */
+  syncRate: 0.003,
 } as const;
 
 /** Which layer the score should be playing, or null for silence. */
@@ -87,6 +107,19 @@ export function durationsAgree(surveySeconds: number, framedSeconds: number): bo
 }
 
 /**
+ * What to do about the follower being `drift` seconds away from the reference.
+ *
+ * Positive drift means the follower is ahead. Kept as arithmetic so the thresholds can be tested without a
+ * browser, an audio device, and eight and a half minutes of patience.
+ */
+export function driftCorrection(drift: number): { rate: number; snap: boolean } {
+  if (Math.abs(drift) > MUSIC.syncSnap) return { rate: 1, snap: true };
+  if (drift > MUSIC.syncNudge) return { rate: 1 - MUSIC.syncRate, snap: false };
+  if (drift < -MUSIC.syncNudge) return { rate: 1 + MUSIC.syncRate, snap: false };
+  return { rate: 1, snap: false };
+}
+
+/**
  * The basenames the score is loaded from, under `public/music/`.
  *
  * Extensions are tried in turn and the first one that both fetches and decodes wins, so whichever format the
@@ -94,38 +127,82 @@ export function durationsAgree(surveySeconds: number, framedSeconds: number): bo
  * quality; Safari refuses it, which is what the fallbacks are for.
  */
 export const MUSIC_SOURCES = {
-  survey: "music/exploration",
-  framed: "music/framed",
+  survey: "music/bgm-explore",
+  framed: "music/bgm-framed",
 } as const;
 
-const EXTENSIONS = ["ogg", "mp3", "m4a", "wav"] as const;
+const EXTENSIONS = ["opus", "ogg", "mp3", "m4a", "wav"] as const;
 
 interface Voice {
-  source: AudioBufferSourceNode;
+  element: HTMLAudioElement;
   gain: GainNode;
 }
 
+/**
+ * Streamed rather than decoded into memory, which the length of the score decides for us.
+ *
+ * `decodeAudioData` holds float32 PCM: measured on the real files, eight and a half minutes at 48kHz came to
+ * 195MB for the stereo mix and 98MB for the mono one, with the heap at 342MB after decoding both, and about
+ * two seconds of decoding at deployment. That is survivable on a desktop and a good way to have a phone kill
+ * the tab. A media element streams instead, so memory is a buffer rather than the whole piece and playback
+ * starts immediately.
+ *
+ * The cost is that two media elements keep their own clocks and will drift, where two buffer sources could not.
+ * That is worth paying here because the two mixes are only ever audible together during a crossfade -- the rest
+ * of the time one of them is at zero gain -- so what has to be true is that they are in step at the moment of a
+ * transition, not that they are sample-locked for eight minutes. `syncTick` keeps them there.
+ */
 export class Music {
-  private buffers: { survey: AudioBuffer; framed: AudioBuffer } | null = null;
   private voices: { survey: Voice; framed: Voice } | null = null;
   private master: GainNode | null = null;
   private layer: MusicLayer | null = null;
   private ducked = false;
-  /** Set once loading has been attempted, so a missing score is not re-fetched every frame. */
+  private started = false;
   private tried = false;
+  private sinceSync = 0;
 
   constructor(private readonly context: () => AudioContext | null) {}
 
   /** True when there is a score to play. False is a normal state: the game runs silent. */
   get available(): boolean {
-    return this.buffers !== null;
+    return this.voices !== null;
+  }
+
+  /** How far the framed mix is from the exploration mix right now, in seconds. Diagnostic. */
+  get drift(): number {
+    if (!this.voices) return 0;
+    return this.voices.framed.element.currentTime - this.voices.survey.element.currentTime;
   }
 
   /**
-   * Fetch and decode both mixes.
+   * What the score is doing, for a diagnostic or a test.
    *
-   * Failure is not an error. The files may simply not be there yet, and a game that refuses to start because
-   * it has no music would be a worse game than a quiet one, so this reports and returns.
+   * The gains are the interesting part: a crossfade is the one behaviour here that cannot be checked by ear in
+   * a headless browser, and it is the whole feature.
+   */
+  get diagnostics(): {
+    layer: MusicLayer | null;
+    surveyGain: number;
+    framedGain: number;
+    drift: number;
+    playing: boolean;
+    at: number;
+  } {
+    return {
+      layer: this.layer,
+      surveyGain: this.voices ? this.voices.survey.gain.gain.value : 0,
+      framedGain: this.voices ? this.voices.framed.gain.gain.value : 0,
+      drift: this.drift,
+      playing: Boolean(this.voices && !this.voices.survey.element.paused),
+      at: this.voices ? this.voices.survey.element.currentTime : 0,
+    };
+  }
+
+  /**
+   * Build both streams and start them together.
+   *
+   * Failure is not an error: the files may not be there yet, and a game that refused to start without music
+   * would be worse than a quiet one.
    */
   async load(): Promise<void> {
     if (this.tried) return;
@@ -133,61 +210,46 @@ export class Music {
     const context = this.context();
     if (!context) return;
     const [survey, framed] = await Promise.all([
-      decodeFirst(context, MUSIC_SOURCES.survey),
-      decodeFirst(context, MUSIC_SOURCES.framed),
+      openStream(MUSIC_SOURCES.survey),
+      openStream(MUSIC_SOURCES.framed),
     ]);
     if (!survey || !framed) return;
     if (!durationsAgree(survey.duration, framed.duration)) {
-      // Said out loud because the symptom -- two mixes gradually pulling apart -- looks like a playback bug
-      // and is actually a content one.
+      // Said out loud because the symptom -- two mixes gradually pulling apart -- looks like a playback bug and
+      // is actually a content one.
       console.warn(
         `[music] the two mixes are different lengths (${survey.duration.toFixed(3)}s and `
-        + `${framed.duration.toFixed(3)}s). They will be looped on the shorter one to stay in step.`,
+        + `${framed.duration.toFixed(3)}s). They will pull apart, and the sync will keep snapping them back.`,
       );
     }
-    this.buffers = { survey, framed };
-  }
-
-  /**
-   * Start both mixes, silent, and hold them there.
-   *
-   * Called once. `AudioBufferSourceNode` cannot be restarted, and it does not need to be: the sources loop
-   * for the life of the page and the layers are chosen by gain alone.
-   */
-  private begin(): void {
-    const context = this.context();
-    if (!context || !this.buffers || this.voices) return;
-    const loopEnd = sharedLoopLength(this.buffers.survey.duration, this.buffers.framed.duration);
     this.master = context.createGain();
     this.master.gain.value = MUSIC.volume;
     this.master.connect(context.destination);
-    const startAt = context.currentTime + MUSIC.lead;
-    const voice = (buffer: AudioBuffer): Voice => {
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      source.loopStart = 0;
-      source.loopEnd = loopEnd;
+    const voice = (element: HTMLAudioElement): Voice => {
       const gain = context.createGain();
       gain.gain.value = 0;
-      source.connect(gain).connect(this.master!);
-      source.start(startAt);
-      return { source, gain };
+      context.createMediaElementSource(element).connect(gain).connect(this.master!);
+      return { element, gain };
     };
-    this.voices = { survey: voice(this.buffers.survey), framed: voice(this.buffers.framed) };
+    this.voices = { survey: voice(survey), framed: voice(framed) };
+    // Both told to play in the same turn, so they begin within a frame of each other and the sync only ever has
+    // milliseconds to correct rather than seconds.
+    await Promise.all([tryPlay(survey), tryPlay(framed)]);
+    this.started = true;
+    // Whatever the game asked for before the files arrived, now that there is something to play it with.
+    const wanted = this.layer;
+    this.layer = null;
+    this.setLayer(wanted);
   }
 
   /**
    * Play this layer, crossfading from whatever is playing now.
    *
-   * Idempotent: called every frame with the game's current state, and does nothing at all unless the answer
-   * has changed.
+   * Idempotent: called every frame with the game's current state, and does nothing unless the answer changed.
    */
   setLayer(layer: MusicLayer | null): void {
     if (layer === this.layer) return;
     this.layer = layer;
-    if (!this.buffers) return;
-    this.begin();
     const context = this.context();
     if (!context || !this.voices) return;
     const gains = layer === null ? { survey: 0, framed: 0 } : crossfadeGains(layer === "framed" ? 1 : 0);
@@ -203,6 +265,29 @@ export class Music {
     if (!context || !this.master) return;
     ramp(context, this.master.gain, on ? MUSIC.volume * MUSIC.duckTo : MUSIC.volume, MUSIC.duckFade);
   }
+
+  /**
+   * Keep the two streams in step. Called every frame; does its work a couple of times a second.
+   *
+   * The exploration mix is the reference and the framed one follows it, chosen arbitrarily but fixed -- two
+   * tracks each correcting toward the other is a control loop that hunts.
+   */
+  syncTick(dt: number): void {
+    if (!this.voices || !this.started) return;
+    this.sinceSync += dt;
+    if (this.sinceSync < MUSIC.syncCheck) return;
+    this.sinceSync = 0;
+    const reference = this.voices.survey.element;
+    const follower = this.voices.framed.element;
+    if (reference.paused || follower.paused) return;
+    const correction = driftCorrection(follower.currentTime - reference.currentTime);
+    if (correction.snap) {
+      follower.currentTime = reference.currentTime;
+      follower.playbackRate = 1;
+      return;
+    }
+    if (follower.playbackRate !== correction.rate) follower.playbackRate = correction.rate;
+  }
 }
 
 /**
@@ -212,7 +297,7 @@ export class Music {
  * scheduled while an earlier one is still running interpolates from the *earlier* ramp's start, which makes a
  * transition interrupted halfway jump backwards before setting off again.
  */
-function ramp(context: AudioContext, param: AudioParam, to: number, seconds: number): void {
+export function ramp(context: BaseAudioContext, param: AudioParam, to: number, seconds: number): void {
   const now = context.currentTime;
   if (typeof param.cancelAndHoldAtTime === "function") param.cancelAndHoldAtTime(now);
   else param.cancelScheduledValues(now);
@@ -220,16 +305,45 @@ function ramp(context: AudioContext, param: AudioParam, to: number, seconds: num
   param.linearRampToValueAtTime(to, now + seconds);
 }
 
-/** The first extension of this basename that both fetches and decodes, or null. */
-async function decodeFirst(context: AudioContext, base: string): Promise<AudioBuffer | null> {
+/** Play, tolerating a browser that refuses. A refused stream is silence, not a crash. */
+async function tryPlay(element: HTMLAudioElement): Promise<void> {
+  try {
+    await element.play();
+  } catch {
+    // Autoplay policy, or no output. The score stays silent and the game does not care.
+  }
+}
+
+/**
+ * A looping media element for the first extension of this basename that loads, or null.
+ *
+ * Attached to the document because some mobile browsers will not play a detached element, and hidden because it
+ * has no business being a visible control.
+ */
+async function openStream(base: string): Promise<HTMLAudioElement | null> {
   for (const extension of EXTENSIONS) {
-    try {
-      const response = await fetch(`${base}.${extension}`);
-      if (!response.ok) continue;
-      return await context.decodeAudioData(await response.arrayBuffer());
-    } catch {
-      // Wrong format for this browser, or not there. Try the next one.
+    const element = document.createElement("audio");
+    element.preload = "auto";
+    element.loop = true;
+    element.hidden = true;
+    element.src = `${base}.${extension}`;
+    const loaded = await new Promise<boolean>((resolve) => {
+      const done = (ok: boolean) => {
+        element.removeEventListener("loadedmetadata", onLoad);
+        element.removeEventListener("error", onError);
+        resolve(ok);
+      };
+      const onLoad = () => done(true);
+      const onError = () => done(false);
+      element.addEventListener("loadedmetadata", onLoad);
+      element.addEventListener("error", onError);
+      element.load();
+    });
+    if (loaded && Number.isFinite(element.duration) && element.duration > 0) {
+      document.body.appendChild(element);
+      return element;
     }
+    element.src = "";
   }
   return null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MUSIC, crossfadeGains, durationsAgree, layerFor, sharedLoopLength } from "../src/music";
+import { MUSIC, crossfadeGains, driftCorrection, durationsAgree, layerFor, sharedLoopLength } from "../src/music";
 
 describe("which layer is playing", () => {
   const state = (over: Partial<Parameters<typeof layerFor>[0]> = {}) =>
@@ -72,5 +72,34 @@ describe("keeping the two in step", () => {
     // Worth complaining about: the two mixes are supposed to be the same piece at the same length, and this
     // is the one failure whose cause nobody would guess from its symptom.
     expect(durationsAgree(90, 96)).toBe(false);
+  });
+});
+
+describe("keeping two streams in step", () => {
+  // Two media elements keep their own clocks and pull apart, where two buffer sources could not. The score is
+  // streamed rather than decoded because eight and a half minutes of PCM measured 98MB a mix with the heap at
+  // 342MB after both -- survivable on a desktop, a good way to have a phone kill the tab. Drift is the price,
+  // and this is how it is paid. It is only ever audible during a crossfade, when both mixes are up at once.
+  it("leaves a pair that is already together alone", () => {
+    expect(driftCorrection(0)).toEqual({ rate: 1, snap: false });
+    expect(driftCorrection(MUSIC.syncNudge * 0.5)).toEqual({ rate: 1, snap: false });
+  });
+
+  it("slows a follower that has run ahead, and speeds up one that has fallen behind", () => {
+    expect(driftCorrection(0.05).rate).toBeLessThan(1);
+    expect(driftCorrection(-0.05).rate).toBeGreaterThan(1);
+  });
+
+  it("corrects gently enough to be inaudible", () => {
+    // A harder correction is a pitch wobble, which is a worse artefact than the drift it is fixing. Three parts
+    // in a thousand is about five cents.
+    expect(Math.abs(1 - driftCorrection(0.05).rate)).toBeLessThan(0.01);
+  });
+
+  it("snaps rather than nudges when the gap is a jump", () => {
+    // A backgrounded tab, or one mix wrapping its loop before the other. Nudging three parts in a thousand
+    // across half a track would take days.
+    expect(driftCorrection(3).snap).toBe(true);
+    expect(driftCorrection(-508).snap).toBe(true);
   });
 });

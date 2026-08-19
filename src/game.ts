@@ -2037,6 +2037,7 @@ export class OrekenoidGame {
       dying: this.dying,
     }));
     this.music.duck(this.paused || this.atlasOpen);
+    this.music.syncTick(dt);
     this.renderTouchActions(dt);
     // The wheel's teeth are drawn at world angles so they turn with the drone, and it only exists out in
     // the mine: inside a claim the paddle is dragged directly and a facing wheel has nothing to do.
