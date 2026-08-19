@@ -261,6 +261,19 @@
         </section>
       </section>
     </main>
+    <script>
+      // TEMPORARY local test harness: with ?breakformat=opus, every request for that extension is pointed at a
+      // file that does not exist, so the score's runtime fallback to the next format can be watched happening.
+      (() => {
+        const broken = new URLSearchParams(location.search).get("breakformat");
+        if (!broken) return;
+        const Native = window.Audio;
+        window.Audio = function (src) {
+          return new Native(typeof src === "string" && src.endsWith("." + broken) ? src + ".missing" : src);
+        };
+        window.Audio.prototype = Native.prototype;
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

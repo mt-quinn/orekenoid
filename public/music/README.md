@@ -88,15 +88,45 @@ ffmpeg -i public/music/brickbreak.opus -af astats=measure_perchannel=none -f nul
 a tone, because a rally is meant to be readable with the screen ignored and paddle-rail-rail-paddle is the shape
 being read. Set both to 1 to hear them identical.
 
+# Encode the fallbacks in stereo. This one cost hours.
+
+Safari &mdash; and therefore every WebKit browser, including DuckDuckGo on a Mac &mdash; refused the AAC copies
+outright: `readyState` 0, `MediaError.code` 4 (`MEDIA_ERR_SRC_NOT_SUPPORTED`), `play()` rejecting with
+`NotSupportedError`, before a single byte was loaded. The container was fine (`ftyp M4A`, `moov` ahead of
+`mdat`), the codec was fine (AAC-LC 48kHz), the MIME type was right, byte ranges worked, and
+`decodeAudioData` accepted output from the same encoder without complaint.
+
+The difference was that the music files were **mono** and the sound effect that decoded fine was **stereo**.
+`afinfo` reports "no channel layout" on both, and a mono AAC track with no channel configuration is something
+WebKit's media element pipeline will not touch, even though its decoder will. `-ac 2` on the encode is the whole
+fix.
+
+So: **always pass `-ac 2`**, even when the master is mono. It is one flag and it is the difference between a
+score and silence on every Apple browser.
+
+`src/music.ts` no longer trusts `canPlayType` either. It collects every format the browser claims, starts on the
+first, and listens for the element's `error` &mdash; which is the only honest signal &mdash; falling through to
+the next on failure. `canPlayType` answered "probably" for the file above.
+
 # Fallbacks, and the headers that make them work
 
 Every file here has an AAC twin, generated from the Opus master and committed alongside it. Regenerate them
 whenever a master changes:
 
 ```
-ffmpeg -y -i bgm-explore.opus -c:a aac -b:a 112k -movflags +faststart bgm-explore.m4a
-ffmpeg -y -i bgm-framed.opus  -c:a aac -b:a 144k -movflags +faststart bgm-framed.m4a
-ffmpeg -y -i brickbreak.opus  -c:a aac -b:a 160k -movflags +faststart brickbreak.m4a
+for f in bgm-explore bgm-framed; do
+  ffmpeg -y -i "$f.opus" -ac 2 -c:a aac        -b:a 160k -movflags +faststart "$f.m4a"
+  ffmpeg -y -i "$f.opus" -ac 2 -c:a libmp3lame -b:a 160k                      "$f.mp3"
+done
+for f in ballhitwallpaddle ballhitbrick brickbreak; do
+  ffmpeg -y -i "$f.opus" -ac 2 -c:a aac -b:a 160k -movflags +faststart "$f.m4a"
+done
+```
+
+Check the result before believing it:
+
+```
+afinfo bgm-explore.m4a    # must say "2 ch"
 ```
 
 **Encode both mixes in the same pass.** The identical-length assumption above applies to the fallbacks too, and

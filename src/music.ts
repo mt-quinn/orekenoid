@@ -185,10 +185,19 @@ const FORMATS: ReadonlyArray<{ extension: string; type: string }> = [
  * "maybe" is what Safari says about plenty of things it plays perfectly.
  */
 export function playableExtension(probe: (type: string) => string): string | null {
-  for (const format of FORMATS) {
-    if (probe(format.type) !== "") return format.extension;
-  }
-  return null;
+  return playableExtensions(probe)[0] ?? null;
+}
+
+/**
+ * Every format this browser will admit to, best first.
+ *
+ * A list rather than a single answer, because `canPlayType` is a claim and not a promise. Safari said "probably"
+ * about an AAC file its media element then refused outright with `MEDIA_ERR_SRC_NOT_SUPPORTED` -- the codec was
+ * fine, `decodeAudioData` accepted the same encoder's output, and the element would not touch it. A loader that
+ * takes the first claim and stops has no answer to that except silence.
+ */
+export function playableExtensions(probe: (type: string) => string): string[] {
+  return FORMATS.filter((format) => probe(format.type) !== "").map((format) => format.extension);
 }
 
 interface Voice {
@@ -261,6 +270,10 @@ export class Music {
   /** Which format was chosen, or why nothing was. Read by the settings panel and the audio gate. */
   format: string | null = null;
   refusal: string | null = null;
+
+  /** The formats this browser claims, and which one is being used. */
+  private candidates: string[] = [];
+  private formatIndex = 0;
 
   /** Whether anybody has asked for the score yet. It loads at deployment, not on the title screen. */
   get requested(): boolean {
@@ -371,46 +384,92 @@ export class Music {
     // effects -- which are buffer sources on an already-running context -- worked fine. A format chosen by
     // `canPlayType` rather than by trying downloads is what makes the synchronous path possible, and it also
     // stops a browser that cannot play Ogg from fetching four megabytes of it to find that out.
-    const extension = playableExtension((type) => document.createElement("audio").canPlayType(type));
-    if (!extension) {
+    this.candidates = playableExtensions((type) => document.createElement("audio").canPlayType(type));
+    if (!this.candidates.length) {
       this.refusal = "no playable format";
       console.warn("[music] this browser reports no playable audio format. The game runs silent.");
       return;
     }
-    this.format = extension;
-    const survey = openStream(MUSIC_SOURCES.survey, extension);
-    const framed = openStream(MUSIC_SOURCES.framed, extension);
-    // Silent to begin with, whichever layer is wanted, so a fade in is a fade rather than a cut.
-    survey.volume = 0;
-    framed.volume = 0;
-    this.voices = {
-      survey: { element: survey, level: 0, target: 0, advancing: false, lastAt: 0, refused: null, starting: false },
-      framed: { element: framed, level: 0, target: 0, advancing: false, lastAt: 0, refused: null, starting: false },
-    };
-    // Both, in the same turn, so they begin within a frame of each other and stay there for the session. The
-    // whole reason a transition can cross over cleanly is that neither playhead is ever moved.
-    const playing = Promise.all([this.begin(this.voices.survey), this.begin(this.voices.framed)]).then(() => undefined);
-    // Only now is it safe to wait for anything. The metadata is wanted for the length check, which is a
-    // diagnostic rather than a precondition -- if a file turns out to be missing the element errors and stays
-    // silent, which is the same outcome as before and does not need its own branch.
-    await Promise.all([whenReady(survey), whenReady(framed)]);
-    await playing;
-    if (!durationsAgree(survey.duration, framed.duration)) {
-      // Said out loud because the symptom -- two mixes gradually pulling apart -- looks like a playback bug and
-      // is actually a content one.
-      console.warn(
-        `[music] the two mixes are different lengths (${survey.duration.toFixed(3)}s and `
-        + `${framed.duration.toFixed(3)}s). They will pull apart, and the sync will keep snapping them back.`,
-      );
-    }
-    this.started = true;
+    this.formatIndex = 0;
+    this.open();
     this.beginStepping();
-    // Whatever the game asked for before the files arrived, now that there is something to play it with -- and
-    // the exploration mix if nothing has asked at all, which is the case on the title screen, where the frame
-    // loop that normally decides this is not running. The score's resting state is the mine.
+    // Whatever the game asked for before the files arrived, and the exploration mix if nothing has -- which is
+    // the case on the title screen, where the frame loop that normally decides this is not running.
     const wanted = this.layer ?? "survey";
     this.layer = null;
     this.setLayer(wanted);
+    if (!this.voices) return;
+    const { survey, framed } = this.voices;
+    await Promise.all([whenReady(survey.element), whenReady(framed.element)]);
+    this.started = true;
+    if (!durationsAgree(survey.element.duration, framed.element.duration)) {
+      // Said out loud because the symptom -- two mixes gradually pulling apart -- looks like a playback bug and
+      // is actually a content one.
+      console.warn(
+        `[music] the two mixes are different lengths (${survey.element.duration.toFixed(3)}s and `
+        + `${framed.element.duration.toFixed(3)}s). They will pull apart, and the sync will keep snapping them back.`,
+      );
+    }
+  }
+
+  /**
+   * Build and start both elements on the current candidate format.
+   *
+   * Synchronous through to `play()`, because it is called from a gesture and anything awaited on the way there
+   * spends it.
+   */
+  private open(): void {
+    const extension = this.candidates[this.formatIndex];
+    this.format = extension;
+    this.refusal = null;
+    this.teardown();
+    const survey = openStream(MUSIC_SOURCES.survey, extension);
+    const framed = openStream(MUSIC_SOURCES.framed, extension);
+    for (const element of [survey, framed]) {
+      // The only honest signal that a format does not work. `canPlayType` said "probably" about a file this
+      // fired on immediately.
+      element.addEventListener("error", () => this.demote(extension));
+    }
+    survey.volume = 0;
+    framed.volume = 0;
+    const voice = (element: HTMLAudioElement): Voice =>
+      ({ element, level: 0, target: 0, advancing: false, lastAt: 0, refused: null, starting: false });
+    this.voices = { survey: voice(survey), framed: voice(framed) };
+    // Both in the same turn, so they begin within a frame of each other and stay there for the session. The whole
+    // reason a transition can cross over cleanly is that neither playhead is ever moved.
+    void this.begin(this.voices.survey);
+    void this.begin(this.voices.framed);
+  }
+
+  /**
+   * This format will not load. Move to the next one the browser claimed.
+   *
+   * Both elements fire `error`, so the guard on the current candidate makes the second call a no-op rather than
+   * skipping a format that was never tried.
+   */
+  private demote(extension: string): void {
+    if (this.candidates[this.formatIndex] !== extension) return;
+    if (this.formatIndex + 1 >= this.candidates.length) {
+      this.refusal = `no format loaded (${extension} was the last)`;
+      console.warn(`[music] ${extension} would not load and there is nothing left to try.`);
+      return;
+    }
+    this.formatIndex += 1;
+    const next = this.candidates[this.formatIndex];
+    console.warn(`[music] ${extension} would not load in a media element. Falling back to ${next}.`);
+    const layer = this.layer;
+    this.open();
+    this.layer = null;
+    this.setLayer(layer ?? "survey");
+  }
+
+  private teardown(): void {
+    for (const voice of this.voices ? [this.voices.survey, this.voices.framed] : []) {
+      voice.element.pause();
+      voice.element.removeAttribute("src");
+      voice.element.remove();
+    }
+    this.voices = null;
   }
 
   /**
@@ -504,20 +563,16 @@ export class Music {
    * will happily keep, and the point of a retry is to stop believing anything the last attempt reported.
    */
   retry(): Promise<void> {
-    // Synchronous down to the `load` call, and `load` is synchronous down to its `play`. Anything awaited on the
-    // way there spends the click that asked for the retry, and the browser refuses the play -- which is the exact
-    // bug this button exists to recover from, reintroduced inside the recovery. Not `async`, for the same reason:
-    // an `async` method's body resumes in a microtask and this should not depend on that being generous.
-    for (const voice of this.voices ? [this.voices.survey, this.voices.framed] : []) {
-      voice.element.pause();
-      voice.element.removeAttribute("src");
-      voice.element.remove();
-    }
-    this.voices = null;
+    // Synchronous down to the `play`. Anything awaited on the way there spends the click that asked for the
+    // retry, and the browser refuses -- which is the exact bug this button exists to recover from, reintroduced
+    // inside the recovery. Not `async` for the same reason: an async body resumes in a microtask, and this
+    // should not rest on that being generous.
+    this.teardown();
     this.started = false;
     this.tried = false;
     this.format = null;
     this.refusal = null;
+    this.formatIndex = 0;
     const wanted = this.layer;
     this.layer = null;
     const loading = this.load();

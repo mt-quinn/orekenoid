@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MUSIC, crossfadeGains, driftCorrection, durationsAgree, layerFor, sharedLoopLength } from "../src/music";
+import { MUSIC, crossfadeGains, driftCorrection, durationsAgree, layerFor, playableExtension, playableExtensions, sharedLoopLength } from "../src/music";
 
 describe("which layer is playing", () => {
   const state = (over: Partial<Parameters<typeof layerFor>[0]> = {}) =>
@@ -103,5 +103,23 @@ describe("keeping two streams in step", () => {
     // across half a track would take days.
     expect(driftCorrection(3).snap).toBe(true);
     expect(driftCorrection(-508).snap).toBe(true);
+  });
+});
+
+describe("choosing a format", () => {
+  it("returns every format the browser claims, best first", () => {
+    // A list rather than one answer, because `canPlayType` is a claim and not a promise: Safari said "probably"
+    // about an AAC file whose media element then refused it outright with MEDIA_ERR_SRC_NOT_SUPPORTED.
+    const probe = (type: string) => (type.includes("ogg") ? "" : "probably");
+    expect(playableExtensions(probe)).toEqual(["m4a", "mp3", "wav"]);
+  });
+
+  it("is empty when the browser claims nothing", () => {
+    expect(playableExtensions(() => "")).toEqual([]);
+    expect(playableExtension(() => "")).toBeNull();
+  });
+
+  it("prefers opus when it is offered, because it is the smallest", () => {
+    expect(playableExtension(() => "maybe")).toBe("opus");
   });
 });
