@@ -131,10 +131,33 @@ export const MUSIC_SOURCES = {
   framed: "music/bgm-framed",
 } as const;
 
-// `m4a` sits second rather than last because it is the fallback that actually ships. Safari refuses Ogg,
-// so it fetches the Opus, fails to decode it, and then wants the next thing that works -- with `m4a` at
-// the end that was three dead round trips per file, on the platform least able to afford them.
-const EXTENSIONS = ["opus", "m4a", "ogg", "mp3", "wav"] as const;
+/**
+ * The formats to try, best first, each with the MIME type that asks a browser whether it can play it.
+ *
+ * The type strings are the point. `canPlayType` answers synchronously and without touching the network, which
+ * is what lets the score choose a format and start playing inside the click that started the expedition --
+ * see `load`. Guessing from the user agent instead would be both less accurate and a thing to maintain.
+ */
+const FORMATS: ReadonlyArray<{ extension: string; type: string }> = [
+  { extension: "opus", type: 'audio/ogg; codecs="opus"' },
+  { extension: "m4a", type: 'audio/mp4; codecs="mp4a.40.2"' },
+  { extension: "ogg", type: 'audio/ogg; codecs="vorbis"' },
+  { extension: "mp3", type: "audio/mpeg" },
+  { extension: "wav", type: "audio/wav" },
+];
+
+/**
+ * The first format this browser admits it can play, or null.
+ *
+ * `canPlayType` returns "probably", "maybe" or the empty string, and anything non-empty is worth attempting --
+ * "maybe" is what Safari says about plenty of things it plays perfectly.
+ */
+export function playableExtension(probe: (type: string) => string): string | null {
+  for (const format of FORMATS) {
+    if (probe(format.type) !== "") return format.extension;
+  }
+  return null;
+}
 
 interface Voice {
   element: HTMLAudioElement;
@@ -164,6 +187,9 @@ export class Music {
   private scale = 1;
   private started = false;
   private tried = false;
+  /** Which format was chosen, or why nothing was. Read by the settings panel. */
+  format: string | null = null;
+  refusal: string | null = null;
   private sinceSync = 0;
 
   constructor(private readonly context: () => AudioContext | null) {}
@@ -214,19 +240,23 @@ export class Music {
     this.tried = true;
     const context = this.context();
     if (!context) return;
-    const [survey, framed] = await Promise.all([
-      openStream(MUSIC_SOURCES.survey),
-      openStream(MUSIC_SOURCES.framed),
-    ]);
-    if (!survey || !framed) return;
-    if (!durationsAgree(survey.duration, framed.duration)) {
-      // Said out loud because the symptom -- two mixes gradually pulling apart -- looks like a playback bug and
-      // is actually a content one.
-      console.warn(
-        `[music] the two mixes are different lengths (${survey.duration.toFixed(3)}s and `
-        + `${framed.duration.toFixed(3)}s). They will pull apart, and the sync will keep snapping them back.`,
-      );
+    // Everything up to and including `play()` runs synchronously, inside the gesture that called this.
+    //
+    // The previous version set a source, awaited `loadedmetadata` over the network, and only then called
+    // `play()`. Chromium allows that once an AudioContext is running, and Safari does not: it requires the play
+    // to happen within the user gesture, so the score was silent on every WebKit browser while the sound
+    // effects -- which are buffer sources on an already-running context -- worked fine. A format chosen by
+    // `canPlayType` rather than by trying downloads is what makes the synchronous path possible, and it also
+    // stops a browser that cannot play Ogg from fetching four megabytes of it to find that out.
+    const extension = playableExtension((type) => document.createElement("audio").canPlayType(type));
+    if (!extension) {
+      this.refusal = "no playable format";
+      console.warn("[music] this browser reports no playable audio format. The game runs silent.");
+      return;
     }
+    this.format = extension;
+    const survey = openStream(MUSIC_SOURCES.survey, extension);
+    const framed = openStream(MUSIC_SOURCES.framed, extension);
     this.master = context.createGain();
     this.master.gain.value = this.masterTarget;
     this.master.connect(context.destination);
@@ -239,7 +269,20 @@ export class Music {
     this.voices = { survey: voice(survey), framed: voice(framed) };
     // Both told to play in the same turn, so they begin within a frame of each other and the sync only ever has
     // milliseconds to correct rather than seconds.
-    await Promise.all([tryPlay(survey), tryPlay(framed)]);
+    const playing = Promise.all([tryPlay(survey), tryPlay(framed)]);
+    // Only now is it safe to wait for anything. The metadata is wanted for the length check, which is a
+    // diagnostic rather than a precondition -- if a file turns out to be missing the element errors and stays
+    // silent, which is the same outcome as before and does not need its own branch.
+    await Promise.all([whenReady(survey), whenReady(framed)]);
+    await playing;
+    if (!durationsAgree(survey.duration, framed.duration)) {
+      // Said out loud because the symptom -- two mixes gradually pulling apart -- looks like a playback bug and
+      // is actually a content one.
+      console.warn(
+        `[music] the two mixes are different lengths (${survey.duration.toFixed(3)}s and `
+        + `${framed.duration.toFixed(3)}s). They will pull apart, and the sync will keep snapping them back.`,
+      );
+    }
     this.started = true;
     // Whatever the game asked for before the files arrived, now that there is something to play it with.
     const wanted = this.layer;
@@ -343,35 +386,35 @@ async function tryPlay(element: HTMLAudioElement): Promise<void> {
 }
 
 /**
- * A looping media element for the first extension of this basename that loads, or null.
+ * A looping media element for this basename, built and returned without waiting for anything.
  *
- * Attached to the document because some mobile browsers will not play a detached element, and hidden because it
- * has no business being a visible control.
+ * Synchronous on purpose: the caller has to be able to reach `play()` inside a user gesture, and any await on
+ * the way there spends it.
  */
-async function openStream(base: string): Promise<HTMLAudioElement | null> {
-  for (const extension of EXTENSIONS) {
-    const element = document.createElement("audio");
-    element.preload = "auto";
-    element.loop = true;
-    element.hidden = true;
-    element.src = `${base}.${extension}`;
-    const loaded = await new Promise<boolean>((resolve) => {
-      const done = (ok: boolean) => {
-        element.removeEventListener("loadedmetadata", onLoad);
-        element.removeEventListener("error", onError);
-        resolve(ok);
-      };
-      const onLoad = () => done(true);
-      const onError = () => done(false);
-      element.addEventListener("loadedmetadata", onLoad);
-      element.addEventListener("error", onError);
-      element.load();
-    });
-    if (loaded && Number.isFinite(element.duration) && element.duration > 0) {
-      document.body.appendChild(element);
-      return element;
-    }
-    element.src = "";
-  }
-  return null;
+function openStream(base: string, extension: string): HTMLAudioElement {
+  const element = document.createElement("audio");
+  element.preload = "auto";
+  element.loop = true;
+  element.hidden = true;
+  // Attached because some mobile browsers will not play a detached element, and hidden because it has no
+  // business being a visible control.
+  element.src = `${base}.${extension}`;
+  document.body.appendChild(element);
+  return element;
+}
+
+/** Settle when the element knows its own length, or when it has given up. Never rejects. */
+function whenReady(element: HTMLAudioElement): Promise<void> {
+  if (Number.isFinite(element.duration) && element.duration > 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      element.removeEventListener("loadedmetadata", done);
+      element.removeEventListener("error", done);
+      resolve();
+    };
+    element.addEventListener("loadedmetadata", done);
+    element.addEventListener("error", done);
+    // A file that neither loads nor errors must not hold the score's setup open forever.
+    setTimeout(done, 15000);
+  });
 }

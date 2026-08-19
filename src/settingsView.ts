@@ -42,7 +42,33 @@ const CHANNELS: readonly Channel[] = [
  * different intentions, and folding them together means a player who muted the music loses the level they had
  * chosen the moment they want it back.
  */
-export function audioPanelHtml(prefs: AudioPrefs): string {
+/**
+ * What the audio is actually doing, under the sliders.
+ *
+ * Here because "I cannot hear anything" is otherwise unanswerable without a console. Two things go wrong in
+ * practice and neither is visible from the game: a browser that cannot decode the format the files are in, and
+ * a score that was refused permission to start. Both now say so on the screen the player is already looking at
+ * when they go hunting for a volume control.
+ */
+export function audioStatusHtml(status: AudioStatus | null): string {
+  if (!status) return "";
+  const score = status.musicFormat
+    ? `SCORE · ${status.musicFormat.toUpperCase()}${status.musicPlaying ? "" : " · not playing"}`
+    : `SCORE · ${status.musicRefusal ?? "not started"}`;
+  const impacts = `IMPACTS · ${status.samplesLoaded} of ${status.samplesExpected}`;
+  const bad = !status.musicPlaying || status.samplesLoaded < status.samplesExpected;
+  return `<p class="audio-status${bad ? " warn" : ""}">${score}<i>·</i>${impacts}</p>`;
+}
+
+export interface AudioStatus {
+  musicFormat: string | null;
+  musicRefusal: string | null;
+  musicPlaying: boolean;
+  samplesLoaded: number;
+  samplesExpected: number;
+}
+
+export function audioPanelHtml(prefs: AudioPrefs, status: AudioStatus | null = null): string {
   return `
     <div class="settings-block audio-settings">
       <h4>AUDIO</h4>
@@ -61,6 +87,7 @@ export function audioPanelHtml(prefs: AudioPrefs): string {
           </li>`;
         }).join("")}
       </ul>
+      ${audioStatusHtml(status)}
     </div>`;
 }
 
@@ -227,6 +254,7 @@ export class SettingsSheet {
     private readonly rebinder: KeyRebinder,
     private readonly bindings: Bindings,
     private readonly touch: () => boolean,
+    private readonly status: () => AudioStatus | null,
   ) {
     this.open?.addEventListener("click", () => this.setOpen(true));
     this.close?.addEventListener("click", () => this.setOpen(false));
@@ -261,7 +289,7 @@ export class SettingsSheet {
 
   private render(): void {
     if (!this.body) return;
-    this.body.innerHTML = audioPanelHtml(this.settings.current)
+    this.body.innerHTML = audioPanelHtml(this.settings.current, this.status())
       + (this.touch() ? touchControlsHtml() : this.rebinder.html(this.bindings));
     wireAudioPanel(this.body, this.settings, () => this.render());
     if (!this.touch()) this.rebinder.wire(this.body, () => this.render());

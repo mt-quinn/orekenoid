@@ -1,6 +1,6 @@
 import type { Bindings } from "./bindings";
 import type { AudioSettings } from "./audioSettings";
-import { audioPanelHtml, touchControlsHtml, wireAudioPanel, type KeyRebinder } from "./settingsView";
+import { audioPanelHtml, touchControlsHtml, wireAudioPanel, type AudioStatus, type KeyRebinder } from "./settingsView";
 // The pause menu, and the countdown that gives the claim back.
 //
 // DOM rather than drawn in the world, deliberately, and the opposite call from the refit bay. The
@@ -62,6 +62,7 @@ export class PauseView {
   constructor(
     private readonly settings: AudioSettings,
     private readonly rebinder: KeyRebinder,
+    private readonly status: () => AudioStatus | null,
   ) {}
 
   bind(actions: PauseActions): void {
@@ -175,7 +176,7 @@ export class PauseView {
 
     this.body.innerHTML = `
       ${controls}
-      ${audioPanelHtml(this.settings.current)}
+      ${audioPanelHtml(this.settings.current, this.status())}
       ${rebinds}
       <div class="pause-actions">
         <button type="button" data-act="resume" class="pause-resume">

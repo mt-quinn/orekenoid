@@ -1994,3 +1994,14 @@ button { color: inherit; font: inherit; }
   width: 46px;
   height: 46px;
 }
+/* The audio's own state, under the sliders. "I cannot hear anything" is otherwise unanswerable without a
+   console, and the two things that actually go wrong -- an undecodable format and a score refused permission
+   to start -- are both invisible from inside the game. */
+.audio-status {
+  margin: 8px 0 0;
+  font-size: clamp(10px, 0.95cqw, 12px);
+  letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 42%, transparent);
+}
+.audio-status i { margin: 0 6px; font-style: normal; opacity: 0.5; }
+.audio-status.warn { color: color-mix(in srgb, #d98a52 78%, var(--ink, #f1eadb)); }

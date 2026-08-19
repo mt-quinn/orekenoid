@@ -36,7 +36,7 @@ import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Music, layerFor } from "./music";
 import { RAIL_VOICE } from "./sfx";
 import { AudioSettings } from "./audioSettings";
-import { KeyRebinder, SettingsSheet } from "./settingsView";
+import { KeyRebinder, SettingsSheet, type AudioStatus } from "./settingsView";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
 import { Effects } from "./effects";
 import { clamp, normalizeAngle } from "./maths";
@@ -260,7 +260,7 @@ export class OrekenoidGame {
       this.renderTutorial();
     },
   );
-  readonly pauseView = new PauseView(this.audioSettings, this.rebinder);
+  readonly pauseView = new PauseView(this.audioSettings, this.rebinder, () => this.audioStatus());
   readonly settingsSheet = new SettingsSheet(
     this.audioSettings,
     this.rebinder,
@@ -271,7 +271,19 @@ export class OrekenoidGame {
     // their thumb for a while. The title screen cannot: nobody has touched anything, so a phone was shown the key
     // list -- which the phone stylesheet then hides, leaving the sheet with no control reference at all.
     () => this.touch.used || this.shell?.dataset.layout === "phone",
+    () => this.audioStatus(),
   );
+
+  /** What the audio is actually doing, for the settings panel to state plainly. */
+  private audioStatus(): AudioStatus {
+    return {
+      musicFormat: this.music.format,
+      musicRefusal: this.music.refusal,
+      musicPlaying: this.music.diagnostics.playing,
+      samplesLoaded: this.audio.loadedSamples.length,
+      samplesExpected: 3,
+    };
+  }
   /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
   private forgeSelection: StationId | null = null;
   readonly atlasView = new AtlasView(this);

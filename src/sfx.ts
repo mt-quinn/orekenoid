@@ -21,6 +21,7 @@
 // would be a cycle whose symptom is a temporal-dead-zone crash at import depending on which module the
 // bundler reaches first. Fallbacks are named and looked up when one is needed.
 import type { SoundId } from "./audio";
+import { playableExtension } from "./music";
 
 /** The three recorded contacts. */
 export type SampleId = "paddleOrRail" | "brickHit" | "brickBroken";
@@ -149,10 +150,21 @@ export const SAMPLES: Record<SampleId, SampleSpec> = {
  */
 export const RAIL_VOICE = { gain: 0.62, rate: 1.12 } as const;
 
-// `m4a` sits second rather than last because it is the fallback that actually ships. Safari refuses Ogg,
-// so it fetches the Opus, fails to decode it, and then wants the next thing that works -- with `m4a` at
-// the end that was three dead round trips per file, on the platform least able to afford them.
+// `m4a` sits second rather than last because it is the fallback that actually ships: Safari refuses Ogg, so it
+// fetches the Opus, fails to decode it, and then wants the next thing that works.
 const EXTENSIONS = ["opus", "m4a", "ogg", "mp3", "wav"] as const;
+
+/**
+ * The extensions to try, with whatever the browser says it prefers moved to the front.
+ *
+ * `decodeAudioData` and `canPlayType` are not the same question -- the decoder accepts things no media element
+ * will play -- so this is a hint that reorders rather than a filter that excludes, and every format is still
+ * attempted. It exists to stop a browser that cannot handle Ogg from downloading it first to find that out.
+ */
+export function tryOrder(preferred: string | null): readonly string[] {
+  if (!preferred) return EXTENSIONS;
+  return [preferred, ...EXTENSIONS.filter((extension) => extension !== preferred)];
+}
 
 /** The gain a sample plays at before anything situational is applied to it. */
 export function baseGain(spec: SampleSpec): number {
@@ -295,9 +307,10 @@ export class SampleBank {
   }
 
   private async fetchAll(context: AudioContext): Promise<void> {
+    const preferred = playableExtension((type) => document.createElement("audio").canPlayType(type));
     await Promise.all(
       (Object.keys(SAMPLES) as SampleId[]).map(async (id) => {
-        const buffer = await decodeFirst(context, SAMPLES[id].path);
+        const buffer = await decodeFirst(context, SAMPLES[id].path, preferred);
         if (buffer) this.buffers.set(id, buffer);
       }),
     );
@@ -311,8 +324,8 @@ export class SampleBank {
  * file with `index.html` and a cheerful 200, so the only trustworthy test of "is this the audio" is whether the
  * decoder accepts it.
  */
-async function decodeFirst(context: AudioContext, base: string): Promise<AudioBuffer | null> {
-  for (const extension of EXTENSIONS) {
+async function decodeFirst(context: AudioContext, base: string, preferred: string | null): Promise<AudioBuffer | null> {
+  for (const extension of tryOrder(preferred)) {
     try {
       const response = await fetch(`${base}.${extension}`);
       if (!response.ok) continue;
