@@ -7,177 +7,260 @@
 <style>
   :root { color-scheme: dark; }
   body {
-    margin: 0; padding: 24px 18px 60px;
-    font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    margin: 0; padding: 20px 16px 60px;
+    font: 13px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
     background: #14140f; color: #f1eadb;
   }
-  h1 { font-size: 17px; letter-spacing: .14em; margin: 0 0 4px; }
-  p.lead { margin: 0 0 18px; color: #9a927d; font-size: 13px; max-width: 62ch; }
-  button {
-    font: inherit; font-weight: 700; letter-spacing: .1em;
-    padding: 14px 22px; min-height: 48px;
-    color: #17150f; background: #d98a52; border: 0; border-radius: 3px; cursor: pointer;
+  h1 { font-size: 16px; letter-spacing: .14em; margin: 0 0 4px; }
+  h2 {
+    font-size: 12px; letter-spacing: .16em; margin: 22px 0 6px;
+    color: #d98a52; border-bottom: 1px solid #3a352a; padding-bottom: 4px;
   }
-  ol { margin: 22px 0 0; padding: 0 0 0 26px; }
-  li { margin: 0 0 12px; }
-  .verdict { font-weight: 700; }
+  p.lead { margin: 0 0 14px; color: #9a927d; max-width: 74ch; }
+  .row { margin: 0 0 3px; white-space: pre-wrap; word-break: break-word; }
   .pass { color: #7fbf7f; }
   .fail { color: #e06c4f; }
   .info { color: #d9c48a; }
-  .note { display: block; color: #9a927d; font-size: 13px; word-break: break-word; }
+  .dim { color: #8b8672; }
+  button {
+    font: inherit; font-weight: 700; letter-spacing: .08em;
+    padding: 12px 18px; min-height: 46px; margin: 0 8px 8px 0;
+    color: #17150f; background: #d98a52; border: 0; border-radius: 3px; cursor: pointer;
+  }
+  button.alt { color: #f1eadb; background: none; border: 1px solid #6b6455; }
 </style>
 </head>
 <body>
 <h1>OREKANOID &middot; AUDIO TEST</h1>
 <p class="lead">
-  None of this is the game. It asks your browser, one question at a time, what it will actually do with the
-  score's files &mdash; because diagnosing this from a different browser got the wrong answer three times.
-  Press the button, listen, wait for DONE, and screenshot the list.
+  Every question is asked two ways so the answers can be compared: over the network and from bytes already in
+  memory, with a known-good file as a control. Screenshot the whole thing, including the dim lines.
 </p>
 <button id="run" type="button">RUN THE TEST</button>
-<ol id="out"></ol>
+<button id="killsw" type="button" class="alt">UNREGISTER SERVICE WORKER, THEN RE-RUN</button>
+<div id="out"></div>
 <script>
+/*
+ * Collected from the top of the file, before anything is tested, because these fire once and are gone.
+ *
+ * A Content-Security-Policy that forbids media is invisible to script -- a header-delivered policy cannot be
+ * read back -- but blocking one fires `securitypolicyviolation`, and that event names the directive. An element
+ * that fails because a policy refused the request looks identical to one that failed because the file is wrong,
+ * until this line is on the page.
+ */
+const violations = [];
+const thrown = [];
+document.addEventListener("securitypolicyviolation", (event) => {
+  violations.push(`${event.violatedDirective} blocked ${event.blockedURI} (policy: ${event.originalPolicy || "?"})`);
+});
+window.addEventListener("error", (event) => {
+  if (event.target && event.target.tagName === "AUDIO") {
+    thrown.push(`audio element error on ${event.target.currentSrc || event.target.src || "(no src)"}`);
+  } else if (event.message) {
+    thrown.push(`${event.message} @ ${event.filename}:${event.lineno}`);
+  }
+}, true);
+window.addEventListener("unhandledrejection", (event) => {
+  thrown.push(`unhandled rejection: ${(event.reason && (event.reason.message || event.reason.name)) || event.reason}`);
+});
+
 const out = document.getElementById("out");
-const line = (name, verdict, cls, note) => {
-  const li = document.createElement("li");
-  li.innerHTML = `${name} &mdash; <span class="verdict ${cls}">${verdict}</span>`
-    + (note ? `<span class="note">${note}</span>` : "");
-  out.append(li);
-  return li;
+const head = (text) => { const h = document.createElement("h2"); h.textContent = text; out.append(h); };
+const row = (text, cls = "dim") => {
+  const d = document.createElement("div");
+  d.className = "row " + cls;
+  d.textContent = text;
+  out.append(d);
+  return d;
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const make = (src) => {
-  const a = new Audio(src);
-  a.loop = true;
-  a.preload = "auto";
-  document.body.append(a);
-  return a;
-};
+
+const NETWORK = ["EMPTY", "IDLE", "LOADING", "NO_SOURCE"];
+const ERRORS = { 1: "ABORTED", 2: "NETWORK", 3: "DECODE", 4: "SRC_NOT_SUPPORTED" };
 
 /**
- * Play an element and report whether its clock actually moved.
+ * Attach an element to a source and report everything it does about it.
  *
- * The distinction the game was missing for an hour: `paused === false` means it was told to play, not that it
- * is decoding. A stalled element reports itself unpaused, at volume, with no error.
+ * The event log is the point. `readyState 0` with `error 4` says the element gave up; the order of events before
+ * that says whether it ever asked the network for anything, which is the difference between a file it will not
+ * accept and a request it never made.
  */
-async function advances(el, seconds) {
+async function probeElement(label, src, seconds = 3) {
+  const el = new Audio();
+  el.preload = "auto";
+  const log = [];
+  const names = ["loadstart", "progress", "suspend", "stalled", "waiting", "loadedmetadata",
+                 "loadeddata", "canplay", "playing", "abort", "emptied", "error"];
+  for (const name of names) el.addEventListener(name, () => log.push(name));
+  document.body.append(el);
+  el.src = src;
   let refused = null;
   try { await el.play(); } catch (e) { refused = (e && e.name) || String(e); }
   const from = el.currentTime;
   await wait(seconds * 1000);
   const moved = el.currentTime - from;
-  return {
-    ok: !refused && moved > seconds * 0.4,
-    why: `paused=${el.paused} readyState=${el.readyState} moved ${moved.toFixed(2)}s of ${seconds}s`
-      + (refused ? ` play() REFUSED: ${refused}` : "")
-      + (el.error ? ` error=${el.error.code}` : ""),
-  };
+  // "It decoded and the clock ran", not "it ran for the whole window". A 1.18s file measured over three seconds
+  // finishes and reads as a failure otherwise, which is a false alarm in the one row that is meant to be the
+  // control.
+  const ok = !refused && !el.error && el.readyState >= 3 && moved > 0.15;
+  row(`${label} — ${ok ? "PLAYS" : "FAILS"}`, ok ? "pass" : "fail");
+  row(`   networkState=${NETWORK[el.networkState]} readyState=${el.readyState} moved=${moved.toFixed(2)}s`
+    + ` paused=${el.paused} muted=${el.muted} volume=${el.volume}`);
+  row(`   error=${el.error ? `${el.error.code} ${ERRORS[el.error.code] || "?"}` : "none"}`
+    + `${el.error && el.error.message ? ` msg="${el.error.message}"` : ""}`
+    + `${refused ? ` play()=${refused}` : ""}`);
+  // Truncated: a data: URI is tens of thousands of characters and would bury everything else in the screenshot.
+  const resolved = el.currentSrc || "(never resolved a source)";
+  row(`   resolved: ${resolved.length > 90 ? resolved.slice(0, 90) + `… (${resolved.length} chars)` : resolved}`);
+  row(`   events: ${log.join(" ") || "(NONE FIRED AT ALL — the element never even tried)"}`,
+    log.length ? "dim" : "fail");
+  el.pause();
+  el.removeAttribute("src");
+  el.remove();
+  return ok;
 }
 
-document.getElementById("run").addEventListener("click", async () => {
+/** A half-second sine as a WAV, built here. The control: if this fails, no media element works in this browser. */
+function toneWavBytes() {
+  const rate = 22050, secs = 0.5, n = Math.floor(rate * secs);
+  const bytes = new Uint8Array(44 + n * 2);
+  const view = new DataView(bytes.buffer);
+  const ascii = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  ascii(0, "RIFF"); view.setUint32(4, 36 + n * 2, true); ascii(8, "WAVEfmt ");
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  ascii(36, "data"); view.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) view.setInt16(44 + i * 2, Math.sin((i / rate) * 440 * 2 * Math.PI) * 8000, true);
+  return bytes;
+}
+
+const FILES = ["bgm-explore.m4a", "bgm-explore.mp3", "brickbreak.m4a"];
+
+async function runAll() {
   const button = document.getElementById("run");
   button.disabled = true;
   button.textContent = "RUNNING…";
   out.innerHTML = "";
 
-  // 1. What it claims it can play.
+  head("ENVIRONMENT");
+  row(navigator.userAgent);
+  row(`page: ${location.href}`);
+  row(`origin: ${location.origin} — a media URL resolves against this, and the site redirects apex to www`);
+  if (navigator.getAutoplayPolicy) {
+    try { row(`getAutoplayPolicy(mediaelement): ${navigator.getAutoplayPolicy("mediaelement")}`); } catch { /* not here */ }
+  }
+  row(`audioSession: ${navigator.audioSession ? navigator.audioSession.type : "(not exposed)"}`);
+  const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
+  row(`service worker controlling this page: ${controller ? "YES — " + controller.scriptURL : "no"}`,
+    controller ? "info" : "dim");
+  if (navigator.serviceWorker) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    row(`registrations: ${regs.length}`);
+  }
+  const caches_ = typeof caches !== "undefined" ? await caches.keys() : [];
+  row(`caches: ${caches_.join(", ") || "(none)"}`);
   const probe = document.createElement("audio");
-  const types = {
-    'audio/ogg; codecs="opus"': "opus",
-    'audio/mp4; codecs="mp4a.40.2"': "m4a (AAC)",
-    "audio/mpeg": "mp3",
-  };
-  for (const [type, label] of Object.entries(types)) {
-    const answer = probe.canPlayType(type);
-    line(`canPlayType ${label}`, answer || "(empty = no)", answer ? "pass" : "fail");
+  row(`canPlayType — opus:"${probe.canPlayType('audio/ogg; codecs="opus"')}"`
+    + ` m4a:"${probe.canPlayType('audio/mp4; codecs="mp4a.40.2"')}"`
+    + ` mp3:"${probe.canPlayType("audio/mpeg")}"`
+    + ` wav:"${probe.canPlayType("audio/wav")}"`);
+  if (navigator.mediaCapabilities) {
+    for (const type of ['audio/mp4; codecs="mp4a.40.2"', "audio/mpeg"]) {
+      try {
+        const info = await navigator.mediaCapabilities.decodingInfo({ type: "file", audio: { contentType: type } });
+        row(`mediaCapabilities file ${type} — supported=${info.supported} smooth=${info.smooth}`);
+      } catch (e) { row(`mediaCapabilities ${type} — threw ${(e && e.message) || e}`); }
+    }
   }
 
-  const pick = probe.canPlayType('audio/ogg; codecs="opus"') ? "opus"
-    : probe.canPlayType('audio/mp4; codecs="mp4a.40.2"') ? "m4a" : "mp3";
-  line("format the game would choose", pick, "info");
+  head("CONTROL — DOES ANY MEDIA ELEMENT WORK HERE?");
+  row("A half-second 440Hz WAV built in this page. Nothing to do with the game's files or the network.");
+  const bytes = toneWavBytes();
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  await probeElement("data: URI WAV", "data:audio/wav;base64," + btoa(binary), 1);
+  const controlBlob = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+  await probeElement("blob: URL WAV", controlBlob, 1);
+  URL.revokeObjectURL(controlBlob);
 
-  // 2. Is volume settable at all? Read-only volume is an iOS behaviour and would explain silence exactly.
-  const first = make(`music/bgm-explore.${pick}`);
-  first.volume = 0.5;
-  const settable = Math.abs(first.volume - 0.5) < 0.001;
-  line("element.volume is settable", settable ? "yes" : `NO (stayed ${first.volume})`,
-    settable ? "pass" : "fail",
-    settable ? "" : "If this fails, nothing the game does to the level has any effect.");
+  head("THE GAME'S FILES, OVER THE NETWORK");
+  for (const file of FILES) await probeElement(`element <- /music/${file}`, `music/${file}`);
 
-  // 3. ONE stream, which is what the project whose music works does.
-  first.volume = 0.45;
-  const one = await advances(first, 3);
-  line("ONE stream plays and advances", one.ok ? "yes" : "NO", one.ok ? "pass" : "fail",
-    one.why + " &middot; <b>you should be hearing music right now</b>");
+  head("THE SAME FILES, FROM BYTES ALREADY IN MEMORY");
+  row("If these play and the ones above do not, the files are fine and the fetching is the problem.");
+  for (const file of FILES) {
+    try {
+      const response = await fetch(`music/${file}`);
+      const type = response.headers.get("content-type") || "";
+      const buffer = await response.arrayBuffer();
+      row(`/music/${file} — HTTP ${response.status} type="${type}" bytes=${buffer.byteLength}`,
+        response.ok ? "dim" : "fail");
+      const url = URL.createObjectURL(new Blob([buffer], { type: type.split(";")[0] }));
+      await probeElement(`element <- blob of ${file}`, url);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      row(`/music/${file} — fetch threw ${(e && e.message) || e}`, "fail");
+    }
+  }
 
-  // 4. TWO streams at once, which is what the game did.
-  const second = make(`music/bgm-framed.${pick}`);
-  second.volume = 0.45;
-  const two = await advances(second, 3);
-  const both = two.ok && !first.paused && first.currentTime > 0;
-  line("TWO streams at once, both advancing", both ? "yes" : "NO", both ? "pass" : "fail",
-    `second: ${two.why} &middot; first still going: ${!first.paused}`
-    + " &middot; <b>you should be hearing both mixes together</b>");
+  head("WHAT THE SERVER SAYS TO A RANGE REQUEST");
+  row("A media element asks for byte ranges. A plain fetch does not, which is why the two can disagree.");
+  for (const file of FILES) {
+    try {
+      const response = await fetch(`music/${file}`, { headers: { Range: "bytes=0-1023" } });
+      row(`${file} — HTTP ${response.status}`
+        + ` content-range="${response.headers.get("content-range") || "(none)"}"`
+        + ` accept-ranges="${response.headers.get("accept-ranges") || "(none)"}"`
+        + ` type="${response.headers.get("content-type") || "(none)"}"`,
+        response.status === 206 ? "pass" : "fail");
+    } catch (e) { row(`${file} — range fetch threw ${(e && e.message) || e}`, "fail"); }
+  }
 
-  // 5. Does starting the second one silence the first? A one-at-a-time policy shows up here.
-  first.volume = 0.45;
-  second.volume = 0;
-  await wait(2000);
-  const firstAlive = !first.paused && first.currentTime > 0;
-  line("first stream survived the second starting", firstAlive ? "yes" : "NO", firstAlive ? "pass" : "fail",
-    `first: paused=${first.paused} at ${first.currentTime.toFixed(1)}s`
-    + " &middot; <b>you should be hearing one mix again</b>");
-  first.pause();
-  second.pause();
-
-  // 6. Web Audio, which is the path the sound effects take and which is known to work.
-  let ctx = null;
+  head("WEB AUDIO — THE PATH THE SOUND EFFECTS TAKE");
   try {
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (ctx.state === "suspended") await ctx.resume();
-    line("AudioContext state", ctx.state, ctx.state === "running" ? "pass" : "fail");
+    row(`AudioContext state=${ctx.state} sampleRate=${ctx.sampleRate}`, ctx.state === "running" ? "pass" : "fail");
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     gain.gain.value = 0.08;
-    osc.frequency.value = 440;
     osc.connect(gain).connect(ctx.destination);
     osc.start();
-    osc.stop(ctx.currentTime + 0.5);
-    await wait(700);
-    line("Web Audio beep", "listen", "info", "<b>A short tone should have sounded.</b> The effects use this path.");
-  } catch (e) {
-    line("AudioContext", "FAILED: " + ((e && e.message) || e), "fail");
-  }
-
-  // 7. decodeAudioData, which is how the impacts load.
-  if (ctx) {
-    for (const ext of ["opus", "m4a"]) {
+    osc.stop(ctx.currentTime + 0.4);
+    await wait(600);
+    row("a 440Hz tone should have sounded just now", "info");
+    for (const file of FILES) {
       try {
-        const buffer = await ctx.decodeAudioData(await (await fetch(`music/brickbreak.${ext}`)).arrayBuffer());
-        line(`decodeAudioData brickbreak.${ext}`, `ok, ${buffer.duration.toFixed(2)}s`, "pass");
-      } catch (e) {
-        line(`decodeAudioData brickbreak.${ext}`, "failed", ext === "opus" ? "info" : "fail",
-          (e && (e.message || e.name)) || String(e));
-      }
+        const buffer = await ctx.decodeAudioData(await (await fetch(`music/${file}`)).arrayBuffer());
+        row(`decodeAudioData ${file} — ok ${buffer.duration.toFixed(2)}s ${buffer.numberOfChannels}ch`, "pass");
+      } catch (e) { row(`decodeAudioData ${file} — FAILED ${(e && (e.message || e.name)) || e}`, "fail"); }
     }
+  } catch (e) { row(`AudioContext threw ${(e && e.message) || e}`, "fail"); }
 
-    // 8. The routing the game used to do, and which I removed on suspicion. Confirms or clears that guess.
-    try {
-      const routed = make(`music/bgm-explore.${pick}`);
-      routed.volume = 1;
-      ctx.createMediaElementSource(routed).connect(ctx.destination);
-      const result = await advances(routed, 3);
-      line("createMediaElementSource routed to output", "listen", "info",
-        result.why + " &middot; <b>if the clock advanced but you heard nothing, that was the bug I guessed at</b>");
-      routed.pause();
-    } catch (e) {
-      line("createMediaElementSource", "threw: " + ((e && e.message) || e), "fail");
-    }
-  }
+  head("ANYTHING THE BROWSER REFUSED OR THREW");
+  if (violations.length) for (const v of violations) row("CSP: " + v, "fail");
+  else row("no Content-Security-Policy violations reported");
+  if (thrown.length) for (const t of thrown) row("thrown: " + t, "fail");
+  else row("nothing thrown");
 
-  line("DONE", "screenshot this list", "info", navigator.userAgent);
+  head("DONE");
+  row("Screenshot everything above, dim lines included.", "info");
   button.textContent = "RUN AGAIN";
   button.disabled = false;
+}
+
+document.getElementById("run").addEventListener("click", runAll);
+document.getElementById("killsw").addEventListener("click", async () => {
+  if (navigator.serviceWorker) {
+    for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister();
+  }
+  if (typeof caches !== "undefined") {
+    for (const key of await caches.keys()) await caches.delete(key);
+  }
+  out.innerHTML = "";
+  row("service workers unregistered and caches deleted. Re-running without them.", "info");
+  await runAll();
 });
 </script>
 </body>
