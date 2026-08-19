@@ -1954,7 +1954,31 @@ export class OrekenoidGame {
     this.effects.update(Math.min(0.033, dt));
     updateFeatureMarks(this.featureMarks, this.time);
     // Chasing is suppressed inside an arena: the camera is pinned to the board.
-    const finished = this.camera.update(dt, this.arena ? null : { x: this.player.x, y: this.player.y });
+    // The camera looks where the frame is going.
+    //
+    // Centred on the drone, half the survey frame sat off the right edge of a phone -- the player was
+    // choosing rock they could not see. Leading toward the frame puts it on the glass, and it reads the way
+    // a camera should: it looks where you are aiming rather than at your feet.
+    //
+    // Capped as a fraction of the screen so the drone never leaves the middle, because out here things
+    // arrive from behind and a camera that abandons the machine to show its frame trades one blindness for
+    // another. Desktop is unchanged: nothing has ever failed to fit there.
+    const frame = this.chassis.frame;
+    this.camera.frameSpan = Math.max(frame.width, frame.depth);
+    // Worked out in screen pixels and then converted back, because every constraint here is about the
+    // screen: how much of the frame is on it, and how close to the edge the drone gets. Reasoning in world
+    // pixels meant the cap moved with the zoom and stopped meaning what it said.
+    const zoom = Math.max(0.2, this.camera.zoom);
+    const leadOnScreen = view.layout === "desktop"
+      ? 0
+      : Math.min(frame.depth * CELL * zoom * 0.45, view.width * 0.3);
+    const lead = leadOnScreen / zoom;
+    const ahead = this.player.heading - Math.PI / 2;
+    const chase = {
+      x: this.player.x + Math.cos(ahead) * lead,
+      y: this.player.y + Math.sin(ahead) * lead,
+    };
+    const finished = this.camera.update(dt, this.arena ? null : chase);
     if (finished) {
       if (finished.exit) this.completeArenaExit();
       else this.showToast("LOCAL PLAYFIELD STABILIZED");
@@ -3038,7 +3062,14 @@ export class OrekenoidGame {
     // rock and the paddle across the board, which is the difference between a prompt that belongs
     // to a thing and one that merely appeared near it once.
     this.renderTutorial();
-    this.coach.update(step, this.camera.rotation, this.camera.zoom);
+    // The subject's position on the glass, so the plate can be kept on it.
+    const anchor = this.coach.prompt;
+    this.coach.update(
+      step,
+      this.camera.rotation,
+      this.camera.zoom,
+      anchor ? this.camera.worldToScreen(anchor.x, anchor.y) : null,
+    );
     if (this.tutorialFadeTimer > 0) {
       this.tutorialFadeTimer = Math.max(0, this.tutorialFadeTimer - step);
       if (this.tutorialFadeTimer === 0) {

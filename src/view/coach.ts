@@ -21,6 +21,7 @@
 
 import { Container, Graphics, Text } from "pixi.js";
 import { PALETTE } from "../config";
+import { view } from "../viewport";
 
 const BRASS = PALETTE.machine;
 const DIM = 0x9aa3a6;
@@ -129,7 +130,21 @@ export class Coach {
    * the same size on screen however far the camera has pulled back. Without this it shrinks with
    * the board, and on a phone -- where the zoom does the most work -- it shrinks to illegible.
    */
-  update(dt: number, cameraRotation: number, cameraZoom = 1): void {
+  update(
+    dt: number,
+    cameraRotation: number,
+    cameraZoom = 1,
+    /**
+     * Where the subject is on the glass, if the caller can say.
+     *
+     * Given, the plate is kept inside the viewport. The tag is laid out in screen units about a subject
+     * that lives in the world, so on a narrow screen a subject near an edge hung its plate off it -- the
+     * opening prompt read "THE DRONE / is the way out." on a phone, with the first words of both lines
+     * cut off the left edge. Choosing the roomier side is not enough on its own: a plate wider than the
+     * room on either side overflows whichever way it faces.
+     */
+    subjectOnScreen: { x: number; y: number } | null = null,
+  ): void {
     this.opacity += (this.wanted - this.opacity) * Math.min(1, dt * 7);
     if (this.opacity < 0.01 && this.wanted === 0) {
       this.container.visible = false;
@@ -165,11 +180,28 @@ export class Coach {
     // arrives where the player is already looking, not in a corner where they are not.
     const shove = this.refuse > 0 ? Math.sin(this.refuse * 30) * 6 * this.refuse : 0;
     const left = side > 0 ? 66 : -66 - width;
-    const x = left + shove * side + (1 - this.opacity) * 14 * side;
+    let x = left + shove * side + (1 - this.opacity) * 14 * side;
     // Hung below the subject instead of above it when there is not room above -- which on a phone
     // with a Dynamic Island means the top of the screen plus the inset, not the top of the screen.
-    const y = this.flip ? 34 + breathe : -74 + breathe;
+    let y = this.flip ? 34 + breathe : -74 + breathe;
     const edge = this.refuse > 0.02 ? PALETTE.danger : BRASS;
+
+    // Nudged back on screen. The container cancels the camera's rotation and zoom, so local units here are
+    // screen pixels and the plate's screen rect is just the subject plus this offset -- which makes the
+    // correction a subtraction rather than a projection.
+    if (subjectOnScreen) {
+      const margin = 8;
+      const minX = view.safe.left + margin;
+      const maxX = view.width - view.safe.right - margin;
+      const minY = view.safe.top + margin;
+      const maxY = view.height - view.safe.bottom - margin;
+      const left = subjectOnScreen.x + x;
+      const top = subjectOnScreen.y + y;
+      if (left < minX) x += minX - left;
+      else if (left + width > maxX) x -= left + width - maxX;
+      if (top < minY) y += minY - top;
+      else if (top + height > maxY) y -= top + height - maxY;
+    }
 
     this.goalText.position.set(x + padding, y + padding);
     this.whyText.position.set(x + padding, y + padding + 22);

@@ -758,15 +758,23 @@ button { color: inherit; font: inherit; }
 .shell[data-layout="phone"] .health-read strong { font-size: 20px; }
 .shell[data-layout="phone"] .health-read small { font-size: 9px; }
 .shell[data-layout="phone"] .health-bar { width: 54px; }
-/* Status, not instruction: `hintText` already stops naming keys on a touchscreen. Kept on the line under
-   the readouts, which is the last row of the top strip and still nowhere near a thumb. */
+/* Status, not instruction: `hintText` already stops naming keys on a touchscreen. It belongs on the line
+   under the readouts, and it gets there by being a row of the same grid rather than by being taken out of
+   the flow -- absolutely positioned against `top: 100%` it resolved against the wrong box and floated out
+   into the middle-right of the screen, next to nothing. */
+.shell[data-layout="phone"] .stakes { order: 1; }
 .shell[data-layout="phone"] .hints {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 4px;
+  position: static;
+  order: 2;
+  /* The base rule puts it in column 2. The phone grid has one column, so that placed it in an implicit
+     second one and stranded the text out to the right of everything. */
+  grid-column: 1;
+  justify-self: start;
+  padding: 3px 7px;
   font-size: 9px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .shell[data-layout="phone"] .cargo { grid-column: 1 / -1; }
 

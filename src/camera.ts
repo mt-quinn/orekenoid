@@ -22,11 +22,29 @@ import type { Container } from "pixi.js";
  * Referenced against the *design* width rather than a fixed number so this stays correct if the
  * desktop framing is ever re-authored.
  */
-export function surveyZoom(): number {
+export function surveyZoom(frameSpan = 0): number {
   if (view.layout === "desktop") return 1;
   // Never zoom in past the authored scale: on a tablet, wider than the design width, the world
   // should look the way it was drawn rather than magnified.
-  return Math.min(1, view.width / DESIGN_WIDTH * 1.55);
+  const pulled = Math.min(1, view.width / DESIGN_WIDTH * 1.55);
+  if (frameSpan <= 0) return pulled;
+  // And never so far in that the survey frame will not fit on the glass.
+  //
+  // The frame is the thing the player is choosing, and it was running off the right edge: an eleven-cell
+  // frame measured 218 pixels against a 390-pixel screen and its far corners landed at 413. Deeper chassis
+  // are worse -- nineteen cells is 376 pixels, which fits only if it is almost perfectly centred.
+  //
+  // Measured against the *smaller* viewport dimension because the frame turns: what is depth across the
+  // screen when the drone faces east is width down it when the drone faces north, so the binding
+  // constraint is the longer side of the frame against the shorter side of the screen.
+  //
+  // Into 82% of that dimension rather than all of it, because a frame that exactly fills the screen can
+  // only be shown by pinning the drone to the edge -- and out here things arrive from behind, so a camera
+  // that abandons the machine to show its frame trades one blindness for another. The remainder is the room
+  // the lead needs to keep the drone off the edge.
+  const shorter = Math.min(view.width, view.height);
+  const fits = shorter * 0.82 / ((frameSpan + 2) * CELL);
+  return Math.min(pulled, fits);
 }
 
 /**
@@ -69,6 +87,13 @@ export interface CameraTransition {
 
 export class Camera {
   focus: Vec2;
+  /**
+   * The longer side of the survey frame in cells, so the zoom can guarantee it fits.
+   *
+   * Held here rather than passed in per call because the camera settles toward its zoom over time and both
+   * the settling and the jump have to agree about what it is settling to.
+   */
+  frameSpan = 0;
   rotation = 0;
   /**
    * World pixels per screen pixel, inverted: 1 is the authored scale, below 1 pulls back.
@@ -117,7 +142,7 @@ export class Camera {
   /** Snap to a position, abandoning any transition. Used on death and on load. */
   jumpTo(focus: Vec2): void {
     this.focus = { ...focus };
-    this.zoom = surveyZoom();
+    this.zoom = surveyZoom(this.frameSpan);
     this.transition = null;
   }
 
@@ -151,7 +176,7 @@ export class Camera {
       this.focus.x += (chase.x - this.focus.x) * response;
       this.focus.y += (chase.y - this.focus.y) * response;
       this.rotation += (0 - this.rotation) * response;
-      this.zoom += (surveyZoom() - this.zoom) * response;
+      this.zoom += (surveyZoom(this.frameSpan) - this.zoom) * response;
     }
     return null;
   }
