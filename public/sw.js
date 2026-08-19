@@ -23,9 +23,10 @@
 //
 // Saves live in localStorage and are not touched here.
 
-// Bumping this is the whole release mechanism: `activate` deletes every other generation. Bumped for the
-// audio, which the previous version had pinned under the wrong strategy.
-const CACHE = "orekenoid-v2";
+// Bumping this is the whole release mechanism: `activate` deletes every other generation. Bumped again for the
+// audio: stale-while-revalidate serves the cached copy first, which meant a browser that had already stored the
+// mono AAC kept being handed the one file WebKit refuses, for at least one more visit, after it was fixed.
+const CACHE = "orekenoid-v3";
 /** Stable, unhashed URLs, where a cached copy is a guess about freshness rather than a certainty. */
 const REVALIDATE = "/music/";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];

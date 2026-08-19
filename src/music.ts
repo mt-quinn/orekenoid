@@ -158,6 +158,14 @@ export function driftCorrection(drift: number): { rate: number; snap: boolean } 
  * files arrive in works without anything here changing. Ogg leads because it is the smallest at a given
  * quality; Safari refuses it, which is what the fallbacks are for.
  */
+/**
+ * The formats actually committed under `public/music/`.
+ *
+ * The browser's opinion is not the only filter: Safari happily claims `wav`, and chasing a `.wav` this project
+ * has never shipped turns a fallback chain into a march through 404s that ends by announcing that nothing works.
+ */
+export const SHIPPED_FORMATS = ["opus", "m4a", "mp3"] as const;
+
 export const MUSIC_SOURCES = {
   survey: "music/bgm-explore",
   framed: "music/bgm-framed",
@@ -197,7 +205,10 @@ export function playableExtension(probe: (type: string) => string): string | nul
  * takes the first claim and stops has no answer to that except silence.
  */
 export function playableExtensions(probe: (type: string) => string): string[] {
-  return FORMATS.filter((format) => probe(format.type) !== "").map((format) => format.extension);
+  return FORMATS
+    .filter((format) => (SHIPPED_FORMATS as readonly string[]).includes(format.extension))
+    .filter((format) => probe(format.type) !== "")
+    .map((format) => format.extension);
 }
 
 interface Voice {
@@ -274,6 +285,15 @@ export class Music {
   /** The formats this browser claims, and which one is being used. */
   private candidates: string[] = [];
   private formatIndex = 0;
+  /**
+   * Which set of elements is the live one.
+   *
+   * Tearing an element down removes its `src`, and a media element answers that with an `error` -- which the
+   * fallback read as "this format failed" and used to demote again, so one genuine failure cascaded through
+   * every remaining format in a single turn and reported that nothing worked. Errors from a generation that has
+   * already been replaced are not news.
+   */
+  private generation = 0;
 
   /** Whether anybody has asked for the score yet. It loads at deployment, not on the title screen. */
   get requested(): boolean {
@@ -423,12 +443,15 @@ export class Music {
     this.format = extension;
     this.refusal = null;
     this.teardown();
+    const generation = ++this.generation;
     const survey = openStream(MUSIC_SOURCES.survey, extension);
     const framed = openStream(MUSIC_SOURCES.framed, extension);
     for (const element of [survey, framed]) {
-      // The only honest signal that a format does not work. `canPlayType` said "probably" about a file this
-      // fired on immediately.
-      element.addEventListener("error", () => this.demote(extension));
+      // The only honest signal that a format does not work -- `canPlayType` said "probably" about a file this
+      // fired on immediately. Scoped to this generation so a teardown's own error cannot count as one.
+      element.addEventListener("error", () => {
+        if (generation === this.generation) this.demote(extension);
+      });
     }
     survey.volume = 0;
     framed.volume = 0;
@@ -449,6 +472,8 @@ export class Music {
    */
   private demote(extension: string): void {
     if (this.candidates[this.formatIndex] !== extension) return;
+    // A format is only out once both elements have had a fair go at it. One error is enough to know, but the
+    // second element's error must not be read as the *next* format failing.
     if (this.formatIndex + 1 >= this.candidates.length) {
       this.refusal = `no format loaded (${extension} was the last)`;
       console.warn(`[music] ${extension} would not load and there is nothing left to try.`);
@@ -464,6 +489,8 @@ export class Music {
   }
 
   private teardown(): void {
+    // Bumped first, so anything the removals below make these elements shout about is already stale.
+    this.generation += 1;
     for (const voice of this.voices ? [this.voices.survey, this.voices.framed] : []) {
       voice.element.pause();
       voice.element.removeAttribute("src");

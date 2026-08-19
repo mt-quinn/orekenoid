@@ -111,7 +111,13 @@ describe("choosing a format", () => {
     // A list rather than one answer, because `canPlayType` is a claim and not a promise: Safari said "probably"
     // about an AAC file whose media element then refused it outright with MEDIA_ERR_SRC_NOT_SUPPORTED.
     const probe = (type: string) => (type.includes("ogg") ? "" : "probably");
-    expect(playableExtensions(probe)).toEqual(["m4a", "mp3", "wav"]);
+    expect(playableExtensions(probe)).toEqual(["m4a", "mp3"]);
+  });
+
+  it("never offers a format the project does not ship", () => {
+    // Safari claims `wav`, and chasing a file that was never committed turned the fallback chain into a march
+    // through 404s that ended by announcing no format worked at all.
+    expect(playableExtensions(() => "probably")).not.toContain("wav");
   });
 
   it("is empty when the browser claims nothing", () => {
