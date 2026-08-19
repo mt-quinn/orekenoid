@@ -32,6 +32,20 @@
 // target; that stepper runs on a timer of its own rather than on the game's frame loop, because the music now
 // starts on the title screen where the frame loop is not running.
 
+/** Everything one element will admit about itself, for the panel and the console. */
+export interface VoiceDetail {
+  src: string;
+  paused: boolean;
+  /** Whether its clock actually moved since the last step. The measurement that was missing. */
+  advancing: boolean;
+  volume: number;
+  muted: boolean;
+  ready: number;
+  error: number | null;
+  at: number;
+  refused: string | null;
+}
+
 /** What the music is playing for. */
 export type MusicLayer = "survey" | "framed";
 
@@ -182,6 +196,27 @@ interface Voice {
   /** Where this voice's level is now, as a fraction of the score's own volume. Stepped toward `target`. */
   level: number;
   target: number;
+  /**
+   * Whether its clock is actually moving.
+   *
+   * The distinction this whole file was missing. `paused === false` says the element was told to play; it says
+   * nothing about whether it is decoding. A stalled element -- waiting on bytes it is not getting, or held by a
+   * policy that does not bother to pause it -- reports itself unpaused forever at a perfectly good volume with
+   * no error set, which is indistinguishable from working unless somebody watches the clock. Hours were spent
+   * downstream of that assumption.
+   */
+  advancing: boolean;
+  lastAt: number;
+  /** Why the last `play()` was refused, if it was. */
+  refused: string | null;
+  /**
+   * Whether a `play()` is already in flight.
+   *
+   * Without it, the stepper called `play()` thirty times a second at any element it wanted audible and had not
+   * started yet -- and each call aborts the one before it with an `AbortError`, so an element could be asked to
+   * play continuously and never manage it. That is a stall this code was causing rather than observing.
+   */
+  starting: boolean;
 }
 
 /**
@@ -206,6 +241,19 @@ export class Music {
   private duckLevel = 1;
   private stepper: number | null = null;
   private lastStep = 0;
+  /**
+   * Both mixes play, always, from the same instant, and neither is ever seeked.
+   *
+   * This was briefly changed to run one stream at a time -- pausing the inaudible mix and seeking it into place
+   * when it was wanted -- because a project whose music works in a browser this was silent in plays a single
+   * element. Measured, that costs 0.2 to 0.3 seconds of misalignment at every transition: the seek is honoured
+   * and then *starting* takes long enough that the other mix has moved on, and no amount of re-seeking closes it
+   * because a seek's latency is not predictable. A quarter second between two mixes of one take is a flam on
+   * every drum hit.
+   *
+   * A clean crossfade is the requirement, so the never-seek design stands and the silence gets diagnosed rather
+   * than designed around.
+   */
   /** The player's level, 0..1, multiplying the score's own. Zero is the switch turned off. */
   private scale = 1;
   private started = false;
@@ -245,7 +293,7 @@ export class Music {
   nudge(): void {
     if (!this.voices) return;
     for (const voice of [this.voices.survey, this.voices.framed]) {
-      if (voice.element.paused) void tryPlay(voice.element);
+      if (voice.element.paused) void this.begin(voice);
     }
   }
 
@@ -256,16 +304,18 @@ export class Music {
    * cannot distinguish "refused to start" from "started and produced no sound", and nothing else here was
    * reported at all.
    */
-  get voiceDetail(): Array<{ src: string; paused: boolean; volume: number; muted: boolean; ready: number; error: number | null; at: number }> {
+  get voiceDetail(): VoiceDetail[] {
     if (!this.voices) return [];
-    return [this.voices.survey, this.voices.framed].map(({ element }) => ({
-      src: element.currentSrc.split("/").pop() ?? "",
-      paused: element.paused,
-      volume: Number(element.volume.toFixed(3)),
-      muted: element.muted,
-      ready: element.readyState,
-      error: element.error?.code ?? null,
-      at: Number(element.currentTime.toFixed(2)),
+    return [this.voices.survey, this.voices.framed].map((voice) => ({
+      src: voice.element.currentSrc.split("/").pop() ?? "",
+      paused: voice.element.paused,
+      advancing: voice.advancing,
+      volume: Number(voice.element.volume.toFixed(3)),
+      muted: voice.element.muted,
+      ready: voice.element.readyState,
+      error: voice.element.error?.code ?? null,
+      at: Number(voice.element.currentTime.toFixed(2)),
+      refused: voice.refused,
     }));
   }
 
@@ -297,7 +347,9 @@ export class Music {
       // Both, not just the exploration mix. Reading only that one meant a framed mix the browser refused
       // reported the score as healthy, and the silence waited until the player committed a claim -- which is
       // both the worst moment to discover it and the hardest to connect back to a cause.
-      playing: Boolean(this.voices && !this.voices.survey.element.paused && !this.voices.framed.element.paused),
+      // Both clocks moving. Not "were told to play", which is what this reported for an hour while the game made
+      // no sound: a stalled element stays unpaused, at volume, with no error set.
+      playing: Boolean(this.voices && this.voices.survey.advancing && this.voices.framed.advancing),
       at: this.voices ? this.voices.survey.element.currentTime : 0,
     };
   }
@@ -332,12 +384,12 @@ export class Music {
     survey.volume = 0;
     framed.volume = 0;
     this.voices = {
-      survey: { element: survey, level: 0, target: 0 },
-      framed: { element: framed, level: 0, target: 0 },
+      survey: { element: survey, level: 0, target: 0, advancing: false, lastAt: 0, refused: null, starting: false },
+      framed: { element: framed, level: 0, target: 0, advancing: false, lastAt: 0, refused: null, starting: false },
     };
-    // Both told to play in the same turn, so they begin within a frame of each other and the sync only ever has
-    // milliseconds to correct rather than seconds.
-    const playing = Promise.all([tryPlay(survey), tryPlay(framed)]);
+    // Both, in the same turn, so they begin within a frame of each other and stay there for the session. The
+    // whole reason a transition can cross over cleanly is that neither playhead is ever moved.
+    const playing = Promise.all([this.begin(this.voices.survey), this.begin(this.voices.framed)]).then(() => undefined);
     // Only now is it safe to wait for anything. The metadata is wanted for the length check, which is a
     // diagnostic rather than a precondition -- if a file turns out to be missing the element errors and stays
     // silent, which is the same outcome as before and does not need its own branch.
@@ -375,6 +427,27 @@ export class Music {
     this.stepper = window.setInterval(() => this.step(), 33);
   }
 
+  /**
+   * Ask one voice to play, remembering a refusal rather than swallowing it.
+   *
+   * Every refusal used to vanish into an empty catch, which is why "the browser said no" and "the browser said
+   * yes and produced silence" looked the same from the outside for an hour.
+   */
+  private begin(voice: Voice): Promise<void> {
+    if (voice.starting) return Promise.resolve();
+    voice.starting = true;
+    voice.refused = null;
+    return voice.element.play().then(
+      () => {
+        voice.starting = false;
+      },
+      (error: unknown) => {
+        voice.starting = false;
+        voice.refused = error instanceof Error ? error.name : String(error);
+      },
+    );
+  }
+
   private step(): void {
     const now = performance.now();
     const dt = Math.max(0, Math.min(0.5, (now - this.lastStep) / 1000));
@@ -398,6 +471,14 @@ export class Music {
       // Clamped because `volume` throws on anything outside 0..1, and a rounding error is not worth a crash.
       const wanted = MUSIC.volume * this.scale * this.duckLevel * voice.level;
       voice.element.volume = Math.max(0, Math.min(1, wanted));
+      // Watched rather than assumed. This is the measurement whose absence cost the most.
+      const at = voice.element.currentTime;
+      voice.advancing = at > voice.lastAt + 0.0005;
+      voice.lastAt = at;
+      // Never paused, whatever its level. An inaudible mix that keeps running is what makes the next transition
+      // free; one that was stopped and restarted would have to be seeked back into place, and a seek cannot be
+      // made accurate enough to cross-fade against.
+      if (voice.element.paused) void this.begin(voice);
     }
   }
 
@@ -413,6 +494,7 @@ export class Music {
     const gains = layer === null ? { survey: 0, framed: 0 } : crossfadeGains(layer === "framed" ? 1 : 0);
     this.voices.survey.target = gains.survey;
     this.voices.framed.target = gains.framed;
+    this.step();
   }
 
   /**
@@ -494,14 +576,6 @@ export class Music {
 }
 
 
-/** Play, tolerating a browser that refuses. A refused stream is silence, not a crash. */
-async function tryPlay(element: HTMLAudioElement): Promise<void> {
-  try {
-    await element.play();
-  } catch {
-    // Not a qualifying gesture yet, or no output. `nudge` will try again on the next one.
-  }
-}
 
 /**
  * A looping media element for this basename, built and returned without waiting for anything.

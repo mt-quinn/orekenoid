@@ -302,10 +302,25 @@ export class OrekenoidGame {
    */
   private checkAudio(): void {
     if (this.holds.holding) return;
-    this.audioGate.check(this.audioReport());
+    const report = this.audioReport();
+    this.audioGate.check(report);
+    // Logged as well as shown. A console line survives a screenshot, can be pasted, and is the only form of this
+    // that reaches a browser I cannot drive -- which turned out to be the browser that mattered.
+    const signature = JSON.stringify(report);
+    if (signature !== this.lastAudioLog) {
+      this.lastAudioLog = signature;
+      console.info("[audio]", report);
+      // The panel is rendered once when it opens, so without this it shows whatever was true at that instant --
+      // which during startup is "nothing has begun yet", the most misleading possible reading.
+      this.settingsSheet.refresh();
+    }
   }
 
+  /** The last state logged, so the console gets a line per change rather than one per check. */
+  private lastAudioLog = "";
+
   private openSound(): void {
+    this.soundAttempted = true;
     this.audio.start();
     // The score is asked for here rather than at deployment, so it is playing while the menu is still up. It
     // needs no context and no gesture of its own now that it is a pair of media elements.
@@ -315,8 +330,12 @@ export class OrekenoidGame {
     void this.audio.ready().then(() => this.checkAudio());
   }
 
+  /** Whether a gesture has ever asked for the sound, which decides whether "no context" is a fault. */
+  private soundAttempted = false;
+
   private audioReport(): AudioReport {
     return {
+      attempted: this.soundAttempted,
       started: this.audio.started,
       running: this.audio.running,
       format: this.music.format,

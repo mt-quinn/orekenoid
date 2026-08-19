@@ -14,6 +14,14 @@
 
 /** Everything the gate needs to know about the state of the sound. */
 export interface AudioReport {
+  /**
+   * Whether opening the sound has been attempted yet.
+   *
+   * Without this, "no context" cannot be told apart from "nobody has clicked", and the gate announced NO SOUND
+   * CHANNEL over the title screen of a game whose audio was working perfectly and simply had not been asked for
+   * -- the same mistake the status line made in orange, in a louder place.
+   */
+  attempted: boolean;
   /** A context exists at all. */
   started: boolean;
   /** And it is running rather than suspended. */
@@ -51,6 +59,9 @@ export interface AudioFault {
  * the states being described are ones this machine cannot reproduce.
  */
 export function audioFault(report: AudioReport): AudioFault | null {
+  // Nothing has asked for sound yet, so nothing is wrong. This is the state the title screen is in until the
+  // player's first click.
+  if (!report.attempted) return null;
   if (!report.started) {
     return {
       code: "nostart",

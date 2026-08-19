@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Orekanoid audio test</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 24px 18px 60px;
+    font: 15px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    background: #14140f; color: #f1eadb;
+  }
+  h1 { font-size: 17px; letter-spacing: .14em; margin: 0 0 4px; }
+  p.lead { margin: 0 0 18px; color: #9a927d; font-size: 13px; max-width: 62ch; }
+  button {
+    font: inherit; font-weight: 700; letter-spacing: .1em;
+    padding: 14px 22px; min-height: 48px;
+    color: #17150f; background: #d98a52; border: 0; border-radius: 3px; cursor: pointer;
+  }
+  ol { margin: 22px 0 0; padding: 0 0 0 26px; }
+  li { margin: 0 0 12px; }
+  .verdict { font-weight: 700; }
+  .pass { color: #7fbf7f; }
+  .fail { color: #e06c4f; }
+  .info { color: #d9c48a; }
+  .note { display: block; color: #9a927d; font-size: 13px; word-break: break-word; }
+</style>
+</head>
+<body>
+<h1>OREKANOID &middot; AUDIO TEST</h1>
+<p class="lead">
+  None of this is the game. It asks your browser, one question at a time, what it will actually do with the
+  score's files &mdash; because diagnosing this from a different browser got the wrong answer three times.
+  Press the button, listen, wait for DONE, and screenshot the list.
+</p>
+<button id="run" type="button">RUN THE TEST</button>
+<ol id="out"></ol>
+<script>
+const out = document.getElementById("out");
+const line = (name, verdict, cls, note) => {
+  const li = document.createElement("li");
+  li.innerHTML = `${name} &mdash; <span class="verdict ${cls}">${verdict}</span>`
+    + (note ? `<span class="note">${note}</span>` : "");
+  out.append(li);
+  return li;
+};
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const make = (src) => {
+  const a = new Audio(src);
+  a.loop = true;
+  a.preload = "auto";
+  document.body.append(a);
+  return a;
+};
+
+/**
+ * Play an element and report whether its clock actually moved.
+ *
+ * The distinction the game was missing for an hour: `paused === false` means it was told to play, not that it
+ * is decoding. A stalled element reports itself unpaused, at volume, with no error.
+ */
+async function advances(el, seconds) {
+  let refused = null;
+  try { await el.play(); } catch (e) { refused = (e && e.name) || String(e); }
+  const from = el.currentTime;
+  await wait(seconds * 1000);
+  const moved = el.currentTime - from;
+  return {
+    ok: !refused && moved > seconds * 0.4,
+    why: `paused=${el.paused} readyState=${el.readyState} moved ${moved.toFixed(2)}s of ${seconds}s`
+      + (refused ? ` play() REFUSED: ${refused}` : "")
+      + (el.error ? ` error=${el.error.code}` : ""),
+  };
+}
+
+document.getElementById("run").addEventListener("click", async () => {
+  const button = document.getElementById("run");
+  button.disabled = true;
+  button.textContent = "RUNNING…";
+  out.innerHTML = "";
+
+  // 1. What it claims it can play.
+  const probe = document.createElement("audio");
+  const types = {
+    'audio/ogg; codecs="opus"': "opus",
+    'audio/mp4; codecs="mp4a.40.2"': "m4a (AAC)",
+    "audio/mpeg": "mp3",
+  };
+  for (const [type, label] of Object.entries(types)) {
+    const answer = probe.canPlayType(type);
+    line(`canPlayType ${label}`, answer || "(empty = no)", answer ? "pass" : "fail");
+  }
+
+  const pick = probe.canPlayType('audio/ogg; codecs="opus"') ? "opus"
+    : probe.canPlayType('audio/mp4; codecs="mp4a.40.2"') ? "m4a" : "mp3";
+  line("format the game would choose", pick, "info");
+
+  // 2. Is volume settable at all? Read-only volume is an iOS behaviour and would explain silence exactly.
+  const first = make(`music/bgm-explore.${pick}`);
+  first.volume = 0.5;
+  const settable = Math.abs(first.volume - 0.5) < 0.001;
+  line("element.volume is settable", settable ? "yes" : `NO (stayed ${first.volume})`,
+    settable ? "pass" : "fail",
+    settable ? "" : "If this fails, nothing the game does to the level has any effect.");
+
+  // 3. ONE stream, which is what the project whose music works does.
+  first.volume = 0.45;
+  const one = await advances(first, 3);
+  line("ONE stream plays and advances", one.ok ? "yes" : "NO", one.ok ? "pass" : "fail",
+    one.why + " &middot; <b>you should be hearing music right now</b>");
+
+  // 4. TWO streams at once, which is what the game did.
+  const second = make(`music/bgm-framed.${pick}`);
+  second.volume = 0.45;
+  const two = await advances(second, 3);
+  const both = two.ok && !first.paused && first.currentTime > 0;
+  line("TWO streams at once, both advancing", both ? "yes" : "NO", both ? "pass" : "fail",
+    `second: ${two.why} &middot; first still going: ${!first.paused}`
+    + " &middot; <b>you should be hearing both mixes together</b>");
+
+  // 5. Does starting the second one silence the first? A one-at-a-time policy shows up here.
+  first.volume = 0.45;
+  second.volume = 0;
+  await wait(2000);
+  const firstAlive = !first.paused && first.currentTime > 0;
+  line("first stream survived the second starting", firstAlive ? "yes" : "NO", firstAlive ? "pass" : "fail",
+    `first: paused=${first.paused} at ${first.currentTime.toFixed(1)}s`
+    + " &middot; <b>you should be hearing one mix again</b>");
+  first.pause();
+  second.pause();
+
+  // 6. Web Audio, which is the path the sound effects take and which is known to work.
+  let ctx = null;
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === "suspended") await ctx.resume();
+    line("AudioContext state", ctx.state, ctx.state === "running" ? "pass" : "fail");
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.08;
+    osc.frequency.value = 440;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.5);
+    await wait(700);
+    line("Web Audio beep", "listen", "info", "<b>A short tone should have sounded.</b> The effects use this path.");
+  } catch (e) {
+    line("AudioContext", "FAILED: " + ((e && e.message) || e), "fail");
+  }
+
+  // 7. decodeAudioData, which is how the impacts load.
+  if (ctx) {
+    for (const ext of ["opus", "m4a"]) {
+      try {
+        const buffer = await ctx.decodeAudioData(await (await fetch(`music/brickbreak.${ext}`)).arrayBuffer());
+        line(`decodeAudioData brickbreak.${ext}`, `ok, ${buffer.duration.toFixed(2)}s`, "pass");
+      } catch (e) {
+        line(`decodeAudioData brickbreak.${ext}`, "failed", ext === "opus" ? "info" : "fail",
+          (e && (e.message || e.name)) || String(e));
+      }
+    }
+
+    // 8. The routing the game used to do, and which I removed on suspicion. Confirms or clears that guess.
+    try {
+      const routed = make(`music/bgm-explore.${pick}`);
+      routed.volume = 1;
+      ctx.createMediaElementSource(routed).connect(ctx.destination);
+      const result = await advances(routed, 3);
+      line("createMediaElementSource routed to output", "listen", "info",
+        result.why + " &middot; <b>if the clock advanced but you heard nothing, that was the bug I guessed at</b>");
+      routed.pause();
+    } catch (e) {
+      line("createMediaElementSource", "threw: " + ((e && e.message) || e), "fail");
+    }
+  }
+
+  line("DONE", "screenshot this list", "info", navigator.userAgent);
+  button.textContent = "RUN AGAIN";
+  button.disabled = false;
+});
+</script>
+</body>
+</html>

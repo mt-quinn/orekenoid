@@ -11,6 +11,7 @@
 
 import { ACTION_LABEL, type Action, type Bindings } from "./bindings";
 import { VOLUME_STEP, type AudioPrefs, type AudioSettings } from "./audioSettings";
+import type { VoiceDetail } from "./music";
 
 /**
  * Actions the rebinding list leaves out.
@@ -67,14 +68,21 @@ export function audioStatusHtml(status: AudioStatus | null): string {
   const detail = status.voices.length
     ? `<span class="audio-voices">${status.voices.map((voice) =>
         `${voice.src.replace(/\.[a-z0-9]+$/, "").replace("bgm-", "")}: `
-        + `${voice.paused ? "paused" : "playing"} vol ${voice.volume.toFixed(2)}`
-        + `${voice.muted ? " MUTED" : ""} ready ${voice.ready}`
-        + `${voice.error !== null ? ` ERROR ${voice.error}` : ""} at ${voice.at.toFixed(1)}s`).join("<br />")}</span>`
+        + `${voice.paused ? "PAUSED" : voice.advancing ? "advancing" : "STALLED"}`
+        + ` vol ${voice.volume.toFixed(2)} at ${voice.at.toFixed(1)}s ready ${voice.ready}`
+        + `${voice.muted ? " MUTED" : ""}`
+        + `${voice.error !== null ? ` ERROR ${voice.error}` : ""}`
+        + `${voice.refused ? ` REFUSED ${voice.refused}` : ""}`).join("<br />")}</span>`
     : "";
   const bad = status.samplesLoaded < status.samplesExpected
     || Boolean(status.musicRefusal)
     || (status.musicRequested && !status.musicPlaying);
-  return `<p class="audio-status${bad ? " warn" : ""}">${score}<i>·</i>${impacts}${bad ? detail : ""}</p>`;
+  // Always, not only when something looks wrong.
+  //
+  // Gated on a fault at first, which was exactly backwards: the whole difficulty with this bug is that nothing
+  // looks wrong from the inside -- both elements report themselves playing, at a real volume, with no error --
+  // so the one instrument that could show otherwise was hidden precisely in the case it was built for.
+  return `<p class="audio-status${bad ? " warn" : ""}">${score}<i>·</i>${impacts}${detail}</p>`;
 }
 
 export interface AudioStatus {
@@ -87,8 +95,8 @@ export interface AudioStatus {
   musicPlaying: boolean;
   samplesLoaded: number;
   samplesExpected: number;
-  /** What each score element says about itself. Shown only when something is wrong. */
-  voices: Array<{ src: string; paused: boolean; volume: number; muted: boolean; ready: number; error: number | null; at: number }>;
+  /** What each score element says about itself. Always shown. */
+  voices: VoiceDetail[];
 }
 
 export function audioPanelHtml(prefs: AudioPrefs, status: AudioStatus | null = null): string {
@@ -271,6 +279,14 @@ export class SettingsSheet {
   private readonly open = document.querySelector<HTMLButtonElement>("#settingsButton");
   private readonly close = document.querySelector<HTMLButtonElement>("#settingsClose");
   private shown = false;
+  /**
+   * Redraws while open.
+   *
+   * The audio block reports live state, and the panel is reachable on the title screen where the game's frame
+   * loop is not running -- so without a clock of its own it showed whatever was true at the instant it opened,
+   * which during startup is "nothing has begun yet": the most misleading reading available.
+   */
+  private ticker: number | null = null;
 
   constructor(
     private readonly settings: AudioSettings,
@@ -304,7 +320,8 @@ export class SettingsSheet {
 
   /** Redraw, if this is open. Called when something the panel reports on has finished changing. */
   refresh(): void {
-    if (this.shown) this.render();
+    // Never mid-rebind: re-rendering replaces the button that is waiting for a keystroke.
+    if (this.shown && !this.rebinder.isRebinding) this.render();
   }
 
   get isOpen(): boolean {
@@ -318,10 +335,17 @@ export class SettingsSheet {
     this.sheet.classList.toggle("open", open);
     if (!open) {
       this.rebinder.cancel();
+      if (this.ticker !== null) {
+        window.clearInterval(this.ticker);
+        this.ticker = null;
+      }
       return;
     }
     this.onOpen?.();
     this.render();
+    // Twice a second: fast enough to watch a stream start, slow enough that a rebind button is never yanked out
+    // from under a finger mid-press.
+    if (this.ticker === null) this.ticker = window.setInterval(() => this.refresh(), 500);
   }
 
   private render(): void {

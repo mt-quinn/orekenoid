@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { audioFault, type AudioReport } from "../src/audioGate";
 
 const healthy = (over: Partial<AudioReport> = {}): AudioReport => ({
+  attempted: true,
   started: true,
   running: true,
   format: "opus",
@@ -27,6 +28,14 @@ describe("working sound", () => {
 
   it("says nothing about a score the player turned off", () => {
     expect(audioFault(healthy({ musicWanted: false, musicPlaying: false }))).toBeNull();
+  });
+});
+
+describe("before anybody has asked", () => {
+  it("says nothing at all", () => {
+    // The title screen's state until the first click. Reported as NO SOUND CHANNEL at first, in a plate, over a
+    // game whose audio was fine and simply had not been opened yet.
+    expect(audioFault(healthy({ attempted: false, started: false, running: false, samplesLoaded: 0 }))).toBeNull();
   });
 });
 
