@@ -165,6 +165,38 @@ export class FieldCombat {
     for (const index of spentIndices) this.spent.add(index);
   }
 
+  /**
+   * Hand over every live creature the test accepts, removing them from the caverns for good.
+   *
+   * Used when a claim is staked over them: they stop being creatures and become balls, so they must not
+   * also still be standing in the mine when the claim resolves. Their spawn is spent either way -- a Bounder
+   * that has been framed is a Bounder that has been dealt with.
+   */
+  takeInside(inside: (x: number, y: number) => boolean): Array<{
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    ores: ResourceId[];
+  }> {
+    const taken: Array<{ x: number; y: number; vx: number; vy: number; ores: ResourceId[] }> = [];
+    for (let index = this.creatures.length - 1; index >= 0; index--) {
+      const entry = this.creatures[index];
+      const creature = entry.creature;
+      if (creature.state === "dead" || !inside(creature.x, creature.y)) continue;
+      taken.push({
+        x: creature.x,
+        y: creature.y,
+        vx: creature.vx,
+        vy: creature.vy,
+        ores: [...creature.ores],
+      });
+      entry.display.container.destroy({ children: true });
+      this.creatures.splice(index, 1);
+    }
+    return taken;
+  }
+
   /** Which spawns have fired, for the save. */
   get spentSpawns(): number[] {
     return [...this.spent].sort((a, b) => a - b);

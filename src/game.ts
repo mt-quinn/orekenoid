@@ -51,6 +51,7 @@ import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
 import { Bindings, type Action } from "./bindings";
 import { DIAL, detentsCrossed } from "./dial";
+import { mulberry32 } from "./worldgen/rng";
 import { BayView } from "./bayView";
 import { TouchControls } from "./view/touchControls";
 import { Gate, Pulse, Shudder } from "./view/feel";
@@ -386,6 +387,14 @@ export class OrekenoidGame {
   private ballAwayFor = 0;
   /** The heading the wheel last ticked at, so detent crossings can be counted between frames. */
   private wheelHeading = 0;
+  /**
+   * Seeded, for the one thing in a claim that needs a random number.
+   *
+   * A captured Bounder that was not moving has no direction to honour and is given one. `Math.random` would
+   * make the same claim on the same seed play differently every time, which this codebase has been careful
+   * about everywhere else.
+   */
+  private readonly combatRandom = mulberry32(0x9e37 ^ 0x5f3d);
   /** How long the current step has been on screen, for advancing the optional ones. */
   private tutorialShownFor = 0;
   private tutorialFadeTimer = 0;
@@ -1458,6 +1467,8 @@ export class OrekenoidGame {
     const sampled = this.world.framedBricks(frame);
     if (!sampled.length) { this.showToast("NO MATERIAL IN FRAME"); return; }
     const bricks: Brick[] = [];
+    // The player's ball first, so `serve` and everything else that means "the ball" finds it at index zero.
+    const arenaBalls: Ball[] = [createBall()];
     let resources = 0;
     for (const { cell, sourceCells, u, v, footprint, persistent } of sampled) {
       for (const source of sourceCells) source.hidden = false;
@@ -1483,7 +1494,7 @@ export class OrekenoidGame {
     const arena: Arena = {
       ...frame,
       province: reading.province, ecotone: reading.ecotone, band: reading.band as Arena["band"],
-      bricks, balls: [createBall()], drops: [], membranes: [],
+      bricks, balls: arenaBalls, drops: [], membranes: [],
       regrowthBudget: initialRegrowthBudget(bricks), regrowthTimer: 0,
       resourceCount: resources, collected: 0, combo: 0,
       splitArmed: false, splitUsed: false, serveAim: 0.08,
@@ -1492,6 +1503,53 @@ export class OrekenoidGame {
       paddle: { u: 0, velocity: 0, width: this.paddleWidth, flash: 0, impact: 0, recoil: 0 },
       container, board, actors, resolving: false, visualAge: 0, crumbleFront: 0, railFlash: 0,
     };
+    // Any live Bounder standing inside the frame comes with it, as a ball.
+    //
+    // Its velocity is honoured where there is one worth honouring, which is the point of taking it from "the
+    // moment of framing": a Bounder mid-hurl arrives already travelling the way it was thrown. A crawling one
+    // has a direction but a speed of under two cells a second, which as a ball is a creep rather than a
+    // rally, so the direction is kept and the speed is floored into a playable band. One that is not moving
+    // at all has no direction to keep and gets a random one, aimed up into the board so it does not simply
+    // drain on release.
+    const boardSpeed = ballSpeed(arena);
+    const sideX = Math.cos(frame.angle);
+    const sideY = Math.sin(frame.angle);
+    const awayX = Math.sin(frame.angle);
+    const awayY = -Math.cos(frame.angle);
+    const captured = this.combat.takeInside((x, y) => {
+      const dx = x - frame.origin.x;
+      const dy = y - frame.origin.y;
+      const u = dx * sideX + dy * sideY;
+      const v = dx * awayX + dy * awayY;
+      return Math.abs(u) <= frame.width / 2 && v >= 0 && v <= frame.depth;
+    });
+    for (const creature of captured) {
+      const dx = creature.x - frame.origin.x;
+      const dy = creature.y - frame.origin.y;
+      const ball = createBall(dx * sideX + dy * sideY, dx * awayX + dy * awayY);
+      // World velocity into the board's own axes, so "the way it was going" survives a claim framed at any
+      // angle rather than meaning "the way it was going relative to the screen".
+      const localU = creature.vx * sideX + creature.vy * sideY;
+      const localV = creature.vx * awayX + creature.vy * awayY;
+      const speed = Math.hypot(localU, localV);
+      if (speed < 0.05) {
+        const angle = (this.combatRandom() * 0.7 + 0.15) * Math.PI;
+        ball.captured = {
+          ores: creature.ores,
+          vu: Math.cos(angle) * boardSpeed,
+          vv: Math.sin(angle) * boardSpeed,
+        };
+      } else {
+        const wanted = Math.min(boardSpeed * 1.35, Math.max(boardSpeed * 0.6, speed));
+        ball.captured = {
+          ores: creature.ores,
+          vu: (localU / speed) * wanted,
+          vv: (localV / speed) * wanted,
+        };
+      }
+      arenaBalls.push(ball);
+    }
+
     this.arena = arena;
     this.mode = "play";
     this.hasCommitted = true;
@@ -1523,13 +1581,24 @@ export class OrekenoidGame {
   private serve(): void {
     const arena = this.arena;
     if (!arena || arena.balls.some((ball) => ball.served) || this.cameraTransition) return;
-    const ball = arena.balls[0];
+    // The player's own ball, which is not necessarily the only one on the board: a framed Bounder is a ball
+    // too, and serving the wrong one would launch the creature and leave the player holding nothing.
+    const ball = arena.balls.find((candidate) => !candidate.captured);
+    if (!ball) return;
     // Served at the claim's current pace, so a re-serve after losing a ball is not slower than the
     // rally it is replacing.
     const speed = ballSpeed(arena);
     ball.vu = arena.serveAim * speed;
     ball.vv = Math.sqrt(Math.max(speed ** 2 - ball.vu ** 2, 1e-6));
     ball.served = true;
+    // And the captured ones go with it. They hang motionless over the board until the serve, exactly as the
+    // falling ore does, so the player gets to look at the board they have made before it starts moving.
+    for (const other of arena.balls) {
+      if (!other.captured || other.served) continue;
+      other.vu = other.captured.vu;
+      other.vv = other.captured.vv;
+      other.served = true;
+    }
     this.hasServed = true;
     this.markTutorial("serve");
     this.audio.play(SOUNDS.serve);
@@ -1847,6 +1916,19 @@ export class OrekenoidGame {
     const arena = this.arena;
     if (!arena || arena.resolving) return;
     arena.resolving = true;
+    // A framed Bounder still in play when the claim ends pays out anyway.
+    //
+    // The payout is written as happening when the player misses it, and a board that clears with the creature
+    // still bouncing is the player having *not* missed it -- withholding the ore for succeeding would be
+    // perverse. It is dead either way: it stopped being a creature the moment it was framed.
+    for (const ball of arena.balls) {
+      if (!ball.captured?.ores.length) continue;
+      for (const resource of ball.captured.ores) {
+        arena.collected++;
+        this.economy.add(resource, 1);
+      }
+      ball.captured.ores = [];
+    }
     const remaining = arena.bricks.filter((brick) => brick.alive && brick.liable);
     // Everything still up, liable or not. Only what the ball actually broke is cut out of the
     // world; the rest is handed back as terrain, so an abandoned claim is a claim postponed
@@ -2720,6 +2802,22 @@ export class OrekenoidGame {
     for (let index = arena.balls.length - 1; index >= 0; index--) {
       const ball = arena.balls[index];
       if (ball.v >= -0.72) continue;
+      // A captured Bounder pays out when it finally goes down. Collected rather than scattered: it has
+      // already been earned, by however long the player managed to keep it in play, and making them catch
+      // the drops of the thing they just failed to catch would be a joke at their expense.
+      if (ball.captured) {
+        for (const resource of ball.captured.ores) {
+          arena.collected++;
+          this.economy.add(resource, 1);
+        }
+        if (ball.captured.ores.length) {
+          this.audio.play(collectSound(arena.collected));
+          const at = this.world.localToWorld(ball.u, Math.max(0.2, ball.v), arena);
+          this.effects.spawnRing(at.x * CELL, at.y * CELL, PALETTE.rail, 1.1);
+          this.showToast(`BOUNDER SPENT · ${ball.captured.ores.length} SECURED`);
+        }
+        this.updateUI();
+      }
       ball.display?.destroy({ children: true });
       ball.trailDisplay?.destroy();
       arena.balls.splice(index, 1);

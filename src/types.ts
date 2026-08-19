@@ -186,6 +186,21 @@ export interface Ball {
   trail: Vec2[];
   display?: Container;
   trailDisplay?: Graphics;
+  /**
+   * A Bounder that was inside the frame when the claim was staked, riding the board as a ball.
+   *
+   * Framing a live one is meant to be worth doing rather than merely possible: it hands the player a second
+   * ball for as long as they can keep it up, and the ore the creature was carrying is collected when they
+   * finally miss it. So the reward for a risky frame is more board time, and the punishment for missing is
+   * only that the extra board time ends.
+   */
+  captured?: {
+    /** What it was carrying, credited when it goes down. */
+    ores: ResourceId[];
+    /** The velocity the serve releases it with, in board units per second. */
+    vu: number;
+    vv: number;
+  };
 }
 
 export interface Drop {

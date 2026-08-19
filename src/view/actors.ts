@@ -221,11 +221,20 @@ export function createPaddle(arena: Arena, grades: StationGrades = {}): Containe
 /** Build and attach a ball's optics and its trail graphic. */
 export function attachBall(ball: Ball, arena: Arena): void {
   const display = new Container();
-  const colour = PROVINCE_PALETTE[arena.province].accent;
-  const glow = new Graphics().circle(0, 0, ball.radius * CELL * 1.8).fill({ color: colour, alpha: 0.24 });
+  // A captured Bounder keeps its own colour, so the player can tell at a glance which ball is theirs and
+  // which one is the animal they framed -- they behave identically and only one of them pays out.
+  const colour = ball.captured ? SHELL : PROVINCE_PALETTE[arena.province].accent;
+  // A captured Bounder glows harder and wider. It has to be findable in a field of brown bricks, and the
+  // player is tracking two balls at once by then.
+  const glow = new Graphics()
+    .circle(0, 0, ball.radius * CELL * (ball.captured ? 2.5 : 1.8))
+    .fill({ color: colour, alpha: ball.captured ? 0.4 : 0.24 });
   glow.filters = [new BlurFilter({ strength: 7, quality: 2 })];
   const ring = new Graphics().circle(0, 0, ball.radius * CELL + 2).stroke({ width: 1.5, color: colour, alpha: 0.75 });
-  const core = new Graphics().circle(0, 0, ball.radius * CELL).fill(PALETTE.ink).stroke({ width: 2, color: 0x282d2b });
+  const core = new Graphics()
+    .circle(0, 0, ball.radius * CELL)
+    .fill(ball.captured ? SHELL : PALETTE.ink)
+    .stroke({ width: 2, color: 0x282d2b });
   // Offset specular: gives the ball a light direction, which makes its spin and
   // speed legible at a glance.
   core.circle(-3, -3, 2).fill(0xffffff);
@@ -274,3 +283,14 @@ export function spawnDrop(arena: Arena, u: number, v: number, resource: Resource
   arena.drops.push(drop);
   return drop;
 }
+
+/**
+ * A framed Bounder's ball, in the shell's family but lifted well clear of it.
+ *
+ * The creature's own tone is 0x6d5b46, which is almost exactly the brown of a chalk brick -- a ball painted
+ * in it sat in the middle of the brick field and could not be picked out at all. So it keeps the warmth,
+ * which is what says "this is the animal", and takes the brightness it needs to be a ball you can track.
+ * It is nothing like the player's own pale ball either, which is the other thing it must never be confused
+ * with: only one of the two pays out.
+ */
+const SHELL = 0xd8a860;

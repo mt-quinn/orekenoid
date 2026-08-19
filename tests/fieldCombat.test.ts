@@ -246,3 +246,53 @@ describe("simulation time", () => {
   });
 });
 
+
+describe("framing a live one", () => {
+  it("hands over the creatures inside the frame and leaves the rest", () => {
+    // A claim staked over a Bounder takes it: it stops being a creature and becomes a ball, so it must not
+    // also still be standing in the mine when the claim resolves.
+    const combat = new FieldCombat(FLOORED, 50);
+    const inside = combat.spawn(60, 69);
+    combat.spawn(90, 69);
+    const taken = combat.takeInside((x) => x < 70);
+    expect(taken).toHaveLength(1);
+    expect(taken[0].x).toBeCloseTo(inside.x, 5);
+    expect(combat.liveCreatures).toBe(1);
+    expect(combat.roster.some((creature) => creature.x < 70)).toBe(false);
+  });
+
+  it("hands over what it was carrying and how it was moving", () => {
+    // Both are the payload: the ore decides what the player collects when they finally miss it, and the
+    // velocity is what "honour its direction from the moment of framing" means.
+    const combat = new FieldCombat(FLOORED, 51);
+    combat.oreTableFor = () => ["iron", "copper"];
+    const creature = combat.spawn(60, 69);
+    creature.vx = 3;
+    creature.vy = -4;
+    const taken = combat.takeInside(() => true);
+    expect(taken[0].ores).toEqual(["iron", "copper"]);
+    expect(taken[0].vx).toBe(3);
+    expect(taken[0].vy).toBe(-4);
+  });
+
+  it("never hands over a corpse", () => {
+    const combat = new FieldCombat(FLOORED, 52);
+    const creature = combat.spawn(60, 69);
+    creature.state = "dead";
+    expect(combat.takeInside(() => true)).toHaveLength(0);
+  });
+
+  it("does not bring a framed one back afterwards", () => {
+    // A Bounder that has been framed is a Bounder that has been dealt with. If its spawn were left unspent
+    // it would be standing there again the moment the claim resolved.
+    const combat = new FieldCombat(FLOORED, 53);
+    combat.placeSpawns([{ x: 60, y: 69.5 }]);
+    const drone = pose(60 + COMBAT.spawnMin + 2, 69);
+    for (let elapsed = 0; elapsed < 3; elapsed += DT) combat.update(DT, drone);
+    expect(combat.liveCreatures).toBe(1);
+    combat.takeInside(() => true);
+    expect(combat.liveCreatures).toBe(0);
+    for (let elapsed = 0; elapsed < 20; elapsed += DT) combat.update(DT, drone);
+    expect(combat.liveCreatures).toBe(0);
+  });
+});
