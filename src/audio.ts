@@ -147,6 +147,38 @@ export class GameAudio {
   }
 
   /**
+   * Settle: the context resumed, the recordings fetched.
+   *
+   * Exists because `start` cannot be awaited -- it has to return inside the gesture that called it -- so
+   * anything that wants to *judge* whether the sound works has to wait for the work `start` set going. Judging
+   * immediately after it reported a suspended context and no recordings, which was true for about eighty
+   * milliseconds and is not a fault.
+   */
+  async ready(): Promise<void> {
+    const context = this.context;
+    if (!context) return;
+    if (context.state === "suspended") {
+      try {
+        await context.resume();
+      } catch {
+        // Refused. The gate will say so.
+      }
+    }
+    await this.samples.arm(context);
+  }
+
+  /** A context that exists and is actually running, which is a different question. */
+  get running(): boolean {
+    return this.context?.state === "running";
+  }
+
+  /** Refetch the recordings. The context is resumed separately, by `start`. */
+  async retrySamples(): Promise<void> {
+    if (!this.context) return;
+    await this.samples.retry(this.context);
+  }
+
+  /**
    * The live context, for anything that needs to build its own graph.
    *
    * Shared rather than handed a context of its own, because the browser's rules about gestures and suspension

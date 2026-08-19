@@ -55,18 +55,23 @@ export function audioStatusHtml(status: AudioStatus | null): string {
   // Before deployment there is nothing to report and nothing wrong. A browser will not let audio start until
   // the player has done something, so the title screen's honest reading is "not yet" -- which the first version
   // of this rendered as a warning, and a panel that cries fault at its own normal state is worse than no panel.
-  if (!status.started) return `<p class="audio-status">Sound starts when you deploy</p>`;
+  if (!status.started) return `<p class="audio-status">Sound opens on your first click</p>`;
   const score = status.musicFormat
     ? `SCORE · ${status.musicFormat.toUpperCase()}${status.musicPlaying ? "" : " · not playing"}`
-    : `SCORE · ${status.musicRefusal ?? "not started"}`;
+    // Before deployment the score has not been asked for, which is not the same as having failed.
+    : `SCORE · ${status.musicRefusal ?? (status.musicRequested ? "did not load" : "plays on deployment")}`;
   const impacts = `IMPACTS · ${status.samplesLoaded} of ${status.samplesExpected}`;
-  const bad = !status.musicPlaying || status.samplesLoaded < status.samplesExpected;
+  const bad = status.samplesLoaded < status.samplesExpected
+    || Boolean(status.musicRefusal)
+    || (status.musicRequested && !status.musicPlaying);
   return `<p class="audio-status${bad ? " warn" : ""}">${score}<i>·</i>${impacts}</p>`;
 }
 
 export interface AudioStatus {
-  /** Whether the audio has been allowed to start at all, which needs a gesture. */
+  /** Whether a context exists at all, which needs one gesture from the player. */
   started: boolean;
+  /** Whether the score has been asked for. It loads at deployment, not on the title screen. */
+  musicRequested: boolean;
   musicFormat: string | null;
   musicRefusal: string | null;
   musicPlaying: boolean;
@@ -277,6 +282,19 @@ export class SettingsSheet {
     });
   }
 
+  /**
+   * Called when the sheet opens, so whoever owns the audio can re-examine it.
+   *
+   * Examining is asynchronous -- a context resume and a fetch -- so it cannot finish before this draws, which
+   * is what `refresh` is for.
+   */
+  onOpen: (() => void) | null = null;
+
+  /** Redraw, if this is open. Called when something the panel reports on has finished changing. */
+  refresh(): void {
+    if (this.shown) this.render();
+  }
+
   get isOpen(): boolean {
     return this.shown;
   }
@@ -290,6 +308,7 @@ export class SettingsSheet {
       this.rebinder.cancel();
       return;
     }
+    this.onOpen?.();
     this.render();
   }
 

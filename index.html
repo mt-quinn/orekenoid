@@ -91,6 +91,20 @@
           </button>
         </div>
 
+        <!-- Sound that did not open, said out loud.
+             Deliberately not a hold: silent audio is not dangerous the way a claim running unattended is, so
+             this states the fault, offers the fix, and takes "carry on silent" for an answer. -->
+        <div class="audio-gate" id="audioGate" hidden aria-live="polite">
+          <div class="audio-gate-frame">
+            <b id="audioGateTitle"></b>
+            <span id="audioGateDetail"></span>
+            <div class="audio-gate-row">
+              <button type="button" id="audioGateAction"></button>
+              <button type="button" id="audioGateDismiss" class="quiet">CARRY ON SILENT</button>
+            </div>
+          </div>
+        </div>
+
         <!-- The rig runs vertical. A designed gate in the game's own voice rather than a browser
              default, and nothing behind it is lost -- the expedition is exactly where it was. -->
         <div class="rotate-gate" id="rotateGate" hidden aria-live="polite">

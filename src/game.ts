@@ -37,6 +37,7 @@ import { Music, layerFor } from "./music";
 import { RAIL_VOICE, SAMPLES } from "./sfx";
 import { AudioSettings } from "./audioSettings";
 import { KeyRebinder, SettingsSheet, type AudioStatus } from "./settingsView";
+import { AudioGate, type AudioReport } from "./audioGate";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
 import { Effects } from "./effects";
 import { clamp, normalizeAngle } from "./maths";
@@ -248,6 +249,9 @@ export class OrekenoidGame {
    * bound to now.
    */
   readonly audioSettings = new AudioSettings();
+  readonly audioGate = new AudioGate();
+  /** Seconds since the sound was last checked, so the watch costs one comparison a frame. */
+  private audioWatch = 0;
   private readonly rebinder = new KeyRebinder(
     (action, code) => {
       const result = this.bindings.bind(action, code);
@@ -275,9 +279,54 @@ export class OrekenoidGame {
   );
 
   /** What the audio is actually doing, for the settings panel to state plainly. */
+  /**
+   * Open the sound on the first thing the player does, whatever it is.
+   *
+   * This used to happen only at deployment, which meant the settings panel -- reached by clicking a gear, which
+   * is a gesture by any definition -- reported "not started" and I read that as a browser policy. It was not: the
+   * game simply had not asked. A browser refuses audio before *any* interaction; after one, a tab plays sound
+   * perfectly well, and the title screen is a place where somebody may well want to set their levels and hear
+   * that they did something.
+   *
+   * The score is deliberately not loaded here. It is eleven megabytes across two streams and the title screen is
+   * not where it plays; the sample bank is eleven kilobytes and wants to be ready before the first brick.
+   */
+  /**
+   * Look at the sound, unless something louder is already saying so.
+   *
+   * The hold plate and the gate describe the same suspended context in different words, and firing both put two
+   * overlapping plates on the screen at once. The hold wins while it is up: it is the one that stopped the game.
+   */
+  private checkAudio(): void {
+    if (this.holds.holding) return;
+    this.audioGate.check(this.audioReport());
+  }
+
+  private openSound(): void {
+    this.audio.start();
+    // Judged only once the work `start` set going has settled. Checking immediately reported a suspended
+    // context and no recordings, both of which were true for a moment and neither of which was wrong.
+    void this.audio.ready().then(() => this.checkAudio());
+  }
+
+  private audioReport(): AudioReport {
+    return {
+      started: this.audio.started,
+      running: this.audio.running,
+      format: this.music.format,
+      refusal: this.music.refusal,
+      musicRequested: this.music.requested,
+      musicPlaying: this.music.diagnostics.playing,
+      musicWanted: this.audioSettings.current.music && this.audioSettings.current.musicVolume > 0,
+      samplesLoaded: this.audio.loadedSamples.length,
+      samplesExpected: Object.keys(SAMPLES).length,
+    };
+  }
+
   private audioStatus(): AudioStatus {
     return {
       started: this.audio.started,
+      musicRequested: this.music.requested,
       musicFormat: this.music.format,
       musicRefusal: this.music.refusal,
       musicPlaying: this.music.diagnostics.playing,
@@ -671,7 +720,34 @@ export class OrekenoidGame {
     this.bindInput();
     this.touch.attach(this.app.canvas);
     this.bindTouchActions();
-    this.audio.onLost = () => this.holds.audioLost();
+    // A dropped channel means two different things depending on whether anything is at stake.
+    //
+    // Mid-expedition it is a hold: the game stops, because a claim that carried on silently while the player
+    // was not being told anything is the thing that plate exists to prevent. On the title screen nothing is at
+    // stake and a full-cover "TAP TO RESUME" over the main menu would be absurd -- that gets the notice
+    // instead. Opening the sound on the first gesture is what made this distinction necessary: before it, the
+    // context could not be lost before deployment because it did not exist yet.
+    this.audio.onLost = () => {
+      if (this.started) this.holds.audioLost();
+      else this.checkAudio();
+    };
+    // Any gesture at all, once. Both listeners share the guard inside `start`, which is idempotent.
+    for (const event of ["pointerdown", "keydown"] as const) {
+      window.addEventListener(event, () => this.openSound(), { capture: true, once: true });
+    }
+    this.audioGate.attach({
+      onRetry: () => {
+        this.audio.start();
+        this.audio.revive();
+        void (async () => {
+          await this.audio.ready();
+          await this.audio.retrySamples();
+          // Only if it had already been asked for: a retry on the title screen should not pull the score down.
+          if (this.music.requested) await this.music.retry();
+          this.checkAudio();
+        })();
+      },
+    });
     this.awake.attach();
     this.holds.attach({
       onHold: () => {
@@ -901,7 +977,7 @@ export class OrekenoidGame {
     this.audio.start();
     // After the gesture, because that is when there is a context to decode into. Not awaited: a score that
     // takes a moment to arrive should not hold up the deployment, and it fades in when it lands.
-    void this.music.load();
+    void this.music.load().then(() => this.checkAudio());
     this.showToast(`${this.chassis.name} DEPLOYED · SURVEY LIVE`);
     this.updateUI();
   }
@@ -2107,6 +2183,13 @@ export class OrekenoidGame {
     }));
     this.music.duck(this.paused || this.atlasOpen);
     this.music.syncTick(dt);
+    // Cheap and idempotent, and the only way a fault that appears mid-session -- a context the browser
+    // suspended and never told us about -- reaches the player rather than sitting in a console.
+    this.audioWatch += dt;
+    if (this.audioWatch > 2) {
+      this.audioWatch = 0;
+      this.checkAudio();
+    }
     this.renderTouchActions(dt);
     // The wheel's teeth are drawn at world angles so they turn with the drone, and it only exists out in
     // the mine: inside a claim the paddle is dragged directly and a facing wheel has nothing to do.
@@ -3817,6 +3900,15 @@ export class OrekenoidGame {
       this.audio.setVolume(sfx);
     };
     this.audioSettings.apply();
+    // Opening the panel is a gesture, so the sound may only just have opened. Re-examine before it draws, or
+    // the readout states whatever was true the last time anything happened to look.
+    this.settingsSheet.onOpen = () => {
+      void this.audio.ready().then(() => {
+        this.checkAudio();
+        // The panel drew before the fetch finished, so it reported no recordings while three were arriving.
+        this.settingsSheet.refresh();
+      });
+    };
     this.expeditionView.bind({
       onContinue: () => this.continueExpedition(),
       onImport: () => void this.importExpedition(),

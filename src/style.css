@@ -2005,3 +2005,69 @@ button { color: inherit; font: inherit; }
 }
 .audio-status i { margin: 0 6px; font-style: normal; opacity: 0.5; }
 .audio-status.warn { color: color-mix(in srgb, #d98a52 78%, var(--ink, #f1eadb)); }
+
+/* --- Sound that did not open ----------------------------------------------
+   A plate in the game's own voice, and deliberately not a hold: it does not stop anything, because silent
+   audio is not dangerous the way a claim running unattended is. Bottom-centred rather than modal, so the
+   title screen's first impression is not a dialog box. */
+.audio-gate {
+  position: absolute;
+  z-index: 14;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + clamp(14px, 2cqw, 26px));
+  left: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 clamp(12px, 2cqw, 24px);
+  pointer-events: none;
+}
+.audio-gate[hidden] { display: none; }
+.audio-gate-frame {
+  pointer-events: auto;
+  width: min(100%, 440px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: clamp(12px, 1.6cqw, 18px);
+  background: linear-gradient(168deg, #241f16 0, #17150f 100%);
+  border: 1px solid color-mix(in srgb, #d98a52 46%, transparent);
+  border-radius: 3px;
+  box-shadow: 0 18px 44px rgb(0 0 0 / .6);
+  animation: audio-gate-in 220ms cubic-bezier(.16, 1, .3, 1);
+}
+@keyframes audio-gate-in { from { opacity: 0; transform: translateY(10px); } }
+@media (prefers-reduced-motion: reduce) { .audio-gate-frame { animation: none; } }
+.audio-gate-frame b {
+  font-size: clamp(12px, 1.2cqw, 15px);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: color-mix(in srgb, #d98a52 80%, var(--ink, #f1eadb));
+}
+.audio-gate-frame span {
+  font-size: clamp(11px, 1cqw, 13px);
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 72%, transparent);
+}
+.audio-gate-row { display: flex; gap: 8px; margin-top: 4px; }
+.audio-gate-row button {
+  flex: 1 1 auto;
+  min-height: 40px;
+  font: inherit;
+  font-size: clamp(11px, 1cqw, 13px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  border-radius: 2px;
+  cursor: pointer;
+  color: #17150f;
+  background: color-mix(in srgb, #d98a52 82%, var(--ink, #f1eadb));
+  border: 1px solid color-mix(in srgb, #d98a52 82%, var(--ink, #f1eadb));
+}
+.audio-gate-row button[hidden] { display: none; }
+.audio-gate-row button.quiet {
+  flex: 0 1 auto;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 58%, transparent);
+  background: none;
+  border-color: color-mix(in srgb, var(--brass, #9a927d) 36%, transparent);
+}
+.audio-gate-row button.quiet:hover { color: var(--ink, #f1eadb); border-color: var(--ink, #f1eadb); }
+.shell[data-layout="phone"] .audio-gate-row button { min-height: 46px; }

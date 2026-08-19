@@ -187,9 +187,14 @@ export class Music {
   private scale = 1;
   private started = false;
   private tried = false;
-  /** Which format was chosen, or why nothing was. Read by the settings panel. */
+  /** Which format was chosen, or why nothing was. Read by the settings panel and the audio gate. */
   format: string | null = null;
   refusal: string | null = null;
+
+  /** Whether anybody has asked for the score yet. It loads at deployment, not on the title screen. */
+  get requested(): boolean {
+    return this.tried;
+  }
   private sinceSync = 0;
 
   constructor(private readonly context: () => AudioContext | null) {}
@@ -303,6 +308,30 @@ export class Music {
     const gains = layer === null ? { survey: 0, framed: 0 } : crossfadeGains(layer === "framed" ? 1 : 0);
     ramp(context, this.voices.survey.gain.gain, gains.survey, MUSIC.fade);
     ramp(context, this.voices.framed.gain.gain, gains.framed, MUSIC.fade);
+  }
+
+  /**
+   * Try again from nothing.
+   *
+   * Tears the old elements out rather than reusing them: an element that failed has an error state a browser
+   * will happily keep, and the point of a retry is to stop believing anything the last attempt reported.
+   */
+  async retry(): Promise<void> {
+    for (const voice of this.voices ? [this.voices.survey, this.voices.framed] : []) {
+      voice.element.pause();
+      voice.element.removeAttribute("src");
+      voice.element.remove();
+    }
+    this.voices = null;
+    this.master = null;
+    this.started = false;
+    this.tried = false;
+    this.format = null;
+    this.refusal = null;
+    const wanted = this.layer;
+    this.layer = null;
+    await this.load();
+    this.setLayer(wanted);
   }
 
   /** Drop the score while the game is held, and bring it back afterwards. */

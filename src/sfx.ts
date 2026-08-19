@@ -238,6 +238,14 @@ export class SampleBank {
     return this.loading;
   }
 
+  /** Throw away what loaded and fetch it all again. */
+  async retry(context: AudioContext): Promise<void> {
+    this.buffers.clear();
+    this.voices.clear();
+    this.loading = null;
+    await this.arm(context);
+  }
+
   has(id: SampleId): boolean {
     return this.buffers.has(id);
   }
