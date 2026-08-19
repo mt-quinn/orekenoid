@@ -52,6 +52,10 @@ const CHANNELS: readonly Channel[] = [
  */
 export function audioStatusHtml(status: AudioStatus | null): string {
   if (!status) return "";
+  // Before deployment there is nothing to report and nothing wrong. A browser will not let audio start until
+  // the player has done something, so the title screen's honest reading is "not yet" -- which the first version
+  // of this rendered as a warning, and a panel that cries fault at its own normal state is worse than no panel.
+  if (!status.started) return `<p class="audio-status">Sound starts when you deploy</p>`;
   const score = status.musicFormat
     ? `SCORE · ${status.musicFormat.toUpperCase()}${status.musicPlaying ? "" : " · not playing"}`
     : `SCORE · ${status.musicRefusal ?? "not started"}`;
@@ -61,6 +65,8 @@ export function audioStatusHtml(status: AudioStatus | null): string {
 }
 
 export interface AudioStatus {
+  /** Whether the audio has been allowed to start at all, which needs a gesture. */
+  started: boolean;
   musicFormat: string | null;
   musicRefusal: string | null;
   musicPlaying: boolean;

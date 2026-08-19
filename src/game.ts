@@ -34,7 +34,7 @@ import { shadowQuad, visibleFrom } from "./light/shadow";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Music, layerFor } from "./music";
-import { RAIL_VOICE } from "./sfx";
+import { RAIL_VOICE, SAMPLES } from "./sfx";
 import { AudioSettings } from "./audioSettings";
 import { KeyRebinder, SettingsSheet, type AudioStatus } from "./settingsView";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
@@ -277,11 +277,12 @@ export class OrekenoidGame {
   /** What the audio is actually doing, for the settings panel to state plainly. */
   private audioStatus(): AudioStatus {
     return {
+      started: this.audio.started,
       musicFormat: this.music.format,
       musicRefusal: this.music.refusal,
       musicPlaying: this.music.diagnostics.playing,
       samplesLoaded: this.audio.loadedSamples.length,
-      samplesExpected: 3,
+      samplesExpected: Object.keys(SAMPLES).length,
     };
   }
   /** Which station the bay is previewing on the machine. Selection is a look, not a buy. */
