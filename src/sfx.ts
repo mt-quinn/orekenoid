@@ -149,7 +149,10 @@ export const SAMPLES: Record<SampleId, SampleSpec> = {
  */
 export const RAIL_VOICE = { gain: 0.62, rate: 1.12 } as const;
 
-const EXTENSIONS = ["opus", "ogg", "mp3", "m4a", "wav"] as const;
+// `m4a` sits second rather than last because it is the fallback that actually ships. Safari refuses Ogg,
+// so it fetches the Opus, fails to decode it, and then wants the next thing that works -- with `m4a` at
+// the end that was three dead round trips per file, on the platform least able to afford them.
+const EXTENSIONS = ["opus", "m4a", "ogg", "mp3", "wav"] as const;
 
 /** The gain a sample plays at before anything situational is applied to it. */
 export function baseGain(spec: SampleSpec): number {

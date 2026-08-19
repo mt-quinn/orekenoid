@@ -8,9 +8,11 @@ public/music/bgm-explore.opus   (or .ogg / .mp3 / .m4a / .wav)
 public/music/bgm-framed.opus
 ```
 
-`src/music.ts` tries `.opus`, `.ogg`, `.mp3`, `.m4a`, `.wav` in turn and takes the first that loads. Opus in an
-Ogg container is what is here now and it plays in Chromium and Firefox; **Safari does not support Ogg**, so an
-`.mp3` or `.m4a` alongside is what would make this work on an iPhone.
+`src/music.ts` tries `.opus`, `.m4a`, `.ogg`, `.mp3`, `.wav` in turn and takes the first that both fetches and
+decodes. Opus in an Ogg container is the master; **Safari does not support Ogg**, so an AAC copy sits beside
+every file and is what plays on an iPhone. `m4a` is second in that list rather than last because it is the
+fallback that actually ships: Safari fetches the Opus, fails to decode it, and should then reach the working
+file in one more request rather than three.
 
 ## What the code assumes
 
@@ -78,3 +80,32 @@ ffmpeg -i public/music/brickbreak.opus -af astats=measure_perchannel=none -f nul
 **One recording for both the paddle and the rails**, per the design. `RAIL_VOICE` steps the rail back 4dB and up
 a tone, because a rally is meant to be readable with the screen ignored and paddle-rail-rail-paddle is the shape
 being read. Set both to 1 to hear them identical.
+
+# Fallbacks, and the headers that make them work
+
+Every file here has an AAC twin, generated from the Opus master and committed alongside it. Regenerate them
+whenever a master changes:
+
+```
+ffmpeg -y -i bgm-explore.opus -c:a aac -b:a 112k -movflags +faststart bgm-explore.m4a
+ffmpeg -y -i bgm-framed.opus  -c:a aac -b:a 144k -movflags +faststart bgm-framed.m4a
+ffmpeg -y -i brickbreak.opus  -c:a aac -b:a 160k -movflags +faststart brickbreak.m4a
+```
+
+**Encode both mixes in the same pass.** The identical-length assumption above applies to the fallbacks too, and
+it is the one that breaks silently. AAC pads, so the pair came out at 508.895s rather than the master's
+508.901542s -- what matters is that they came out equal to *each other*, which they do because they were
+encoded with the same encoder and the same settings. Encode one and not the other, or at different bitrates,
+and the sync spends the session snapping.
+
+**AAC is not gapless.** The encoder's delay and padding mean the looping copy may click on the wrap in Safari
+where the Opus does not. Nothing in the code can fix that; it needs either a gapless-tagged file or a loop
+short enough to decode into a buffer.
+
+## Vercel serves these as `application/octet-stream` unless told otherwise
+
+Neither `.opus` nor `.m4a` is in Vercel's extension table, so both arrive as a generic byte stream.
+`decodeAudioData` does not care -- it is handed an `ArrayBuffer` and the type is never consulted, which is why
+the sound effects worked on the live site regardless. A media element does care, and the score is streamed
+through one. `vercel.json` sets `audio/ogg` and `audio/mp4` explicitly; a new audio extension needs a rule
+there as well as a file here.
