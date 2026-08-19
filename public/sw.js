@@ -9,8 +9,10 @@
 //   navigations   network first, cache as fallback. A stale HTML shell pinned in cache is how a
 //                 PWA ends up serving last month's build forever, and the shell is one small
 //                 request.
-//   /music/       stale while revalidating. Cache first for speed, then quietly refetch and replace, so a
-//                 re-mastered track reaches a returning player on their next visit.
+//   media         not touched at all. See below -- this one is not a preference, it is a correctness rule.
+//   /music/       stale while revalidating, for the plain `fetch` the sound effects use. Cache first for speed,
+//                 then quietly refetch and replace, so a re-mastered track reaches a returning player on their
+//                 next visit.
 //   everything    cache first. Vite fingerprints its assets, so a cached hit for a hashed URL is
 //                 by definition the right bytes, and going to the network to confirm that is pure
 //                 latency.
@@ -26,7 +28,9 @@
 // Bumping this is the whole release mechanism: `activate` deletes every other generation. Bumped again for the
 // audio: stale-while-revalidate serves the cached copy first, which meant a browser that had already stored the
 // mono AAC kept being handed the one file WebKit refuses, for at least one more visit, after it was fixed.
-const CACHE = "orekenoid-v3";
+// Bumped again: the previous generation holds full-file 200 responses for the music, which is what this worker
+// used to hand a media element instead of a range.
+const CACHE = "orekenoid-v4";
 /** Stable, unhashed URLs, where a cached copy is a guess about freshness rather than a certainty. */
 const REVALIDATE = "/music/";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
@@ -56,6 +60,25 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  // Media is handed straight back to the browser, and this is the most expensive thing in this file to have
+  // learned.
+  //
+  // A media element streams by asking for byte ranges. This worker answered a ranged request with the whole file
+  // out of the cache -- a 200 where the element required a 206 -- and Safari's reaction to that is to refuse the
+  // source outright: `readyState` 0, `MediaError.code` 4, `SRC_NOT_SUPPORTED`, which reads exactly like an
+  // unplayable file and is nothing of the sort. Measured: the same bytes played instantly from a `blob:` URL,
+  // while a `fetch` with a Range header came back 200 with no `content-range` through the worker and 206
+  // straight from the server.
+  //
+  // The small sound effects survived it, because a whole-file response for seven kilobytes is something Safari
+  // will accept; ten megabytes it will not. So the symptom appeared only for the score, which sent every
+  // diagnosis after the score's own files.
+  //
+  // `destination` catches the element; the Range header catches anything else that streams. Either is enough to
+  // stay out of the way. The cost is that the score is not available offline, which is worth paying: the
+  // alternative is a worker quietly breaking the one request type it cannot represent.
+  if (request.destination === "audio" || request.destination === "video" || request.headers.has("range")) return;
 
   if (request.mode === "navigate") {
     event.respondWith((async () => {
