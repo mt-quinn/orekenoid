@@ -79,11 +79,18 @@ interface SampleSpec {
   /**
    * Peak amplitude measured in the file that is actually here, and the peak this sound should play at.
    *
-   * Stated as a pair rather than as one gain because the pair is the part worth reading: the gain is just
-   * their ratio, and the target is the only number anybody should be editing. The three files are not
-   * level-matched to each other -- `ballhitbrick` peaks 6.7dB below `ballhitwallpaddle` -- so without this the
-   * relative balance of the game's most frequent sounds would be an accident of mastering rather than a
-   * decision.
+   * Stated as a pair rather than as one gain because the pair is the part worth reading: the gain is just their
+   * ratio, and the target is the only number anybody should be editing. The three files are not level-matched to
+   * each other -- `ballhitbrick` peaks 6.7dB below `ballhitwallpaddle` -- so without this the relative balance of
+   * the game's most frequent sounds would be an accident of mastering rather than a decision.
+   *
+   * **The targets are set against the tone bank, not against the music.** The first version of this file
+   * reasoned from the score's 0.34 and landed on peaks of 0.18 to 0.36 -- which is 15 to 20dB above the
+   * synthesised impacts these replace, and the recordings drowned everything else in the game. The rest of the
+   * effects peak between 0.012 and 0.075; a recording standing in for one of them belongs in that range, a
+   * little above its stand-in's peak because a recorded transient reads quieter than a decaying oscillator of
+   * the same height. `tests/sfx.test.ts` holds each target against its fallback's volume so this cannot drift
+   * apart again.
    */
   peak: number;
   target: number;
@@ -113,7 +120,8 @@ export const SAMPLES: Record<SampleId, SampleSpec> = {
   paddleOrRail: {
     path: "music/ballhitwallpaddle",
     peak: 0.559,
-    target: 0.18,
+    // Against `paddleHit` at 0.025.
+    target: 0.035,
     voices: 4,
     minGap: 0,
     spread: 0.05,
@@ -122,7 +130,8 @@ export const SAMPLES: Record<SampleId, SampleSpec> = {
   brickHit: {
     path: "music/ballhitbrick",
     peak: 0.259,
-    target: 0.2,
+    // Against `brickChip` at 0.025.
+    target: 0.035,
     voices: 5,
     minGap: 0,
     spread: 0.06,
@@ -133,7 +142,9 @@ export const SAMPLES: Record<SampleId, SampleSpec> = {
   brickBroken: {
     path: "music/brickbreak",
     peak: 0.624,
-    target: 0.36,
+    // Against `brickBreak` at 0.025 *plus* `brickBreakBody` at 0.055, which used to sound together -- so the
+    // recording's stand-in is the pair, not the click on its own. Level with the heaviest tone in the bank.
+    target: 0.075,
     voices: 4,
     minGap: 0.04,
     spread: 0.045,
@@ -145,10 +156,13 @@ export const SAMPLES: Record<SampleId, SampleSpec> = {
  * Rail and paddle share one recording, per the design, and are told apart by gain and rate instead.
  *
  * The tone vocabulary pitched them a full octave and a half apart on purpose: a rally is meant to be readable
- * with the screen ignored, and paddle-rail-rail-paddle is the shape you are reading. One file for both keeps
- * the material consistent; these keep the shape. Set both to 1 to hear them identical.
+ * with the screen ignored, and paddle-rail-rail-paddle is the shape you are reading. One file for both keeps the
+ * material consistent; these keep the shape. Set both to 1 to hear them identical.
+ *
+ * The gain is the ratio the tones used -- `railHit` at 0.012 against `paddleHit` at 0.025 -- rather than a
+ * number picked by ear, so the rail sits where it always sat relative to the paddle.
  */
-export const RAIL_VOICE = { gain: 0.62, rate: 1.12 } as const;
+export const RAIL_VOICE = { gain: 0.48, rate: 1.12 } as const;
 
 // `m4a` sits second rather than last because it is the fallback that actually ships: Safari refuses Ogg, so it
 // fetches the Opus, fails to decode it, and then wants the next thing that works.

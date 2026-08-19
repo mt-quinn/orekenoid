@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SOUNDS } from "../src/audio";
 import { RAIL_VOICE, SAMPLES, SFX, VoiceCount, baseGain, clipCurve, crowdGain, jitteredRate, softClip, type SampleId } from "../src/sfx";
 
 const IDS = Object.keys(SAMPLES) as SampleId[];
@@ -24,26 +25,50 @@ describe("balancing the recordings", () => {
     expect(SAMPLES.brickBroken.target).toBeGreaterThan(SAMPLES.paddleOrRail.target);
   });
 
-  it("cannot clip however much is summed into the bus", () => {
-    // Counting voices keeps a crowd clear; it cannot keep it safe. Every sample in the game firing at its cap
-    // at once is worth well over full scale, and Web Audio's destination clips hard.
+  it("sits in the same range as the sounds it replaces", () => {
+    // The point of this block, and the thing that was wrong: the first version set these against the score's
+    // 0.34 and shipped peaks of 0.18 to 0.36, which is 15 to 20dB above the tone bank, so the recordings buried
+    // everything else. A recording standing in for a tone belongs a little above that tone's peak -- a recorded
+    // transient reads quieter than a decaying oscillator of the same height -- and nowhere near ten times it.
+    for (const id of IDS) {
+      const stand = SOUNDS[SAMPLES[id].fallback].volume ?? 0;
+      const ratio = SAMPLES[id].target / stand;
+      expect(ratio).toBeGreaterThanOrEqual(1);
+      expect(ratio).toBeLessThanOrEqual(3.2);
+    }
+  });
+
+  it("never plays louder than the loudest synthesised sound in the game", () => {
+    const loudest = Math.max(...Object.values(SOUNDS).map((tone) => tone.volume ?? 0));
+    for (const id of IDS) expect(SAMPLES[id].target).toBeLessThanOrEqual(loudest);
+  });
+
+  it("still cannot clip, however much is summed into the bus", () => {
     const worst = IDS.reduce(
       (total, id) =>
         total +
         SAMPLES[id].target * Array.from({ length: SAMPLES[id].voices }, (_, n) => crowdGain(n)).reduce((a, b) => a + b, 0),
       0,
     );
-    expect(worst).toBeGreaterThan(1);
-    expect(Math.abs(softClip(worst))).toBeLessThan(1);
+    // At these levels the shaper no longer does real work in ordinary play, which is where a limiter belongs:
+    // one that engages during a normal rally is a mix problem wearing a limiter.
+    expect(worst).toBeLessThan(1);
+    expect(Math.abs(softClip(worst * 8))).toBeLessThan(1);
   });
 
   it("leaves an ordinary impact alone", () => {
     // The curve has unit slope at zero, so the bus is inaudible until something is actually too loud.
     for (const id of IDS) {
       const target = SAMPLES[id].target;
-      // Within half a decibel, which is under the ear's resolution for a transient.
-      expect(softClip(target) / target).toBeGreaterThan(0.945);
+      expect(softClip(target) / target).toBeGreaterThan(0.99);
     }
+  });
+
+  it("keeps the rail where the tones had it relative to the paddle", () => {
+    // `railHit` at 0.012 against `paddleHit` at 0.025, taken from the vocabulary rather than picked by ear, so a
+    // rally reads the way it always did.
+    const toneRatio = (SOUNDS.railHit.volume ?? 0) / (SOUNDS.paddleHit.volume ?? 1);
+    expect(RAIL_VOICE.gain).toBeCloseTo(toneRatio, 1);
   });
 
   it("tells a rail apart from a paddle without a second file", () => {

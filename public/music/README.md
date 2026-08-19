@@ -77,8 +77,16 @@ no scheduling latency and several copies overlapping. A media element gives neit
 **Not level-matched to each other.** Measured peaks are -5.0dB, -11.8dB and -4.1dB, so `ballhitbrick` sits 6.7dB
 under `ballhitwallpaddle` in the files. `SAMPLES` states each measured peak alongside the peak the sound should
 play at and takes the ratio, so the balance between the game's three most frequent sounds is a decision in code
-rather than an accident of mastering. `target` is the only number worth editing. Re-measure `peak` if a file is
-replaced:
+rather than an accident of mastering. `target` is the only number worth editing.
+
+**Set the targets against the tone bank in `src/audio.ts`, never against the music.** The first version reasoned
+from the score's 0.34 gain and landed on peaks of 0.18 to 0.36. The synthesised effects these stand in for peak
+between 0.012 and 0.075, so the recordings played 15 to 20dB over everything else and buried the game. They now
+sit at 0.035, 0.035 and 0.075, a little above each stand-in's own peak because a recorded transient reads quieter
+than a decaying oscillator of the same height, and `tests/sfx.test.ts` holds every target against its fallback's
+volume so the two cannot drift apart again.
+
+Re-measure `peak` if a file is replaced:
 
 ```
 ffmpeg -i public/music/brickbreak.opus -af astats=measure_perchannel=none -f null -
