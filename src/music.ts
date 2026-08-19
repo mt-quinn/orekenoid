@@ -341,6 +341,11 @@ export class Music {
     const dt = Math.max(0, Math.min(0.5, (now - this.lastStep) / 1000));
     this.lastStep = now;
     if (!this.voices || dt === 0) return;
+    this.sinceSync += dt;
+    if (this.sinceSync >= MUSIC.syncCheck) {
+      this.sinceSync = 0;
+      this.correctDrift();
+    }
     // Per second, so the fade takes `MUSIC.fade` however often this is called.
     const towards = (from: number, to: number, seconds: number): number => {
       const room = to - from;
@@ -377,7 +382,11 @@ export class Music {
    * Tears the old elements out rather than reusing them: an element that failed has an error state a browser
    * will happily keep, and the point of a retry is to stop believing anything the last attempt reported.
    */
-  async retry(): Promise<void> {
+  retry(): Promise<void> {
+    // Synchronous down to the `load` call, and `load` is synchronous down to its `play`. Anything awaited on the
+    // way there spends the click that asked for the retry, and the browser refuses the play -- which is the exact
+    // bug this button exists to recover from, reintroduced inside the recovery. Not `async`, for the same reason:
+    // an `async` method's body resumes in a microtask and this should not depend on that being generous.
     for (const voice of this.voices ? [this.voices.survey, this.voices.framed] : []) {
       voice.element.pause();
       voice.element.removeAttribute("src");
@@ -390,8 +399,10 @@ export class Music {
     this.refusal = null;
     const wanted = this.layer;
     this.layer = null;
-    await this.load();
-    this.setLayer(wanted);
+    const loading = this.load();
+    return loading.then(() => {
+      if (wanted) this.setLayer(wanted);
+    });
   }
 
   /** Drop the score while the game is held, and bring it back afterwards. */
@@ -420,12 +431,16 @@ export class Music {
    * tracks each correcting toward the other is a control loop that hunts.
    */
   syncTick(dt: number): void {
-    // Stepped here as well as on the interval, so a running game fades at frame rate rather than at 30Hz.
+    // Only the fade, at frame rate rather than at 30Hz. The drift correction moved into `step` so it also runs
+    // on the title screen, where this is not called and where the two streams can now be restarted by the
+    // retry button -- leaving them tens of milliseconds apart with nothing to close the gap before the first
+    // transition, which is the one moment being in step actually matters.
+    void dt;
     this.step();
+  }
+
+  private correctDrift(): void {
     if (!this.voices || !this.started) return;
-    this.sinceSync += dt;
-    if (this.sinceSync < MUSIC.syncCheck) return;
-    this.sinceSync = 0;
     const reference = this.voices.survey.element;
     const follower = this.voices.framed.element;
     if (reference.paused || follower.paused) return;

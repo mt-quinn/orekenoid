@@ -743,13 +743,17 @@ export class OrekenoidGame {
     }
     this.audioGate.attach({
       onRetry: () => {
+        // Order matters, and it is the click that decides it. Everything that needs the browser to believe a
+        // human asked -- resuming the context, and the score's `play()` -- happens synchronously here. The
+        // sample refetch is a plain download and can wait its turn; putting it first spent the activation and
+        // left the score refused all over again, which is the failure this button is for.
         this.audio.start();
         this.audio.revive();
+        const score = this.music.requested ? this.music.retry() : Promise.resolve();
         void (async () => {
+          await score;
           await this.audio.ready();
           await this.audio.retrySamples();
-          // Only if it had already been asked for: a retry on the title screen should not pull the score down.
-          if (this.music.requested) await this.music.retry();
           this.checkAudio();
         })();
       },
