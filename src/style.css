@@ -306,13 +306,10 @@ button { color: inherit; font: inherit; }
   z-index: auto;
   inset: 0;
   display: grid;
-  /* Heading, then the way in, then the rule, with flexible space above and below so the block sits in
-     the middle of the screen.
-     This used to be five rows with the paddle bay flexing to fill the middle -- the chassis previews
-     were the point of the screen. With the choice gone the bay went with it, and the same template left
-     three small cards pinned to the top of an otherwise empty plate. */
-  grid-template-rows: auto minmax(0, 1fr) auto auto minmax(0, 1.2fr);
-  align-content: stretch;
+  /* Title, the way in, the rule. The middle row takes the slack and the stack sits centred inside it
+     rather than stretching to fill it -- which is what made the phone's three cards nearly five hundred
+     pixels tall each, because they were dividing a `1fr` track between them. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   justify-items: center;
   gap: clamp(10px, 1.4cqw, 20px);
   padding: clamp(20px, 2.8cqw, 40px) clamp(24px, 3.4cqw, 48px) clamp(18px, 2.4cqw, 34px);
@@ -325,9 +322,10 @@ button { color: inherit; font: inherit; }
 .deployment-heading, .armor-rule, .menu { transition: opacity .18s ease; }
 .deployment-heading, .menu { position: relative; z-index: 3; }
 /* The heading keeps the top row; the menu takes the row after the flexible gap, so it lands centred. */
-.deployment-heading { justify-self: start; grid-row: 1; }
-.menu { grid-row: 3; }
-.armor-rule { grid-row: 4; }
+/* Centred, because this is a title screen and a title screen's name belongs over its buttons. */
+.deployment-heading { grid-row: 1; justify-self: center; text-align: center; }
+.menu { grid-row: 2; align-self: center; }
+.armor-rule { grid-row: 3; }
 .deployment.loading .deployment-heading,
 .deployment.loading .armor-rule,
 .deployment.loading .menu { opacity: 0; pointer-events: none; }
@@ -364,9 +362,9 @@ button { color: inherit; font: inherit; }
 .deployment.failed .deployment-loader i { display: none; }
 @keyframes deployment-load { from { transform: translateX(-100%); } to { transform: translateX(238%); } }
 
-.deployment-heading { display: flex; align-items: center; justify-content: flex-start; gap: clamp(22px, 3cqw, 46px); padding: 2px 4px clamp(10px, 1cqw, 15px); }
+.deployment-heading { display: flex; align-items: center; justify-content: center; gap: clamp(22px, 3cqw, 46px); padding: 2px 4px clamp(10px, 1cqw, 15px); }
 .deployment-heading > div:first-child { display: flex; align-items: baseline; min-width: max-content; }
-.deployment h1 { margin: 0; color: #f0e4cd; font-family: "Helvetica Neue Condensed Black", "DIN Condensed", "Arial Narrow", sans-serif; font-size: clamp(26px, 2.45cqw, 38px); font-weight: 900; line-height: .92; letter-spacing: -.015em; }
+.deployment h1 { margin: 0; color: #f0e4cd; font-family: "Helvetica Neue Condensed Black", "DIN Condensed", "Arial Narrow", sans-serif; font-size: clamp(34px, 3.6cqw, 58px); font-weight: 900; line-height: .92; letter-spacing: -.015em; }
 .armor-rule {
   position: relative;
   z-index: 3;
@@ -886,12 +884,13 @@ button { color: inherit; font: inherit; }
    whole argument of the screen, so they get reshaped rather than replaced with artwork.
    -------------------------------------------------------------------------- */
 .shell[data-layout="phone"] .deployment {
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 10px;
-  /* Room for the action bar, plus the home indicator underneath it. */
-  padding: calc(14px + var(--safe-top)) 12px calc(78px + var(--safe-bottom));
+  /* The deploy footer this used to leave room for is gone, and reserving 78 pixels for it pushed the stack
+     off centre. What is left is the home indicator. */
+  padding: calc(14px + var(--safe-top)) 12px calc(20px + var(--safe-bottom));
 }
-.shell[data-layout="phone"] .deployment h1 { font-size: 26px; }
+.shell[data-layout="phone"] .deployment h1 { font-size: 34px; }
 /* The armour rule is a full sentence of body copy and the least urgent thing here; it reads fine
    once a chassis is chosen, and on a phone it costs a card's worth of height. */
 .shell[data-layout="phone"] .armor-rule { display: none; }
@@ -1650,44 +1649,54 @@ button { color: inherit; font: inherit; }
    they are one row of equal cards, each carrying its own detail rather than leaning on a panel above
    them to explain which is which. */
 .menu {
-  width: min(100%, 1080px);
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: clamp(10px, 1.2cqw, 16px);
-  padding: clamp(14px, 1.6cqw, 22px) 0;
-}
-.menu-option {
+  /* A vertical stack, narrow enough to read as a menu rather than as a row of panels, and the same shape on
+     every screen. Three cards across a desktop and three down a phone were two different designs; one stack
+     is one design that happens to fit both. */
+  width: min(100%, 420px);
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-  padding: clamp(13px, 1.5cqw, 19px) clamp(15px, 1.7cqw, 22px);
-  text-align: left;
+  gap: clamp(9px, 1cqw, 13px);
+  padding: clamp(10px, 1.2cqw, 18px) 0;
+}
+.menu-option {
+  /* Centred, and sized by its contents plus a floor rather than by whatever space is going. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 68px;
+  padding: clamp(11px, 1.2cqw, 15px) clamp(16px, 1.8cqw, 24px);
+  text-align: center;
   font: inherit;
   color: var(--ink, #f1eadb);
   background: color-mix(in srgb, var(--ink, #f1eadb) 4%, transparent);
   border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 38%, transparent);
   border-radius: 3px;
   cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
 }
 .menu-option b {
-  font-size: clamp(15px, 1.5cqw, 19px);
+  font-size: clamp(19px, 2cqw, 25px);
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
+  line-height: 1.1;
 }
 /* The detail is the button's own description, so it is quiet and it wraps rather than truncating --
    a save's readout is the one thing on this screen a returning player actually reads. */
 .menu-option small {
-  font-size: clamp(10px, 0.95cqw, 12px);
-  letter-spacing: 0.06em;
-  line-height: 1.45;
-  color: color-mix(in srgb, var(--ink, #f1eadb) 58%, transparent);
+  font-size: clamp(11px, 1.05cqw, 13px);
+  letter-spacing: 0.07em;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 56%, transparent);
 }
 .menu-option:hover:not(:disabled) {
   border-color: var(--ink, #f1eadb);
   background: color-mix(in srgb, var(--ink, #f1eadb) 9%, transparent);
 }
+/* Answers the press within a frame, the way the touch buttons do. A menu that does nothing under a thumb
+   reads as a dropped input. */
+.menu-option:active:not(:disabled) { transform: scale(.985); }
 .menu-option:focus-visible { outline: 2px solid var(--rail, #e7dbc0); outline-offset: 2px; }
 /* Disabled keeps its place in the row rather than vanishing, so the menu holds its shape and the
    absence reads as "nothing to load" instead of an option the player has to wonder about. */
@@ -1703,4 +1712,4 @@ button { color: inherit; font: inherit; }
   border-color: var(--danger, #ff655b);
   background: color-mix(in srgb, var(--danger, #ff655b) 10%, transparent);
 }
-.shell[data-layout="phone"] .menu { grid-template-columns: 1fr; }
+.shell[data-layout="phone"] .menu { width: 100%; }
