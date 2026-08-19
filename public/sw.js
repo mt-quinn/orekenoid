@@ -9,13 +9,25 @@
 //   navigations   network first, cache as fallback. A stale HTML shell pinned in cache is how a
 //                 PWA ends up serving last month's build forever, and the shell is one small
 //                 request.
+//   /music/       stale while revalidating. Cache first for speed, then quietly refetch and replace, so a
+//                 re-mastered track reaches a returning player on their next visit.
 //   everything    cache first. Vite fingerprints its assets, so a cached hit for a hashed URL is
 //                 by definition the right bytes, and going to the network to confirm that is pure
 //                 latency.
 //
+// That middle rule exists because the reasoning behind the last one does not extend to it. `/music/` is the
+// one place in the build with *stable* URLs -- `bgm-explore.opus` is always `bgm-explore.opus` -- so a cached
+// hit there is not "by definition the right bytes", it is whatever was true the first time somebody loaded the
+// page, pinned until the cache name changes. Replacing a mix and having returning players never hear it is a
+// bug with no symptom the player could report.
+//
 // Saves live in localStorage and are not touched here.
 
-const CACHE = "orekenoid-v1";
+// Bumping this is the whole release mechanism: `activate` deletes every other generation. Bumped for the
+// audio, which the previous version had pinned under the wrong strategy.
+const CACHE = "orekenoid-v2";
+/** Stable, unhashed URLs, where a cached copy is a guess about freshness rather than a certainty. */
+const REVALIDATE = "/music/";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -57,6 +69,33 @@ self.addEventListener("fetch", (event) => {
         if (cached) return cached;
         throw new Error("offline and no cached shell");
       }
+    })());
+    return;
+  }
+
+  if (url.pathname.startsWith(REVALIDATE)) {
+    event.respondWith((async () => {
+      const cached = await caches.match(request);
+      // Not awaited when there is a cached copy: the point is to answer instantly and be right next time.
+      const refresh = (async () => {
+        try {
+          const fresh = await fetch(request);
+          if (fresh.ok && fresh.type === "basic") {
+            const cache = await caches.open(CACHE);
+            await cache.put(request, fresh.clone());
+          }
+          return fresh;
+        } catch {
+          return null;
+        }
+      })();
+      if (cached) {
+        event.waitUntil(refresh);
+        return cached;
+      }
+      const fresh = await refresh;
+      if (fresh) return fresh;
+      throw new Error("offline and nothing cached");
     })());
     return;
   }
