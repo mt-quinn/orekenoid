@@ -28,6 +28,13 @@ score corrects the framed mix toward the exploration one a couple of times a sec
 files is effectively zero, and the correction is a safety net for a backgrounded tab rather than a routine
 event.
 
+**No Web Audio graph.** The score is two plain `<audio>` elements playing to the output, with the crossfade, the
+duck and the player's level all multiplied into `element.volume`. The textbook shape -- `createMediaElementSource`
+into gain nodes -- works in Chromium and played to nowhere on WebKit: the elements reported themselves unpaused,
+the format was right, the gains were right, and no sound came out, while the sound effects were audible in the
+same context through the same destination. If anything here ever needs a filter or an analyser, that is the
+trade-off being reopened, and it is worth remembering what it cost the first time.
+
 **A shorter loop would be better.** At two minutes or less, decoding into memory becomes cheap again, and buffer
 sources cannot drift at all. If the piece is ever cut down, `src/music.ts` is the only file that would change.
 

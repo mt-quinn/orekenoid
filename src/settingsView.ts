@@ -58,8 +58,8 @@ export function audioStatusHtml(status: AudioStatus | null): string {
   if (!status.started) return `<p class="audio-status">Sound opens on your first click</p>`;
   const score = status.musicFormat
     ? `SCORE · ${status.musicFormat.toUpperCase()}${status.musicPlaying ? "" : " · not playing"}`
-    // Before deployment the score has not been asked for, which is not the same as having failed.
-    : `SCORE · ${status.musicRefusal ?? (status.musicRequested ? "did not load" : "plays on deployment")}`;
+    // Not asked for yet is not the same as having failed, though after the first click it is a brief state.
+    : `SCORE · ${status.musicRefusal ?? (status.musicRequested ? "loading" : "opens on your first click")}`;
   const impacts = `IMPACTS · ${status.samplesLoaded} of ${status.samplesExpected}`;
   const bad = status.samplesLoaded < status.samplesExpected
     || Boolean(status.musicRefusal)

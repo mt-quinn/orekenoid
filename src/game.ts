@@ -234,7 +234,9 @@ export class OrekenoidGame {
    * Given the game's own context rather than one of its own, so it starts on the same gesture and recovers
    * from the same interruptions as everything else that makes a noise.
    */
-  readonly music = new Music(() => this.audio.audioContext);
+  // Takes no context: the score is two media elements playing to the output, not a Web Audio graph. See the
+  // note at the top of `music.ts` for why.
+  readonly music = new Music();
   readonly hud = new Hud();
   readonly gantry = new Gantry();
   readonly salvage = new SalvageDrone();
@@ -288,8 +290,9 @@ export class OrekenoidGame {
    * perfectly well, and the title screen is a place where somebody may well want to set their levels and hear
    * that they did something.
    *
-   * The score is deliberately not loaded here. It is eleven megabytes across two streams and the title screen is
-   * not where it plays; the sample bank is eleven kilobytes and wants to be ready before the first brick.
+   * The score loads here too. I held it back at first, worried about pulling eleven megabytes on a menu -- but it
+   * streams rather than decoding into memory, so it starts on a few seconds of buffer and costs nothing upfront.
+   * There was never a reason to make somebody dismiss a menu before the music starts.
    */
   /**
    * Look at the sound, unless something louder is already saying so.
@@ -304,6 +307,9 @@ export class OrekenoidGame {
 
   private openSound(): void {
     this.audio.start();
+    // The score is asked for here rather than at deployment, so it is playing while the menu is still up. It
+    // needs no context and no gesture of its own now that it is a pair of media elements.
+    void this.music.load().then(() => this.checkAudio());
     // Judged only once the work `start` set going has settled. Checking immediately reported a suspended
     // context and no recordings, both of which were true for a moment and neither of which was wrong.
     void this.audio.ready().then(() => this.checkAudio());

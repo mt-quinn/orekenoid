@@ -5,8 +5,10 @@ describe("which layer is playing", () => {
   const state = (over: Partial<Parameters<typeof layerFor>[0]> = {}) =>
     layerFor({ started: true, mode: "survey", dying: false, ...over });
 
-  it("is silent before the expedition starts", () => {
-    expect(state({ started: false })).toBeNull();
+  it("plays the mine's music on the title screen too", () => {
+    // The exploration mix is the game's music and the title screen is part of the game. It used to wait for a
+    // deployment, which meant somebody had to dismiss a menu before hearing anything.
+    expect(state({ started: false })).toBe("survey");
   });
 
   it("plays the mine out in the mine", () => {

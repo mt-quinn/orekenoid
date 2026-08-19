@@ -17,6 +17,20 @@
 // is about uncorrelated material. Two mixes of one track share most of their content, so their amplitudes add
 // rather than their powers: holding `a + b = 1` keeps the level flat, while the equal-power `a² + b² = 1`
 // would put a bulge in the middle of every transition.
+//
+// **There is no Web Audio graph here, deliberately.** The first version routed both elements through
+// `createMediaElementSource` into gain nodes, which is the textbook shape and works perfectly in Chromium. On
+// WebKit it played to nowhere: the elements reported themselves unpaused, the format was right, the gains were
+// right, and no sound came out -- while the sound effects, which are buffer sources and never touch a media
+// element, were audible in the same context through the same destination. That asymmetry is the whole clue, and
+// it is a long-standing WebKit behaviour rather than anything this code can hold correctly.
+//
+// So the score is two plain `<audio>` elements playing to the output, and the crossfade, the duck and the
+// player's level are all multiplied into `element.volume`. That loses nothing -- the score never wanted an
+// effect, a filter or an analyser -- and it removes the graph, the context, and an entire class of failure that
+// cannot be seen from inside the game. `volume` has no automation, so a small stepper moves it toward its
+// target; that stepper runs on a timer of its own rather than on the game's frame loop, because the music now
+// starts on the title screen where the frame loop is not running.
 
 /** What the music is playing for. */
 export type MusicLayer = "survey" | "framed";
@@ -74,7 +88,11 @@ export const MUSIC = {
 
 /** Which layer the score should be playing, or null for silence. */
 export function layerFor(state: { started: boolean; mode: "survey" | "play" | "forge"; dying: boolean }): MusicLayer | null {
-  if (!state.started || state.dying) return null;
+  // The drone going down is the only thing that stops the music. Not being deployed yet is not: the exploration
+  // mix is the game's music and the title screen is part of the game, so it comes up as soon as it can rather
+  // than waiting for a menu to be dismissed. `started` stays in the signature because the caller has it and a
+  // future state may want it, not because it gates anything today.
+  if (state.dying) return null;
   // The forge is a menu over the mine rather than a place of its own, so it keeps the mine's music.
   return state.mode === "play" ? "framed" : "survey";
 }
@@ -161,7 +179,9 @@ export function playableExtension(probe: (type: string) => string): string | nul
 
 interface Voice {
   element: HTMLAudioElement;
-  gain: GainNode;
+  /** Where this voice's level is now, as a fraction of the score's own volume. Stepped toward `target`. */
+  level: number;
+  target: number;
 }
 
 /**
@@ -180,9 +200,12 @@ interface Voice {
  */
 export class Music {
   private voices: { survey: Voice; framed: Voice } | null = null;
-  private master: GainNode | null = null;
   private layer: MusicLayer | null = null;
   private ducked = false;
+  /** Where the duck is now, and where it is going. Stepped like the voices, for the same reason. */
+  private duckLevel = 1;
+  private stepper: number | null = null;
+  private lastStep = 0;
   /** The player's level, 0..1, multiplying the score's own. Zero is the switch turned off. */
   private scale = 1;
   private started = false;
@@ -197,7 +220,13 @@ export class Music {
   }
   private sinceSync = 0;
 
-  constructor(private readonly context: () => AudioContext | null) {}
+  /**
+   * Takes nothing.
+   *
+   * It used to be handed the game's `AudioContext`, because the score was a Web Audio graph. It is two media
+   * elements now, so it needs neither a context nor the gesture rules that come with one.
+   */
+  constructor() {}
 
   /** True when there is a score to play. False is a normal state: the game runs silent. */
   get available(): boolean {
@@ -226,8 +255,8 @@ export class Music {
   } {
     return {
       layer: this.layer,
-      surveyGain: this.voices ? this.voices.survey.gain.gain.value : 0,
-      framedGain: this.voices ? this.voices.framed.gain.gain.value : 0,
+      surveyGain: this.voices ? this.voices.survey.element.volume : 0,
+      framedGain: this.voices ? this.voices.framed.element.volume : 0,
       drift: this.drift,
       playing: Boolean(this.voices && !this.voices.survey.element.paused),
       at: this.voices ? this.voices.survey.element.currentTime : 0,
@@ -243,8 +272,6 @@ export class Music {
   async load(): Promise<void> {
     if (this.tried) return;
     this.tried = true;
-    const context = this.context();
-    if (!context) return;
     // Everything up to and including `play()` runs synchronously, inside the gesture that called this.
     //
     // The previous version set a source, awaited `loadedmetadata` over the network, and only then called
@@ -262,16 +289,13 @@ export class Music {
     this.format = extension;
     const survey = openStream(MUSIC_SOURCES.survey, extension);
     const framed = openStream(MUSIC_SOURCES.framed, extension);
-    this.master = context.createGain();
-    this.master.gain.value = this.masterTarget;
-    this.master.connect(context.destination);
-    const voice = (element: HTMLAudioElement): Voice => {
-      const gain = context.createGain();
-      gain.gain.value = 0;
-      context.createMediaElementSource(element).connect(gain).connect(this.master!);
-      return { element, gain };
+    // Silent to begin with, whichever layer is wanted, so a fade in is a fade rather than a cut.
+    survey.volume = 0;
+    framed.volume = 0;
+    this.voices = {
+      survey: { element: survey, level: 0, target: 0 },
+      framed: { element: framed, level: 0, target: 0 },
     };
-    this.voices = { survey: voice(survey), framed: voice(framed) };
     // Both told to play in the same turn, so they begin within a frame of each other and the sync only ever has
     // milliseconds to correct rather than seconds.
     const playing = Promise.all([tryPlay(survey), tryPlay(framed)]);
@@ -289,10 +313,48 @@ export class Music {
       );
     }
     this.started = true;
-    // Whatever the game asked for before the files arrived, now that there is something to play it with.
-    const wanted = this.layer;
+    this.beginStepping();
+    // Whatever the game asked for before the files arrived, now that there is something to play it with -- and
+    // the exploration mix if nothing has asked at all, which is the case on the title screen, where the frame
+    // loop that normally decides this is not running. The score's resting state is the mine.
+    const wanted = this.layer ?? "survey";
     this.layer = null;
     this.setLayer(wanted);
+  }
+
+  /**
+   * Move the levels toward their targets, on a timer of this object's own.
+   *
+   * Not the game's frame loop, which does not run on the title screen -- and the score plays there now. Also
+   * called from `syncTick` when the loop *is* running, which is harmless: the step is driven by elapsed time
+   * rather than by a passed delta, so two callers in one frame split the same interval between them instead of
+   * advancing it twice.
+   */
+  private beginStepping(): void {
+    if (this.stepper !== null) return;
+    this.lastStep = performance.now();
+    this.stepper = window.setInterval(() => this.step(), 33);
+  }
+
+  private step(): void {
+    const now = performance.now();
+    const dt = Math.max(0, Math.min(0.5, (now - this.lastStep) / 1000));
+    this.lastStep = now;
+    if (!this.voices || dt === 0) return;
+    // Per second, so the fade takes `MUSIC.fade` however often this is called.
+    const towards = (from: number, to: number, seconds: number): number => {
+      const room = to - from;
+      if (Math.abs(room) < 0.001) return to;
+      const stepSize = dt / Math.max(0.001, seconds);
+      return Math.abs(room) <= stepSize ? to : from + Math.sign(room) * stepSize;
+    };
+    this.duckLevel = towards(this.duckLevel, this.ducked ? MUSIC.duckTo : 1, MUSIC.duckFade);
+    for (const voice of [this.voices.survey, this.voices.framed]) {
+      voice.level = towards(voice.level, voice.target, MUSIC.fade);
+      // Clamped because `volume` throws on anything outside 0..1, and a rounding error is not worth a crash.
+      const wanted = MUSIC.volume * this.scale * this.duckLevel * voice.level;
+      voice.element.volume = Math.max(0, Math.min(1, wanted));
+    }
   }
 
   /**
@@ -303,11 +365,10 @@ export class Music {
   setLayer(layer: MusicLayer | null): void {
     if (layer === this.layer) return;
     this.layer = layer;
-    const context = this.context();
-    if (!context || !this.voices) return;
+    if (!this.voices) return;
     const gains = layer === null ? { survey: 0, framed: 0 } : crossfadeGains(layer === "framed" ? 1 : 0);
-    ramp(context, this.voices.survey.gain.gain, gains.survey, MUSIC.fade);
-    ramp(context, this.voices.framed.gain.gain, gains.framed, MUSIC.fade);
+    this.voices.survey.target = gains.survey;
+    this.voices.framed.target = gains.framed;
   }
 
   /**
@@ -323,7 +384,6 @@ export class Music {
       voice.element.remove();
     }
     this.voices = null;
-    this.master = null;
     this.started = false;
     this.tried = false;
     this.format = null;
@@ -336,9 +396,7 @@ export class Music {
 
   /** Drop the score while the game is held, and bring it back afterwards. */
   duck(on: boolean): void {
-    if (on === this.ducked) return;
     this.ducked = on;
-    this.applyMaster(MUSIC.duckFade);
   }
 
   /**
@@ -349,21 +407,10 @@ export class Music {
    * independently is how a pause leaves the music quiet after it resumes.
    */
   setVolume(scale: number): void {
-    const next = Math.min(1, Math.max(0, scale));
-    if (next === this.scale) return;
-    this.scale = next;
-    // Quick, because this is a slider under a finger and a slow ramp reads as an unresponsive control.
-    this.applyMaster(0.08);
-  }
-
-  private get masterTarget(): number {
-    return MUSIC.volume * this.scale * (this.ducked ? MUSIC.duckTo : 1);
-  }
-
-  private applyMaster(seconds: number): void {
-    const context = this.context();
-    if (!context || !this.master) return;
-    ramp(context, this.master.gain, this.masterTarget, seconds);
+    this.scale = Math.min(1, Math.max(0, scale));
+    // Applied on the next step rather than ramped. A slider under a finger is already stepping many times a
+    // second, and `volume` takes an immediate write without clicking the way a raw gain node would.
+    this.step();
   }
 
   /**
@@ -373,6 +420,8 @@ export class Music {
    * tracks each correcting toward the other is a control loop that hunts.
    */
   syncTick(dt: number): void {
+    // Stepped here as well as on the interval, so a running game fades at frame rate rather than at 30Hz.
+    this.step();
     if (!this.voices || !this.started) return;
     this.sinceSync += dt;
     if (this.sinceSync < MUSIC.syncCheck) return;
@@ -390,20 +439,6 @@ export class Music {
   }
 }
 
-/**
- * Ramp a gain, from wherever it actually is right now.
- *
- * `cancelAndHoldAtTime` then a ramp from the held value, rather than a bare `linearRampToValueAtTime`: a ramp
- * scheduled while an earlier one is still running interpolates from the *earlier* ramp's start, which makes a
- * transition interrupted halfway jump backwards before setting off again.
- */
-export function ramp(context: BaseAudioContext, param: AudioParam, to: number, seconds: number): void {
-  const now = context.currentTime;
-  if (typeof param.cancelAndHoldAtTime === "function") param.cancelAndHoldAtTime(now);
-  else param.cancelScheduledValues(now);
-  param.setValueAtTime(param.value, now);
-  param.linearRampToValueAtTime(to, now + seconds);
-}
 
 /** Play, tolerating a browser that refuses. A refused stream is silence, not a crash. */
 async function tryPlay(element: HTMLAudioElement): Promise<void> {
