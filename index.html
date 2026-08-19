@@ -106,13 +106,23 @@
              targets, focus, a pressed state and a screen-reader label for free, and the HUD is
              already DOM. Hidden entirely unless the game is being played with fingers. -->
         <nav class="touch-actions" id="touchActions" aria-label="Controls" hidden>
-          <div class="touch-cluster touch-cluster-top">
-            <button type="button" data-touch="atlas" aria-label="Atlas"><i>▤</i><small>ATLAS</small></button>
-            <button type="button" data-touch="forge" aria-label="Refit Bay"><i>⚒</i><small>FORGE</small></button>
-            <button type="button" data-touch="pause" aria-label="Pause"><i>❚❚</i><small>PAUSE</small></button>
+          <!-- Deliberate and rare, in the corner a thumb has to reach for: looking at a map and stopping
+               the game are both things you decide to do, and neither should be reachable by a brush. -->
+          <div class="touch-cluster touch-cluster-corner">
+            <button type="button" data-touch="atlas" aria-label="Atlas"><i>▤</i></button>
+            <button type="button" data-touch="pause" aria-label="Pause"><i>❚❚</i></button>
           </div>
-          <div class="touch-cluster touch-cluster-main">
+          <!-- Pressed under pressure, so it sits low. FAST belongs to a claim and the survey's bottom-left
+               is left empty on purpose: that is where a flying thumb rests, and a button there would eat
+               the drags that start in it. -->
+          <div class="touch-cluster touch-cluster-left">
             <button type="button" data-touch="fast" aria-label="Speed up"><i>▶▶</i><small>FAST</small></button>
+          </div>
+          <!-- The primary sits centre-bottom rather than in the right corner, because the right corner is
+               the facing wheel's now and the two must never share a thumb's landing zone. Centre is also
+               the one place either hand can reach. -->
+          <div class="touch-cluster touch-cluster-main">
+            <button type="button" data-touch="forge" aria-label="Refit Bay" class="touch-secondary"><i>⚒</i><small>FORGE</small></button>
             <button type="button" data-touch="primary" id="touchPrimary"><b>COMMIT</b></button>
           </div>
         </nav>

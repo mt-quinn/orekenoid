@@ -50,7 +50,7 @@ import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
 import { Bindings, type Action } from "./bindings";
-import { detentsCrossed } from "./dial";
+import { DIAL, detentsCrossed } from "./dial";
 import { BayView } from "./bayView";
 import { TouchControls } from "./view/touchControls";
 import { Gate, Pulse, Shudder } from "./view/feel";
@@ -714,6 +714,11 @@ export class OrekenoidGame {
     const wanted = this.touch.used && this.started;
     if (panel.hidden === wanted) panel.hidden = !wanted;
     if (!wanted) return;
+    // How much of the right edge the facing wheel is using, handed to the layout so the primary button can
+    // centre itself in what is left. Derived from `DIAL` rather than written down again in the stylesheet:
+    // the two drifting apart would put a button under the rim, and both would want the same thumb.
+    const reserve = this.mode === "survey" ? Math.max(0, DIAL.radius - DIAL.hubOutset + 12) : 0;
+    this.shell?.style.setProperty("--dial-reserve", `${reserve}px`);
     if (this.fastDown) this.fastHeld += dt;
     const primary = document.querySelector<HTMLButtonElement>("#touchPrimary");
     if (primary) {
@@ -727,6 +732,13 @@ export class OrekenoidGame {
     }
     const fast = panel.querySelector<HTMLButtonElement>('[data-touch="fast"]');
     if (fast) fast.hidden = !this.arena;
+    // Shown only when it would do something.
+    //
+    // It had no visibility rule at all, which was survivable while it sat in the top corner among the other
+    // deliberate actions. Beside the primary it is not: an always-on button that answers "TOO FAR TO FORGE"
+    // is a button that lies, and it was pushing the primary off centre to do it.
+    const forge = panel.querySelector<HTMLButtonElement>('[data-touch="forge"]');
+    if (forge) forge.hidden = !(this.mode === "survey" && this.atAnchor());
   }
 
   private bindInput(): void {

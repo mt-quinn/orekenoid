@@ -22,6 +22,9 @@ import { view } from "../viewport";
 const BRASS = PALETTE.machine;
 /** The bright rail tone, for the parts of the wheel that have to read as lit metal. */
 const RAIL = PALETTE.rail;
+/** The wheel's body and hub: dark machined metal, so it reads as solid rather than as an overlay. */
+const BODY = 0x1b1f21;
+const HUB = 0x111517;
 
 export class TouchControls {
   readonly container = new Container();
@@ -55,11 +58,11 @@ export class TouchControls {
     // Appearing is fast and leaving is slow: a control that lags its own touch feels broken, and
     // one that vanishes the instant a thumb lifts flickers during the small gaps in a drag.
     this.stickAlpha = approach(this.stickAlpha, state.stick ? 1 : 0, state.stick ? 26 : 7);
-    // The wheel is always there, so its alpha answers whether it is being used rather than whether it
-    // exists: gripped or coasting is bright, idle is a quiet instrument on the panel.
-    const busy = state.dial.gripped || Math.abs(state.dial.spin) > 0.2;
-    const wanted = this.wheelVisible ? (busy ? 1 : 0.42) : 0;
-    this.turnAlpha = approach(this.turnAlpha, wanted, busy ? 26 : 5);
+    // The wheel is either mounted or it is not. It does not fade to a ghost when idle: an opaque machine
+    // part that goes half-transparent when unused stops reading as a part and starts reading as a hint.
+    // Being used is answered by the rim brightening instead, inside `drawTurn`.
+    const wanted = this.wheelVisible ? 1 : 0;
+    this.turnAlpha = approach(this.turnAlpha, wanted, wanted ? 26 : 7);
     this.hintAlpha = approach(this.hintAlpha, resting ? 1 : 0, resting ? 2.2 : 9);
 
     this.drawStick(state);
@@ -123,47 +126,50 @@ export class TouchControls {
     if (dial.radius <= 0 || !this.wheelVisible) return;
 
     const busy = dial.gripped || Math.abs(dial.spin) > 0.2;
-    // The rim, and a heavier band inside it so the wheel reads as having thickness rather than being a
-    // drawn circle.
+    // Opaque, because it is a part of the machine rather than an overlay on the world. A translucent dial
+    // reads as a HUD hint that happens to be round; a solid one reads as something bolted to the drone,
+    // which is what makes turning it feel like turning something.
     this.turn
       .circle(dial.x, dial.y, dial.radius)
-      .stroke({ width: 3, color: BRASS, alpha: busy ? 0.9 : 0.5 })
-      .circle(dial.x, dial.y, dial.radius - 9)
-      .stroke({ width: 1, color: BRASS, alpha: busy ? 0.4 : 0.2 })
+      .fill({ color: BODY, alpha: 1 })
+      .circle(dial.x, dial.y, dial.radius)
+      .stroke({ width: 2, color: busy ? RAIL : BRASS, alpha: 1 })
+      .circle(dial.x, dial.y, dial.radius - 7)
+      .stroke({ width: 1, color: BRASS, alpha: 0.45 })
       .circle(dial.x, dial.y, dial.radius * DIAL.innerGuard)
-      .stroke({ width: 1, color: BRASS, alpha: 0.14 });
+      .fill({ color: HUB, alpha: 1 })
+      .circle(dial.x, dial.y, dial.radius * DIAL.innerGuard)
+      .stroke({ width: 1, color: BRASS, alpha: 0.5 });
 
-    // Teeth, laid out in world-facing angles so they turn with the heading. Only the ones on the visible
-    // crescent are drawn, which is most of the cost saved for free.
+    // Teeth at world angles, so they turn with the heading. Only the ones on the visible crescent are
+    // drawn, which is most of the work skipped for free.
     const step = (Math.PI * 2) / DIAL.detents;
     for (let index = 0; index < DIAL.detents; index++) {
       const angle = this.heading + index * step;
-      const outer = dial.radius;
-      const inner = dial.radius - 16;
-      const x1 = dial.x + Math.cos(angle) * inner;
-      const y1 = dial.y + Math.sin(angle) * inner;
-      const x2 = dial.x + Math.cos(angle) * outer;
-      const y2 = dial.y + Math.sin(angle) * outer;
+      const x1 = dial.x + Math.cos(angle) * (dial.radius - 11);
+      const y1 = dial.y + Math.sin(angle) * (dial.radius - 11);
+      const x2 = dial.x + Math.cos(angle) * dial.radius;
+      const y2 = dial.y + Math.sin(angle) * dial.radius;
       if (x1 > dial.x) continue;
       this.turn.moveTo(x1, y1).lineTo(x2, y2);
     }
-    this.turn.stroke({ width: 2, color: BRASS, alpha: busy ? 0.7 : 0.34 });
+    this.turn.stroke({ width: 2, color: busy ? RAIL : BRASS, alpha: busy ? 1 : 0.75 });
 
-    // The index mark: a fixed pointer the teeth pass, which is the thing that makes a rotation legible.
-    // Without it a smooth ring gives no sense of having moved at all.
+    // The index mark: a fixed pointer the teeth pass, which is what makes a rotation legible. Without it a
+    // smooth ring gives no sense of having moved at all.
     const markX = dial.x - dial.radius;
     this.turn
-      .moveTo(markX - 14, dial.y)
-      .lineTo(markX + 10, dial.y - 9)
-      .lineTo(markX + 10, dial.y + 9)
-      .fill({ color: RAIL, alpha: busy ? 0.95 : 0.5 });
+      .moveTo(markX - 11, dial.y)
+      .lineTo(markX + 7, dial.y - 7)
+      .lineTo(markX + 7, dial.y + 7)
+      .fill({ color: RAIL, alpha: 1 });
 
     // A short arc showing which way it is coasting, so a spinning wheel looks spun.
     if (Math.abs(dial.spin) > 0.2) {
       const sweep = Math.min(1.1, Math.abs(dial.spin) * 0.12) * Math.sign(dial.spin);
       this.turn
-        .arc(dial.x, dial.y, dial.radius + 7, Math.PI - sweep, Math.PI + (sweep > 0 ? 0 : -sweep))
-        .stroke({ width: 2, color: RAIL, alpha: 0.5 });
+        .arc(dial.x, dial.y, dial.radius + 5, Math.PI - Math.max(0, sweep), Math.PI - Math.min(0, sweep))
+        .stroke({ width: 2, color: RAIL, alpha: 0.8 });
     }
   }
 

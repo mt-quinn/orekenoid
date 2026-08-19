@@ -26,18 +26,17 @@ export const DIAL = {
    * A hub exactly on the edge shows a true half. A little further out trims the crescent to the part a
    * thumb can actually sweep without crossing the screen's corner.
    */
-  radius: 152,
+  radius: 76,
   hubOutset: 14,
   /**
    * How far up from the bottom edge the hub sits.
    *
-   * Set by what it must not collide with rather than by taste. At 208 the rim swept down to within forty
-   * pixels of the bottom edge and ran straight through the COMMIT and SERVE buttons -- visually, and worse,
-   * in its grab band, so part of the rim was dead where a DOM button sat over it. Raised until the ring's
-   * lowest point plus its slop clears the button row, which puts the crescent's middle around three fifths
-   * of the way down: still well inside the thumb's arc.
+   * Set by what it must not collide with rather than by taste. An early version swept down through the
+   * COMMIT and SERVE buttons -- visually, and worse, in its grab band, so part of the rim was dead where a
+   * DOM button sat over it. Placed so the ring's lowest point plus its slop clears the button row, which
+   * puts the crescent's middle about three quarters of the way down: squarely in the thumb's arc.
    */
-  hubRise: 320,
+  hubRise: 200,
   /**
    * Nothing inside this fraction of the radius drives the wheel.
    *
@@ -46,8 +45,13 @@ export const DIAL = {
    * it, which is also how a real dial behaves.
    */
   innerGuard: 0.42,
-  /** Extra pixels beyond the rim that still count as a grab, since fingers are not precise. */
-  grabSlop: 42,
+  /**
+   * Extra pixels beyond the rim that still count as a grab, since fingers are not precise.
+   *
+   * Kept proportionate to the rim. On a small wheel a generous slop stops being forgiveness and starts
+   * swallowing the drags that were meant to fly the drone.
+   */
+  grabSlop: 26,
   /** Detents per full turn. Sixteen is a tick every 22.5 degrees -- felt as texture, not as a ratchet. */
   detents: 16,
   /**
