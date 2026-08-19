@@ -1,9 +1,12 @@
-// Procedural audio.
+// The game's sound, in two sections.
 //
-// Every sound in the game is currently one shaped oscillator sweep. That is a
-// deliberate placeholder, not a design: it gives every event a distinct, readable
-// pitch contour without shipping an asset library, and it keeps all of it behind
-// one call so replacing it with a real sample bank later touches this file only.
+// Most of it is still one shaped oscillator sweep per event: a deliberate placeholder that gives every event a
+// distinct, readable pitch contour without an asset library, and keeps all of it behind one call. The three
+// contacts the player hears most -- paddle or rail, brick struck, brick broken -- are now recordings instead,
+// held in `src/sfx.ts` and reached through `impact`. Each of those declares the tone it stands in for, so a
+// file that does not load costs fidelity rather than feedback.
+
+import { SAMPLES, SampleBank, type SampleId } from "./sfx";
 
 /** A named sound. Adding one here rather than at the call site keeps the sonic
  *  vocabulary reviewable in a single list. */
@@ -27,6 +30,13 @@ export interface ToneSpec {
 
 export class GameAudio {
   private context: AudioContext | null = null;
+  /**
+   * The recorded impacts, which are the three sounds the player hears most.
+   *
+   * Owned here rather than beside the game so every caller already has it: the tone vocabulary and the sample
+   * bank are one instrument with two sections, and a call site should not have to know which section answered.
+   */
+  private samples = new SampleBank();
   /**
    * Told when the context stops on its own.
    *
@@ -65,11 +75,37 @@ export class GameAudio {
     }
     if (this.context.state === "suspended") void this.context.resume();
     else if (this.context.state === "running") this.everRan = true;
+    // Not awaited: three short files, fetched and decoded well before the drone reaches a face, and a slow
+    // network costs the first few hits their fidelity rather than holding up the deployment.
+    void this.samples.arm(this.context);
+  }
+
+  /**
+   * Play a recorded impact, falling back to its synthesised stand-in if the file never arrived.
+   *
+   * `gain` and `rate` are situational multipliers on top of the sample's own balance -- material, escalation,
+   * and telling a rail apart from a paddle -- so the recording stays one recording and the expression lives at
+   * the call site.
+   */
+  impact(id: SampleId, options: { gain?: number; rate?: number; fallback?: ToneSpec | null } = {}): void {
+    const context = this.context;
+    if (!context) return;
+    if (this.samples.play(context, id, options)) return;
+    const fallback = options.fallback === undefined ? SOUNDS[SAMPLES[id].fallback] : options.fallback;
+    if (fallback) this.play(fallback);
+  }
+
+  /** Which recordings are in memory, for the diagnostics overlay. */
+  get loadedSamples(): SampleId[] {
+    return this.samples.loaded;
   }
 
   /** Bring the context back after a hold. Safe to call when it never stopped. */
   revive(): void {
     if (!this.context) return;
+    // Voices scheduled before the suspension are not sounding any more, whatever their end times say, and a
+    // bank that thinks it is crowded comes back quiet.
+    this.samples.reset();
     if (this.context.state === "suspended") void this.context.resume();
   }
 

@@ -34,6 +34,7 @@ import { shadowQuad, visibleFrom } from "./light/shadow";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
 import { Music, layerFor } from "./music";
+import { RAIL_VOICE } from "./sfx";
 import { Camera, boardZoom, surveyZoom, type CameraTransition } from "./camera";
 import { Effects } from "./effects";
 import { clamp, normalizeAngle } from "./maths";
@@ -1674,7 +1675,7 @@ export class OrekenoidGame {
 
     if (events.paddle) {
       this.ballAwayFor = 0;
-      this.audio.play(SOUNDS.paddleHit);
+      this.audio.impact("paddleOrRail");
       // The paddle is driven into the board and springs back, so a return is something the machine
       // visibly did rather than something that happened to the ball.
       arena.paddle.recoil = 1;
@@ -1691,7 +1692,9 @@ export class OrekenoidGame {
     }
 
     if (events.rail) {
-      this.audio.play(SOUNDS.railHit);
+      // The same recording as the paddle, per the design, stepped back and up so a rally still reads as
+      // paddle-rail-rail-paddle with the screen ignored.
+      this.audio.impact("paddleOrRail", { ...RAIL_VOICE, fallback: SOUNDS.railHit });
       // The rail lights where it was struck, and the bricks nearest that point twitch.
       arena.railFlash = 1;
       const at = this.world.localToWorld(ball.u, ball.v, arena);
@@ -1764,10 +1767,26 @@ export class OrekenoidGame {
     const broke = brick.hp <= 0;
     showDamage(brick);
     this.shardsAtBrick(brick, definition.edge, Math.round((broke ? 8 : 4) * heat), heat, false);
-    this.audio.play(broke ? SOUNDS.brickBreak : SOUNDS.brickChip);
-    // Bass layered under the break rather than replacing it: the click says "contact" and the body
-    // says "that was heavy". Four-hit stone gets the heavier of the two.
-    if (broke) this.audio.play(hardness >= 0.75 ? SOUNDS.brickBreakHeavy : SOUNDS.brickBreakBody);
+    // Both recordings fire on a break -- the contact, and then the stone giving way -- because a break is a
+    // hit that also broke something, not a different event. Rate carries the material and gain carries the
+    // escalation, so a runite plate at ninety per cent cleared lands lower and harder than the first chalk
+    // chip did, out of one recording.
+    const swing = Math.min(1.25, heat);
+    this.audio.impact("brickHit", {
+      rate: 1 - hardness * 0.12,
+      gain: swing,
+      fallback: broke ? SOUNDS.brickBreak : SOUNDS.brickChip,
+    });
+    // The synthesised break used to want a bass layer under it -- twelve decibels of body is the cheapest
+    // trick there is, and a triangle wave has none. A recorded break has its own, so the layer is the
+    // fallback's business now rather than something stacked on top of the sample.
+    if (broke) {
+      this.audio.impact("brickBroken", {
+        rate: 1 - hardness * 0.1,
+        gain: swing,
+        fallback: hardness >= 0.75 ? SOUNDS.brickBreakHeavy : SOUNDS.brickBreakBody,
+      });
+    }
 
     // The board takes the hit, not the camera.
     //
@@ -2441,7 +2460,9 @@ export class OrekenoidGame {
     for (const hit of events.returns) {
       this.fieldReturns++;
       this.markTutorial("face");
-      this.audio.play(SOUNDS.paddleHit);
+      // A Bounder is not the ball, but the paddle is the paddle: a face that thocks in the arena and blips in
+      // the cave would read as two different machines.
+      this.audio.impact("paddleOrRail");
       this.effects.spawnRing(hit.x * CELL, hit.y * CELL, PALETTE.rail, 0.55);
       this.effects.spawnShards(hit.x * CELL, hit.y * CELL, PALETTE.rail, 3, 0.7, false);
     }

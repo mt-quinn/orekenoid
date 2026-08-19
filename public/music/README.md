@@ -49,3 +49,32 @@ off it.
 
 There is no music until these files exist. That is a normal state: the game runs silent and says nothing about
 it.
+
+# The impacts
+
+Three recordings also live here, and none of them is music — this is just where they were put. They are loaded
+by `src/sfx.ts`, whose `SAMPLES` table holds the one line to change if they move.
+
+```
+public/music/ballhitwallpaddle.opus   ball against the paddle or an arena rail
+public/music/ballhitbrick.opus        ball against a brick, breaking it or not
+public/music/brickbreak.opus          a brick giving way, layered over the hit above
+```
+
+Decoded into memory rather than streamed, which is the opposite of the decision above and for the opposite
+reason: two are 73ms and one is 1.19s, so all three are under half a megabyte of PCM, and they need a start with
+no scheduling latency and several copies overlapping. A media element gives neither.
+
+**Not level-matched to each other.** Measured peaks are -5.0dB, -11.8dB and -4.1dB, so `ballhitbrick` sits 6.7dB
+under `ballhitwallpaddle` in the files. `SAMPLES` states each measured peak alongside the peak the sound should
+play at and takes the ratio, so the balance between the game's three most frequent sounds is a decision in code
+rather than an accident of mastering. `target` is the only number worth editing. Re-measure `peak` if a file is
+replaced:
+
+```
+ffmpeg -i public/music/brickbreak.opus -af astats=measure_perchannel=none -f null -
+```
+
+**One recording for both the paddle and the rails**, per the design. `RAIL_VOICE` steps the rail back 4dB and up
+a tone, because a rally is meant to be readable with the screen ignored and paddle-rail-rail-paddle is the shape
+being read. Set both to 1 to hear them identical.
