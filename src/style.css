@@ -1493,3 +1493,82 @@ button { color: inherit; font: inherit; }
 .swatch.excavated { background: #6b6354; }
 .swatch.structure { background: #e7dbc0; }
 .atlas-actions { display: flex; flex: none; gap: 7px; }
+
+/* --- Rebinding, inside the pause panel ------------------------------------
+   Laid out as a reference list rather than a form: the player is reading "what does what" far more
+   often than they are changing it, so the current key is the loud part and the button is the quiet
+   affordance around it. Hidden on a phone, where there are no keys to bind. */
+.pause-rebind {
+  grid-column: 1 / -1;
+  padding-top: clamp(10px, 1.2cqw, 16px);
+}
+.pause-rebind h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+  font-size: clamp(11px, 1cqw, 13px);
+  letter-spacing: 0.18em;
+  color: var(--brass, #9a927d);
+}
+.pause-rebind h4 button {
+  font: inherit;
+  letter-spacing: 0.12em;
+  color: var(--brass, #9a927d);
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--brass, #9a927d) 40%, transparent);
+  border-radius: 2px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.pause-rebind h4 button:hover { color: var(--ink, #f1eadb); border-color: var(--ink, #f1eadb); }
+.pause-rebind ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 4px clamp(12px, 1.4cqw, 20px);
+}
+.pause-rebind li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--brass, #9a927d) 14%, transparent);
+}
+.pause-rebind li span {
+  font-size: clamp(10px, 0.95cqw, 12px);
+  letter-spacing: 0.1em;
+  color: color-mix(in srgb, var(--ink, #f1eadb) 66%, transparent);
+}
+.pause-rebind li button {
+  font-family: inherit;
+  font-size: clamp(11px, 1cqw, 13px);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--ink, #f1eadb);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 1px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pause-rebind li button:hover { border-color: color-mix(in srgb, var(--ink, #f1eadb) 40%, transparent); }
+/* Listening is the one state that has to be unmistakable: the panel is swallowing the next keystroke,
+   and a player who does not realise that will wonder why their key did nothing. */
+.pause-rebind li button.listening {
+  color: #0b0e0f;
+  background: var(--rail, #e7dbc0);
+  border-color: var(--rail, #e7dbc0);
+}
+.pause-refusal {
+  display: block;
+  padding-top: 6px;
+  font-size: clamp(10px, 0.95cqw, 12px);
+  letter-spacing: 0.08em;
+  color: var(--danger, #ff655b);
+}
+.shell[data-layout="phone"] .pause-rebind { display: none; }

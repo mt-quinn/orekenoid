@@ -32,7 +32,25 @@ export interface TutorialStep {
    */
   deferred?: boolean;
   also?: Array<"move" | "aim" | "commit" | "serve" | "paddle" | "arenaAim" | "speed" | "atlas" | "bank" | "face" | "liability">;
+  /**
+   * The literal hint, used only by rungs that teach no key at all.
+   *
+   * A rung that does teach keys names them in `teaches` instead and its hint is composed from the live
+   * bindings. Two lists of the same facts is one list too many: the prompt used to carry "Q / E, THEN F"
+   * as a string beside a handler that compared against `KeyF`, and the moment keys became rebindable the
+   * string would have been teaching the wrong keyboard.
+   */
   keys: string;
+  /** The actions this rung hands over, for composing its key hint from what they are actually bound to. */
+  teaches?: Array<
+    | "moveUp" | "moveDown" | "moveLeft" | "moveRight"
+    | "aimLeft" | "aimRight"
+    | "commit" | "serve"
+    | "paddleLeft" | "paddleRight"
+    | "fast" | "slow"
+    | "atlas" | "forge" | "pause"
+    | "railSeed" | "blast" | "probe"
+  >;
   /**
    * The imperative, in the player's terms rather than the machine's.
    *

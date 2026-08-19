@@ -49,6 +49,7 @@ import { PauseView } from "./pauseView";
 import { SalvageDrone } from "./view/salvage";
 import { LoadStrike } from "./view/loadStrike";
 import { Coach } from "./view/coach";
+import { Bindings, type Action } from "./bindings";
 import { BayView } from "./bayView";
 import { TouchControls } from "./view/touchControls";
 import { Gate, Pulse, Shudder } from "./view/feel";
@@ -153,6 +154,8 @@ export class OrekenoidGame {
   readonly framePreview = new Container();
   /** The opening sequence's prompt, anchored in the world rather than pinned to a corner. */
   readonly coach = new Coach();
+  /** What every key does. One map, read by the handler, the polls and the prompts alike. */
+  readonly bindings = new Bindings();
   /**
    * The Seal's marker, drawn above the shadows.
    *
@@ -296,26 +299,26 @@ export class OrekenoidGame {
    */
   readonly tutorial: TutorialStep[] = [
     // --- Inside the Berth. Sealed, and nothing here can hurt anyone. -----------------------------
-    { id: "move", keys: "WASD / ARROWS", gesture: "DRAG · LEFT HALF", demo: "stick", label: "FLY THE DRONE", why: "The Seal is the way out.", where: "survey", done: false },
+    { id: "move", keys: "WASD / ARROWS", teaches: ["moveUp", "moveLeft", "moveDown", "moveRight"], gesture: "DRAG · LEFT HALF", demo: "stick", label: "FLY THE DRONE", why: "The Seal is the way out.", where: "survey", done: false },
     // One rung, two keys, because fitting a frame to the Seal is one act. The Seal is drawn on a
     // diagonal precisely so that a frame left square cannot cover it: the rock asks for the rotation,
     // and the prompt only has to name the keys. This is also the rung that opens the world, so it
     // refuses a frame that is not on the door -- see `frameCoversSeal`.
-    { id: "commit", also: ["aim"], keys: "Q / E, THEN F", gesture: "DRAG · RIGHT HALF, THEN COMMIT", demo: "swipe", label: "FIT THE FRAME TO THE SEAL", why: "Cut the Seal and the mine is open.", where: "survey", done: false },
-    { id: "paddle", keys: "A / D", gesture: "DRAG ANYWHERE", demo: "swipe", label: "MOVE THE PADDLE", why: "It is the drone, edge on.", where: "play", done: false },
+    { id: "commit", also: ["aim"], keys: "Q / E, THEN F", teaches: ["aimLeft", "aimRight", "commit"], gesture: "DRAG · RIGHT HALF, THEN COMMIT", demo: "swipe", label: "FIT THE FRAME TO THE SEAL", why: "Cut the Seal and the mine is open.", where: "survey", done: false },
+    { id: "paddle", keys: "A / D", teaches: ["paddleLeft", "paddleRight"], gesture: "DRAG ANYWHERE", demo: "swipe", label: "MOVE THE PADDLE", why: "It is the drone, edge on.", where: "play", done: false },
     // Likewise one act: the aim steers the ball off the paddle and is fixed the moment it is live, so
     // a rung that taught aiming after serving was teaching something already spent.
-    { id: "serve", also: ["arenaAim"], keys: "Q / E TO AIM, SPACE TO SERVE", gesture: "TAP WHERE IT SHOULD GO", label: "AIM AND SERVE", where: "play", done: false },
+    { id: "serve", also: ["arenaAim"], keys: "Q / E TO AIM, SPACE TO SERVE", teaches: ["aimLeft", "aimRight", "serve"], gesture: "TAP WHERE IT SHOULD GO", label: "AIM AND SERVE", where: "play", done: false },
     // Deferred: armed the first time a ball has been away from the paddle for ten seconds, which is the
     // first moment the player has a reason to want it. Taught right after the serve it was an answer to
     // a question nobody had asked yet.
-    { id: "speed", keys: "W / S", gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "The tail of this claim is long.", where: "play", optional: true, deferred: true, done: false },
+    { id: "speed", keys: "W / S", teaches: ["fast", "slow"], gesture: "HOLD FAST", demo: "hold", label: "HOLD TO SPEED UP", why: "The tail of this claim is long.", where: "play", optional: true, deferred: true, done: false },
 
     // --- Through the Seal. Dark, and no longer empty. --------------------------------------------
     // The Atlas comes after the door and not before it. A map is worth having the moment there is
     // more world than you can see, and not one second earlier: taught inside the Berth it asked the
     // player to go and read a chart of a room they were standing in the middle of.
-    { id: "atlas", keys: "M", gesture: "TAP ATLAS, TOP RIGHT", label: "OPEN THE ATLAS", why: "Everywhere you have been.", where: "survey", done: false },
+    { id: "atlas", keys: "M", teaches: ["atlas"], gesture: "TAP ATLAS, TOP RIGHT", label: "OPEN THE ATLAS", why: "Everywhere you have been.", where: "survey", done: false },
     // The one enemy, taught the way the Gallery is built to teach it: the first Bounder is stood on
     // the island out of aggro range, so the player watches it walk and coil before it has ever cost
     // them anything. Completed by a return off the paddle's face, not by pressing a key -- there is
@@ -739,7 +742,7 @@ export class OrekenoidGame {
         // map only once nothing is being edited.
         if (event.code === "Escape" && this.atlasView.isEditing) { this.atlasView.closeEditor(); return; }
         if (event.code === "Enter" && this.atlasView.isEditing) { this.atlasView.commitNote(); return; }
-        if (event.code === "KeyM" || event.code === "Escape") this.toggleAtlas();
+        if (this.bindings.matches("atlas", event.code) || event.code === "Escape") this.toggleAtlas();
         return;
       }
       if (event.repeat) return;
@@ -750,16 +753,16 @@ export class OrekenoidGame {
       if (event.code === "Escape" && !this.atlasOpen && !this.craftingOpen) { this.togglePause(); return; }
       if (this.paused) {
         // While paused the only key that does anything is the one that unpauses.
-        if (event.code === "KeyP") this.togglePause();
+        if (this.bindings.matches("pause", event.code)) this.togglePause();
         return;
       }
       if (this.cameraTransition) return;
-      if (!event.repeat && event.code === "KeyM") {
+      if (!event.repeat && this.bindings.matches("atlas", event.code)) {
         if (!this.can("atlas")) { this.refuseControl(); return; }
         this.toggleAtlas();
         return;
       }
-      if (!event.repeat && event.code === "KeyC" && this.mode === "survey") { this.toggleCrafting(); return; }
+      if (!event.repeat && this.bindings.matches("forge", event.code) && this.mode === "survey") { this.toggleCrafting(); return; }
       if (this.craftingOpen) {
         // Any key lands a running fit rather than queueing behind it.
         if (this.gantry.fitting) {
@@ -775,18 +778,18 @@ export class OrekenoidGame {
         // Diagnostic. Stand next to something wrong and press it: dumps the true state of every cell
         // around the drone, so a bug that only shows up in play can be captured where it happens
         // instead of guessed at from a save that does not contain it.
-        if (event.code === "Backquote") { this.probeAround(); return; }
-        if (event.code === "Enter" || event.code === "KeyF") {
+        if (this.bindings.matches("probe", event.code)) { this.probeAround(); return; }
+        if (this.bindings.matches("commit", event.code)) {
           if (!this.can("commit")) { this.refuseControl(); return; }
           this.establishArena();
         }
       } else if (this.arena) {
-        if (event.code === "Space") {
+        if (this.bindings.matches("serve", event.code)) {
           if (!this.can("serve")) { this.refuseControl(); return; }
           this.serve();
         }
-        if (event.code === "KeyR" && this.economy.verbs.has("railSeed") && !this.railSeedUsed) this.placeRailSeed();
-        if (event.code === "KeyB" && this.economy.blastCharges > 0) this.useBlastCharge();
+        if (this.bindings.matches("railSeed", event.code) && this.economy.verbs.has("railSeed") && !this.railSeedUsed) this.placeRailSeed();
+        if (this.bindings.matches("blast", event.code) && this.economy.blastCharges > 0) this.useBlastCharge();
       }
     });
     window.addEventListener("keyup", (event) => this.keys.delete(event.code));
@@ -895,7 +898,8 @@ export class OrekenoidGame {
     this.coach.show({
       goal: step.label,
       why: step.why,
-      keys: step.keys,
+      // Composed from the live bindings when the rung teaches keys, so a rebind changes the prompt too.
+      keys: step.teaches?.length ? this.bindings.hint(...step.teaches) : step.keys,
       gesture: touching ? step.gesture : undefined,
       demo,
       ...anchor,
@@ -1155,6 +1159,7 @@ export class OrekenoidGame {
       integrity: this.integrity,
       maxIntegrity: this.maxIntegrity,
       touch: this.touch.used,
+      bindings: this.bindings,
     };
   }
 
@@ -2147,12 +2152,12 @@ export class OrekenoidGame {
   private updateSurvey(dt: number): void {
     // Arrows mirror WASD out here. Inside a claim the horizontal pair moves the paddle and the
     // vertical pair drives the simulation speed, so the mirroring is deliberately mode-local.
-    const held = (...codes: string[]) => codes.some((code) => this.keys.has(code));
+    const held = (action: Action) => this.bindings.isHeld(action, this.keys);
     // Movement and aiming are gated separately rather than behind one early return: they are two
     // steps of the sequence, and one being locked must never silently disable the other.
     const canMove = this.can("move");
-    const keyX = (held("KeyD", "ArrowRight") ? 1 : 0) - (held("KeyA", "ArrowLeft") ? 1 : 0);
-    const keyY = (held("KeyS", "ArrowDown") ? 1 : 0) - (held("KeyW", "ArrowUp") ? 1 : 0);
+    const keyX = (held("moveRight") ? 1 : 0) - (held("moveLeft") ? 1 : 0);
+    const keyY = (held("moveDown") ? 1 : 0) - (held("moveUp") ? 1 : 0);
     // The stick wins when it is deflected, and the keys are still read otherwise, so a tablet with
     // a keyboard attached does not have to choose. Movement here is world-absolute rather than
     // heading-relative, which is why a stick vector drops straight in with no conversion.
@@ -2184,7 +2189,9 @@ export class OrekenoidGame {
     else if (vy) blockedY = Math.sign(vy);
 
     const canAim = this.can("aim");
-    const rotation = canAim ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0) : 0;
+    const rotation = canAim
+      ? (this.bindings.isHeld("aimRight", this.keys) ? 1 : 0) - (this.bindings.isHeld("aimLeft", this.keys) ? 1 : 0)
+      : 0;
     // The drag is already an angle, so it bypasses the rotation-speed term entirely: the frame
     // follows the thumb at the rate the thumb moves, which is the whole reason a drag feels
     // direct where a held button feels like a request.
@@ -2544,8 +2551,8 @@ export class OrekenoidGame {
     // The touch ramp and the keys are the same control from two devices; whichever is asking for
     // more wins, so holding both never means less than holding one.
     const touched = this.touchRate;
-    const up = this.keys.has("KeyW") || this.keys.has("ArrowUp");
-    const down = this.keys.has("KeyS") || this.keys.has("ArrowDown");
+    const up = this.bindings.isHeld("fast", this.keys);
+    const down = this.bindings.isHeld("slow", this.keys);
     if (up && down) return Math.max(8, touched);
     if (down) return Math.max(4, touched);
     if (up) return Math.max(2, touched);
@@ -2572,7 +2579,7 @@ export class OrekenoidGame {
     if (this.simulationRate > 1) this.markTutorial("speed");
     const canPaddle = this.can("paddle");
     const input = canPaddle
-      ? (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) - (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0)
+      ? (this.bindings.isHeld("paddleRight", this.keys) ? 1 : 0) - (this.bindings.isHeld("paddleLeft", this.keys) ? 1 : 0)
       : 0;
     const before = arena.paddle.u;
     const touched = canPaddle ? this.touchState.paddle : null;
@@ -2602,7 +2609,9 @@ export class OrekenoidGame {
 
     if (!arena.balls.some((ball) => ball.served)) {
       const canAim = this.can("arenaAim");
-      const aim = canAim ? (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0) : 0;
+      const aim = canAim
+        ? (this.bindings.isHeld("aimRight", this.keys) ? 1 : 0) - (this.bindings.isHeld("aimLeft", this.keys) ? 1 : 0)
+        : 0;
       if (aim) this.markTutorial("arenaAim");
       arena.serveAim = clamp(arena.serveAim + aim * 1.45 * dt, -0.72, 0.72);
       // Touch aims by tapping where the ball should go -- see `answerTaps`. Aim is deliberately not
@@ -3506,6 +3515,16 @@ export class OrekenoidGame {
       onExport: () => this.exportExpedition(),
       onImport: () => void this.importExpedition(),
       onEndClaim: () => this.endClaimNow(),
+      onBind: (action, code) => {
+        const result = this.bindings.bind(action, code);
+        // The prompts carry their key hints from the bindings, so a rebind has to redraw them.
+        if (result.ok) this.renderTutorial();
+        return result;
+      },
+      onResetBindings: () => {
+        this.bindings.reset();
+        this.renderTutorial();
+      },
     });
     this.expeditionView.bind({
       onContinue: () => this.continueExpedition(),
