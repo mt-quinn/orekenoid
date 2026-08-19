@@ -37,8 +37,13 @@
   memory, with a known-good file as a control. Screenshot the whole thing, including the dim lines.
 </p>
 <button id="run" type="button">RUN THE TEST</button>
+<button id="copy" type="button" class="alt" disabled>COPY REPORT</button>
 <button id="killsw" type="button" class="alt">UNREGISTER SERVICE WORKER, THEN RE-RUN</button>
 <div id="out"></div>
+<!-- The same text, selectable, for a browser that refuses the clipboard API. Nothing here is lost in either
+     form: it is the exact strings the page printed, which is better evidence than a picture of them. -->
+<textarea id="dump" readonly hidden rows="16" style="width:100%;margin-top:18px;font:inherit;
+  background:#0d0d0a;color:#9a927d;border:1px solid #3a352a;border-radius:3px;padding:8px;"></textarea>
 <script>
 /*
  * Collected from the top of the file, before anything is tested, because these fire once and are gone.
@@ -65,12 +70,20 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 const out = document.getElementById("out");
-const head = (text) => { const h = document.createElement("h2"); h.textContent = text; out.append(h); };
+/** Every line, in order, as plain text. The screenshot became unreadable long before the report did. */
+const lines = [];
+const head = (text) => {
+  const h = document.createElement("h2");
+  h.textContent = text;
+  out.append(h);
+  lines.push("", "=== " + text + " ===");
+};
 const row = (text, cls = "dim") => {
   const d = document.createElement("div");
   d.className = "row " + cls;
   d.textContent = text;
   out.append(d);
+  lines.push(cls === "fail" ? "[FAIL] " + text : cls === "pass" ? "[ok]   " + text : "       " + text);
   return d;
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -142,6 +155,8 @@ async function runAll() {
   button.disabled = true;
   button.textContent = "RUNNING…";
   out.innerHTML = "";
+  lines.length = 0;
+  document.getElementById("copy").disabled = true;
 
   head("ENVIRONMENT");
   row(navigator.userAgent);
@@ -245,10 +260,32 @@ async function runAll() {
   else row("nothing thrown");
 
   head("DONE");
-  row("Screenshot everything above, dim lines included.", "info");
+  row("Press COPY REPORT and paste it. The text carries more than a screenshot can.", "info");
+  const dump = document.getElementById("dump");
+  dump.value = lines.join("\n");
+  dump.hidden = false;
+  const copy = document.getElementById("copy");
+  copy.disabled = false;
+  copy.textContent = "COPY REPORT";
   button.textContent = "RUN AGAIN";
   button.disabled = false;
 }
+
+document.getElementById("copy").addEventListener("click", async () => {
+  const copy = document.getElementById("copy");
+  const text = document.getElementById("dump").value;
+  try {
+    await navigator.clipboard.writeText(text);
+    copy.textContent = "COPIED";
+  } catch {
+    // Refused, which some browsers do outside a trusted context. The textarea below is already selectable, so
+    // select it for them rather than leaving them to guess.
+    const dump = document.getElementById("dump");
+    dump.focus();
+    dump.select();
+    copy.textContent = "SELECTED — PRESS CMD-C";
+  }
+});
 
 document.getElementById("run").addEventListener("click", runAll);
 document.getElementById("killsw").addEventListener("click", async () => {
