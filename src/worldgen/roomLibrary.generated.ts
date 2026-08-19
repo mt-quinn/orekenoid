@@ -10,7 +10,17 @@
 
 import type { EcotoneId, MaterialKind, ProvinceId } from "../config";
 
-export type RoomMarker = "cache" | "anomaly" | "seam" | "survey" | "procedure" | "decor" | "random";
+export type RoomMarker =
+  | "cache" | "anomaly" | "seam" | "survey" | "procedure" | "decor"
+  /**
+   * A Bounder, placed here at map creation.
+   *
+   * Encounters are authored ground now rather than a population maintained around the drone. A marker
+   * fires once, ever: kill what is in a chamber and that chamber is quiet for the rest of the
+   * expedition, which is what makes clearing somewhere mean anything.
+   */
+  | "bounder"
+  | "random";
 
 export interface RoomGlyph {
   name: string;

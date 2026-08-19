@@ -282,3 +282,52 @@ export function drawSealMarker(
       .stroke({ width: 3, color: colour, alpha: pulse });
   }
 }
+
+/**
+ * Point at the Bounder the opening is talking about.
+ *
+ * "Take it on the face" used to sit on screen indefinitely with nothing to take: the rung arrived on a
+ * timer of its own and the player was left hunting a cavern for an enemy that might be forty cells away
+ * behind a wall. So the rung waits for one to exist, and this says which one.
+ *
+ * Two parts, because the target is often not on screen. A ring around the creature for when it is, and a
+ * chevron out in front of the drone pointing the way for when it is not -- drawn in world space next to
+ * the machine, so it is always in view however the camera is sitting.
+ */
+export function drawTargetMark(
+  marker: Graphics,
+  target: { x: number; y: number },
+  drone: { x: number; y: number },
+  time: number,
+): void {
+  marker.clear();
+  const colour = PALETTE.danger;
+  const pulse = 0.55 + Math.sin(time * 5.2) * 0.3;
+
+  // The ring, sized well clear of the creature so it reads as an annotation and not as its body.
+  const x = target.x * CELL;
+  const y = target.y * CELL;
+  marker.circle(x, y, CELL * 1.15).stroke({ width: 3, color: colour, alpha: pulse });
+  marker.circle(x, y, CELL * 1.5).stroke({ width: 1, color: colour, alpha: pulse * 0.4 });
+
+  // The chevron, on the line from the drone to the target.
+  const dx = target.x - drone.x;
+  const dy = target.y - drone.y;
+  const span = Math.hypot(dx, dy) || 1;
+  if (span < 3.5) return;
+  const ux = dx / span;
+  const uy = dy / span;
+  const tipX = drone.x * CELL + ux * CELL * 2.6;
+  const tipY = drone.y * CELL + uy * CELL * 2.6;
+  const backX = -ux * CELL * 0.7;
+  const backY = -uy * CELL * 0.7;
+  const sideX = -uy * CELL * 0.5;
+  const sideY = ux * CELL * 0.5;
+  marker
+    .poly([
+      tipX, tipY,
+      tipX + backX + sideX, tipY + backY + sideY,
+      tipX + backX - sideX, tipY + backY - sideY,
+    ])
+    .fill({ color: colour, alpha: pulse });
+}

@@ -135,6 +135,7 @@ const MARKER_HOST: Record<Exclude<RoomMarker, "random">, "rock" | "open"> = {
   survey: "open",
   procedure: "open",
   decor: "open",
+  bounder: "open",
 };
 
 /**
@@ -150,6 +151,10 @@ const RANDOM_MARKERS: Array<{ marker: Exclude<RoomMarker, "random">; weight: num
   { marker: "cache", weight: 14 },
   { marker: "anomaly", weight: 10 },
   { marker: "seam", weight: 8 },
+  // Weighted like a seam: a reason to travel, and roughly as often as one. Rooms are the mine's
+  // furniture, so putting encounters in them is what makes the caverns feel occupied without a spawner
+  // trickling strangers in behind the player.
+  { marker: "bounder", weight: 16 },
 ];
 
 function resolveRandomMarker(rng: Rng): Exclude<RoomMarker, "random"> {

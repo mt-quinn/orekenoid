@@ -29,7 +29,7 @@ import { ballSpeed, createBall, stepBall, type BallStepEvents } from "./physics"
 import { FieldCombat } from "./combat/fieldCombat";
 import { metalForBand } from "./worldgen/assign";
 import { SHADOW, ShadowLayer } from "./view/shadowLayer";
-import { FIRST_BOUNDER, SEAL_CELLS, SEAL_CENTRE } from "./worldgen/landing";
+import { SEAL_CELLS, SEAL_CENTRE } from "./worldgen/landing";
 import { shadowQuad, visibleFrom } from "./light/shadow";
 import { ChunkedTerrain } from "./terrain";
 import { collectSound, GameAudio, SOUNDS } from "./audio";
@@ -40,7 +40,7 @@ import { attachBall, attachMembrane, createDrone, spawnDrop } from "./view/actor
 import { buildArenaDisplay, drawLiabilityGauge, drawTrajectory } from "./view/board";
 import { createBrickDisplay, showDamage } from "./view/brick";
 import { applyReaction, impulse, newReaction, stepReactions } from "./view/feedback";
-import { buildFarGeology, buildLandmarks, drawFramePreview, drawSealMarker } from "./view/survey";
+import { buildFarGeology, buildLandmarks, drawFramePreview, drawSealMarker, drawTargetMark } from "./view/survey";
 import { buildFeatureMarks, updateFeatureMarks, type FeatureMark } from "./view/features";
 import { gradeOf, Hud, REGION_RULES, type HudModel } from "./hud";
 import { objectiveFor, type Standing } from "./objectives";
@@ -128,6 +128,16 @@ const VERB_NAMES: Record<VerbId, string> = {
  */
 const SPEED_RUNG_AFTER = 10;
 
+/**
+ * How near a Bounder has to be to arm the combat rung, and how far the marker keeps pointing, in cells.
+ *
+ * The wake distance is a little past the viewport's half-diagonal, so the rung arrives as one comes into
+ * view rather than after it is already on top of the machine. The marker reaches further, because once the
+ * lesson has been asked for it should not stop pointing the moment the target wanders behind a rock.
+ */
+const TARGET_WAKE = 20;
+const TARGET_MARK_RANGE = 44;
+
 export class OrekenoidGame {
   readonly app = new Application();
   readonly world: WorldModel;
@@ -151,6 +161,8 @@ export class OrekenoidGame {
    * bug this exists to fix.
    */
   private readonly sealMark = new Graphics();
+  /** The marker on the Bounder the combat rung is about. Above the shadows, for the same reason. */
+  private readonly targetMark = new Graphics();
   /** Fingers. Answers the same questions the key set does, from a different device. */
   readonly touch = new TouchInput();
   /** And what they look like. Screen furniture: outside the camera, so it never rotates or scales. */
@@ -308,7 +320,10 @@ export class OrekenoidGame {
     // the island out of aggro range, so the player watches it walk and coil before it has ever cost
     // them anything. Completed by a return off the paddle's face, not by pressing a key -- there is
     // no key for this, only the front of the machine pointed the right way.
-    { id: "face", keys: "MEET IT HEAD ON", gesture: "MEET IT HEAD ON", label: "TAKE IT ON THE FACE", why: "The front deflects. Anywhere else and it hurts.", where: "survey", done: false },
+    // Deferred until one is actually near. It used to arrive on the sequence's own schedule and sit there
+    // with nothing to take: the player was left hunting a cavern for an enemy that could be forty cells
+    // away behind a wall. Armed by proximity, and `drawTargetMark` says which one.
+    { id: "face", keys: "MEET IT HEAD ON", gesture: "MEET IT HEAD ON", label: "TAKE IT ON THE FACE", why: "The front deflects. Anywhere else and it hurts.", where: "survey", deferred: true, done: false },
     // Shown, not demanded, and deliberately about a number rather than a control. The liability gauge
     // and the damage read-out have always been on screen and nothing ever said what they were, so the
     // first time a player left rock behind the cost arrived as a surprise. Named on the Overload Face,
@@ -336,15 +351,7 @@ export class OrekenoidGame {
   tutorialComplete = false;
   /** Has the Landing's Seal been cut? The one-way moment the opening is built around. */
   sealBreached = false;
-  /**
-   * Seconds until the Gallery's authored Bounder is stood up, or -1 when there is none waiting.
-   *
-   * A delay rather than a test on frame time. The first version waited for a frame with a short `dt`,
-   * which is a guess about the machine: headless runs at thirteen frames a second and never satisfied
-   * it, and neither would a slow laptop. What actually needs to pass is the resolve, and that is a
-   * duration.
-   */
-  private firstBounderIn = -1;
+
   /**
    * Gestures already demonstrated, so each is mimed once and then trusted.
    *
@@ -420,6 +427,7 @@ export class OrekenoidGame {
     // Handed the drawn rock, not the model's grid: a Bounder crawls the surface the player can see,
     // and a hurl rebounds off the wall the player can see.
     this.combat = new FieldCombat(this.world.drawn, this.world.generated.seed);
+    this.combat.placeSpawns(this.world.generated.spawns);
     this.combat.oreTableFor = (x, y) => this.oreTableAt(x, y);
     this.drone = createDrone(this.paddleWidth, this.economy.stationGrades(this.chassis.id));
     this.framePreview.addChild(this.frameWash, this.frameGrid, this.frameScan, this.frameReturns);
@@ -574,7 +582,7 @@ export class OrekenoidGame {
     // take an instrument off the player.
     this.worldRoot.addChild(
       this.farLayer, this.terrainLayer, this.landmarkLayer, this.featureLayer, this.effectLayer,
-      this.actorLayer, this.shadows.container, this.sealMark, this.framePreview, this.coach.container,
+      this.actorLayer, this.shadows.container, this.sealMark, this.targetMark, this.framePreview, this.coach.container,
     );
     this.terrainLayer.addChild(this.terrain.container);
     buildFarGeology(this.farLayer);
@@ -1002,6 +1010,44 @@ export class OrekenoidGame {
     const show = this.started && this.mode === "survey" && !this.sealBreached;
     this.sealMark.visible = show;
     if (show) drawSealMarker(this.sealMark, SEAL_CELLS, this.time, this.frameCoversSeal(frame));
+    this.renderTargetMark();
+  }
+
+  /**
+   * Arm and draw the combat rung's target.
+   *
+   * The rung is armed by the first Bounder to come within `TARGET_WAKE`, and once armed the nearest live
+   * one is marked until the lesson lands. Both halves matter: without the arming the prompt sits on screen
+   * over an empty cavern, and without the marking the player is told to meet something head on without
+   * being told which something.
+   */
+  private renderTargetMark(): void {
+    const rung = this.tutorial.find((step) => step.id === "face");
+    if (!rung || rung.done || this.tutorialComplete || this.mode !== "survey") {
+      this.targetMark.visible = false;
+      return;
+    }
+    const drone = { x: this.player.x / CELL, y: this.player.y / CELL };
+    let nearest: { x: number; y: number } | null = null;
+    let best = Infinity;
+    for (const creature of this.combat.roster) {
+      if (creature.state === "dead") continue;
+      const range = Math.hypot(creature.x - drone.x, creature.y - drone.y);
+      if (range < best) { best = range; nearest = { x: creature.x, y: creature.y }; }
+    }
+    if (!nearest || best > TARGET_MARK_RANGE) {
+      this.targetMark.visible = false;
+      return;
+    }
+    if (rung.deferred && best <= TARGET_WAKE) {
+      rung.deferred = false;
+      this.tutorialShownFor = 0;
+      this.renderTutorial();
+    }
+    // Marked only once the rung is live, so the first thing the player sees is the prompt and the ring
+    // together rather than a ring around something nothing has mentioned.
+    this.targetMark.visible = !rung.deferred;
+    if (this.targetMark.visible) drawTargetMark(this.targetMark, nearest, drone, this.time);
   }
 
   /**
@@ -1043,22 +1089,6 @@ export class OrekenoidGame {
     if (standing > SEAL_CELLS.length * 0.5) return;
     this.sealBreached = true;
     this.showToast("THE SEAL IS CUT · THE MINE IS OPEN");
-    // Placed on the next ordinary frame rather than on this one.
-    //
-    // This frame is the claim resolving: the board tears down, chunks re-rasterise, and the tick that
-    // follows carries several hundred milliseconds of catch-up. A Bounder spawned into that got up to
-    // eight substeps of crawl and re-attach in one go and walked fourteen cells off the island before
-    // the player ever saw it. Deferred to a frame with an ordinary dt, it stands where it is put.
-    this.firstBounderIn = 0.5;
-    // The first Bounder is stood on the island, not rolled for.
-    //
-    // Everything about where it goes is the lesson: on top of the ore body in the middle of the
-    // Gallery, so it is lit and side-on from the ledge the player steps out onto, and well outside
-    // aggro range so they watch it walk and coil before it has cost them anything. Doom teaches a tell
-    // by letting you see the animation for free the first time, and this is the only place in the game
-    // that can be guaranteed to do that.
-
-    this.audio.play(SOUNDS.armorBreached);
     const centre = { x: SEAL_CENTRE.x * CELL, y: SEAL_CENTRE.y * CELL };
     this.effects.spawnRing(centre.x, centre.y, PALETTE.rail, 3.2);
   }
@@ -2209,22 +2239,19 @@ export class OrekenoidGame {
       heading: this.player.heading,
       paddleWidth: this.chassis.paddleWidth,
     };
-    // Held off until the player has met one on the paddle's face. A wanderer arriving from off screen
-    // mid-lesson would be the game teaching an idea and interrupting it at the same time.
-    this.combat.spawning = this.tutorialComplete
-      || (this.tutorial.find((step) => step.id === "face")?.done ?? false);
+    // On from the first frame.
+    //
+    // This used to be held off until the player had met a Bounder on the paddle's face, so that no
+    // wanderer arrived from off screen mid-lesson. Encounters are placed at map creation now, which
+    // answers that worry properly -- nothing wanders in, the Gallery's three are simply standing where
+    // the map puts them -- and leaving the gate in place deadlocked the sequence: the rung could not be
+    // taught without a Bounder, and no Bounder could wake until the rung was taught.
     // Everything about where it goes is the lesson: on top of the ore body in the middle of the
     // Gallery, so it is lit and side-on from the ledge the player steps out onto, and well outside
     // aggro range, so they watch it walk and coil before it has cost them anything. Doom teaches a tell
     // by letting you see the animation for free the first time, and this is the only place in the game
     // that can be guaranteed to do that.
-    if (this.firstBounderIn >= 0) {
-      this.firstBounderIn -= Math.min(dt, 0.1);
-      if (this.firstBounderIn <= 0) {
-        this.firstBounderIn = -1;
-        if (!this.tutorialComplete) this.combat.spawn(FIRST_BOUNDER.x, FIRST_BOUNDER.y);
-      }
-    }
+
     const events = this.combat.update(dt, drone, (x, y) => this.canSee(drone, x, y));
     this.ramCooldown = Math.max(0, this.ramCooldown - dt);
 
@@ -3239,6 +3266,7 @@ export class OrekenoidGame {
       world: {
         history: this.world.history,
         discovered: packDiscovered(this.world.discovered),
+        spawnsSpent: this.combat.spentSpawns,
       },
       player: { x: this.player.x, y: this.player.y, heading: this.player.heading },
       economy: this.economy.snapshot(),
@@ -3290,6 +3318,9 @@ export class OrekenoidGame {
     this.world.cuts.length = 0;
     this.world.applyHistory(data.world.history);
     this.world.discoveredCount = unpackDiscovered(data.world.discovered, this.world.discovered);
+    // Restored, so a reload does not repopulate the chambers this expedition has already cleared -- which
+    // is the whole promise authored spawns make over a spawner.
+    this.combat.placeSpawns(this.world.generated.spawns, data.world.spawnsSpent ?? []);
     // Excavation replayed above never reached the already-rasterized chunks, so
     // the whole terrain is rebuilt from current world state.
     this.terrain.reset();

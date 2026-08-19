@@ -4,7 +4,7 @@ import {
   BANK,
   BAY,
   DROP,
-  FIRST_BOUNDER,
+  LANDING_SPAWNS,
   ISLAND,
   LANDING,
   LANDING_MAP,
@@ -20,7 +20,7 @@ function glyphAt(x: number, y: number): string | null {
   return row[x - LANDING_ORIGIN.x] ?? null;
 }
 
-const OPEN = new Set([".", "L", "$", "T"]);
+const OPEN = new Set([".", "L", "$", "T", "E"]);
 
 /**
  * Every open cell reachable from a starting cell, four-connected.
@@ -51,7 +51,7 @@ describe("the Landing map", () => {
     expect(widths.size).toBe(1);
     expect(LANDING_MAP.length).toBeGreaterThan(20);
     const glyphs = new Set(LANDING_MAP.join(""));
-    expect([...glyphs].sort().join("")).toBe("#$.=?BLSTXco");
+    expect([...glyphs].sort().join("")).toBe("#$.=?BELSTXco");
   });
 
   it("wakes the drone in the open, in the Berth", () => {
@@ -73,7 +73,7 @@ describe("the Landing map", () => {
     // pocket at all on another, so there was nothing for a door to mean.
     const berth = reachableFrom(LANDING.x, LANDING.y);
     expect(berth.size).toBeGreaterThan(60);
-    for (const place of [ISLAND, OVERLOAD_FACE, DROP, FIRST_BOUNDER]) {
+    for (const place of [ISLAND, OVERLOAD_FACE, DROP, LANDING_SPAWNS[0]]) {
       expect(berth.has(`${Math.round(place.x)},${Math.round(place.y)}`)).toBe(false);
     }
   });
@@ -99,7 +99,7 @@ describe("the Landing map", () => {
       queue.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
     }
     expect(walk.has(`${DROP.x},${DROP.y}`)).toBe(true);
-    expect(walk.has(`${Math.round(FIRST_BOUNDER.x)},${Math.round(FIRST_BOUNDER.y)}`)).toBe(true);
+    expect(walk.has(`${Math.floor(LANDING_SPAWNS[0].x)},${Math.floor(LANDING_SPAWNS[0].y)}`)).toBe(true);
   });
 
   it("sets the Seal at an angle, so a square frame cannot cover it", () => {
@@ -110,11 +110,16 @@ describe("the Landing map", () => {
     expect(rows.size).toBeGreaterThan(2);
   });
 
-  it("stands the first Bounder on solid ground, in sight of the Seal", () => {
-    // It has to be somewhere the player can watch it walk before it has cost them anything, which
-    // means standing on the island with open air between it and the ledge.
-    const below = glyphAt(Math.round(FIRST_BOUNDER.x), Math.round(FIRST_BOUNDER.y) + 1);
-    expect(OPEN.has(below ?? ".")).toBe(false);
+  it("stands every authored Bounder on solid ground", () => {
+    // A Bounder placed over open air starts the frame detached and slides along whatever surface its
+    // re-attach sweep finds first, arriving somewhere nobody chose. The first one also has to be
+    // watchable from the ledge the Seal opens onto, before it has cost the player anything.
+    expect(LANDING_SPAWNS.length).toBeGreaterThan(2);
+    for (const spawn of LANDING_SPAWNS) {
+      expect(OPEN.has(glyphAt(Math.floor(spawn.x), Math.floor(spawn.y)) ?? "#")).toBe(true);
+      const below = glyphAt(Math.floor(spawn.x), Math.floor(spawn.y) + 1);
+      expect(OPEN.has(below ?? "."), `nothing under the spawn at ${spawn.x},${spawn.y}`).toBe(false);
+    }
   });
 
   it("stamps the drawn geology as well as the gameplay grid", () => {

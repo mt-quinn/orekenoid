@@ -8,16 +8,6 @@ const DT = 1 / 60;
 /** Open ground with a floor, so a Bounder has something to stand on. */
 const FLOORED: SolidityOracle = { solidAt: (_x, y) => y >= 70 };
 
-/**
- * Broken ground: four-cell blocks in a checker.
- *
- * The spawner will only place a Bounder against rock, so a world with one flat floor in it gives it a
- * hairline band to aim at and the population tests become tests of luck. This has surface everywhere.
- */
-const BROKEN: SolidityOracle = {
-  solidAt: (x, y) => (Math.floor(x / 4) + Math.floor(y / 4)) % 2 === 0,
-};
-
 const pose = (x = 60, y = 69, heading = 0, paddleWidth = 3.1): DronePose => ({ x, y, heading, paddleWidth });
 
 function advance(combat: FieldCombat, seconds: number, drone: DronePose | null) {
@@ -144,52 +134,99 @@ describe("ore", () => {
   });
 });
 
-describe("the cavern population", () => {
-  /** Watch the spawner rather than the roster: what it promises is about the moment of spawning. */
-  function watchSpawns(combat: FieldCombat, seconds: number, drone: DronePose) {
-    const seen = new Set<object>();
-    const distances: number[] = [];
-    let peak = 0;
-    for (let elapsed = 0; elapsed < seconds; elapsed += DT) {
-      combat.update(DT, drone);
-      for (const creature of combat.roster) {
-        if (seen.has(creature)) continue;
-        seen.add(creature);
-        distances.push(Math.hypot(creature.x - drone.x, creature.y - drone.y));
-      }
-      peak = Math.max(peak, combat.liveCreatures);
-    }
-    return { distances, peak, total: seen.size };
+describe("authored spawns", () => {
+  /** A floor at y=70, and a spawn standing on it. */
+  const on = (x: number) => ({ x, y: 69.5 });
+
+  function run(combat: FieldCombat, seconds: number, drone: DronePose | null) {
+    for (let elapsed = 0; elapsed < seconds; elapsed += DT) combat.update(DT, drone);
   }
 
-  it("fills up to the cap and never past it", () => {
-    const combat = new FieldCombat(BROKEN, 8);
-    expect(watchSpawns(combat, 30, pose(62, 62)).peak).toBe(COMBAT.population);
+  it("wakes a placed spawn once the drone is near enough", () => {
+    const combat = new FieldCombat(FLOORED, 40);
+    combat.placeSpawns([on(60)]);
+    // Too far to wake.
+    run(combat, 3, pose(60 + COMBAT.wakeRange + 10, 69));
+    expect(combat.liveCreatures).toBe(0);
+    // In range.
+    run(combat, 3, pose(60 + COMBAT.spawnMin + 2, 69));
+    expect(combat.liveCreatures).toBe(1);
   });
 
-  it("never spawns anything inside the viewport", () => {
-    const combat = new FieldCombat(BROKEN, 9);
-    const watch = watchSpawns(combat, 40, pose(62, 62));
-    expect(watch.total).toBeGreaterThan(2);
-    for (const distance of watch.distances) {
-      expect(distance).toBeGreaterThanOrEqual(COMBAT.spawnMin - 1e-6);
-      expect(distance).toBeLessThanOrEqual(COMBAT.spawnMax + 1e-6);
-    }
-  });
-
-  it("only spawns them onto rock, because a Bounder needs something to walk on", () => {
-    // Nothing to hold anywhere: the spawner must decline rather than drop them into the void.
-    const empty: SolidityOracle = { solidAt: () => false };
-    const combat = new FieldCombat(empty, 10);
-    advance(combat, 20, pose(60, 60));
+  it("never wakes one where the player could watch it appear", () => {
+    // Inside the spawn ring is on screen. A placed spawn the drone is standing on top of waits rather
+    // than materialising in front of them.
+    const combat = new FieldCombat(FLOORED, 41);
+    combat.placeSpawns([on(60)]);
+    run(combat, 4, pose(61, 69));
     expect(combat.liveCreatures).toBe(0);
   });
 
+  it("spends a spawn forever, so a cleared chamber stays cleared", () => {
+    // The whole point of placing them. Under the old spawner a player could walk away from a fight and
+    // come back to four strangers, which meant no room could ever be finished.
+    const combat = new FieldCombat(FLOORED, 42);
+    combat.placeSpawns([on(60)]);
+    const drone = pose(60 + COMBAT.spawnMin + 2, 69);
+    run(combat, 3, drone);
+    expect(combat.liveCreatures).toBe(1);
+    // Killed outright: `liveCreatures` counts by state, and hit points alone are not a death.
+    for (const creature of combat.roster) { creature.hp = 0; creature.state = "dead"; }
+    run(combat, COMBAT.corpseSeconds + 2, drone);
+    expect(combat.liveCreatures).toBe(0);
+    // Stand here as long as you like.
+    run(combat, 30, drone);
+    expect(combat.liveCreatures).toBe(0);
+    expect(combat.spentSpawns).toEqual([0]);
+  });
+
+  it("does not bring back a spawn a save says is spent", () => {
+    const combat = new FieldCombat(FLOORED, 43);
+    combat.placeSpawns([on(60), on(80)], [0]);
+    run(combat, 6, pose(60 + COMBAT.spawnMin + 2, 69));
+    // The second one is out of range from here; the first is in range and already spent.
+    expect(combat.liveCreatures).toBe(0);
+  });
+
+  it("holds a spawn back rather than discarding it when the cap is full", () => {
+    // The cap guards against a pathological map, so it must defer and not delete. Asserted as the
+    // promise rather than as a headcount: what matters is that the spawns it skipped are still waiting
+    // afterwards, not exactly how many fitted on the first pass.
+    const combat = new FieldCombat(FLOORED, 44);
+    // Spaced a cell apart and stood off so that *every* one of them is inside the wake band. Spread any
+    // wider and the ones left over are out of range rather than over the ceiling, which would make this
+    // pass for the wrong reason.
+    const many = Array.from({ length: COMBAT.population + 5 }, (_unused, index) => on(50 + index));
+    combat.placeSpawns(many);
+    const drone = pose(50 - COMBAT.spawnMin - 0.5, 69);
+    run(combat, 8, drone);
+    expect(combat.liveCreatures).toBeLessThanOrEqual(COMBAT.population);
+    const firstWave = combat.spentSpawns.length;
+    expect(firstWave).toBeGreaterThan(4);
+    expect(firstWave).toBeLessThan(many.length);
+
+    // Clear the field and the ones that were held back arrive.
+    for (const creature of combat.roster) { creature.hp = 0; creature.state = "dead"; }
+    run(combat, COMBAT.corpseSeconds + 6, drone);
+    expect(combat.spentSpawns.length).toBeGreaterThan(firstWave);
+  });
+
+  it("spends a spawn whose ground has been mined away", () => {
+    // Nothing to stand on is a spawn spent by excavation. Left unspent it would be retried every pass
+    // for the rest of the expedition.
+    const empty: SolidityOracle = { solidAt: () => false };
+    const combat = new FieldCombat(empty, 45);
+    combat.placeSpawns([on(60)]);
+    run(combat, 4, pose(60 + COMBAT.spawnMin + 2, 69));
+    expect(combat.liveCreatures).toBe(0);
+    expect(combat.spentSpawns).toEqual([0]);
+  });
+
   it("forgets a fight the drone has walked a long way from", () => {
-    const combat = new FieldCombat(FLOORED, 11);
+    const combat = new FieldCombat(FLOORED, 46);
     combat.spawn(60, 69);
     expect(combat.liveCreatures).toBe(1);
-    advance(combat, 0.2, pose(60 + COMBAT.despawn + 5, 69));
+    run(combat, 0.2, pose(60 + COMBAT.despawn + 5, 69));
     expect(combat.roster.some((creature) => Math.hypot(creature.x - 60, creature.y - 69) < 5)).toBe(false);
   });
 });
@@ -209,56 +246,3 @@ describe("simulation time", () => {
   });
 });
 
-describe("groups", () => {
-  /** How many creatures appeared on each frame the spawner acted. */
-  function spawnBursts(combat: FieldCombat, seconds: number, drone: DronePose): number[] {
-    const bursts: number[] = [];
-    let before = combat.liveCreatures;
-    for (let elapsed = 0; elapsed < seconds; elapsed += DT) {
-      combat.update(DT, drone);
-      const added = combat.liveCreatures - before;
-      if (added > 0) bursts.push(added);
-      before = combat.liveCreatures;
-    }
-    return bursts;
-  }
-
-  it("sometimes brings more than one at a time", () => {
-    // One Bounder is a puzzle with one answer. Facing several at once is the stated difficulty of the
-    // enemy, and independent rolls almost never produce it -- so it is asked for explicitly, and this
-    // is the test that it happens at all.
-    const combat = new FieldCombat(BROKEN, 30);
-    const bursts = spawnBursts(combat, 60, pose(62, 62));
-    expect(bursts.length).toBeGreaterThan(2);
-    expect(bursts.some((burst) => burst > 1)).toBe(true);
-  });
-
-  it("still never puts one on screen, pack or not", () => {
-    // A pack member is placed by offset from its anchor, so it can drift inside the spawn ring unless
-    // it is checked -- and inside the ring means in front of the player.
-    const combat = new FieldCombat(BROKEN, 31);
-    const drone = pose(62, 62);
-    const seen = new Set<object>();
-    for (let elapsed = 0; elapsed < 60; elapsed += DT) {
-      combat.update(DT, drone);
-      for (const creature of combat.roster) {
-        if (seen.has(creature)) continue;
-        seen.add(creature);
-        const range = Math.hypot(creature.x - drone.x, creature.y - drone.y);
-        expect(range).toBeGreaterThanOrEqual(COMBAT.spawnMin - 1e-6);
-      }
-    }
-    expect(seen.size).toBeGreaterThan(4);
-  });
-
-  it("fills a cavern well past the old cap of four", () => {
-    const combat = new FieldCombat(BROKEN, 32);
-    let peak = 0;
-    for (let elapsed = 0; elapsed < 60; elapsed += DT) {
-      combat.update(DT, pose(62, 62));
-      peak = Math.max(peak, combat.liveCreatures);
-    }
-    expect(peak).toBeGreaterThan(6);
-    expect(peak).toBeLessThanOrEqual(COMBAT.population);
-  });
-});

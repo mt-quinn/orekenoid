@@ -58,6 +58,14 @@ export interface SaveData {
     history: WorldEdit[];
     /** Bit-packed discovery mask, base64. One bit per cell, row-major. */
     discovered: string;
+    /**
+     * Indices into the generated world's authored spawn list that have already fired.
+     *
+     * Optional, and absent means none. That is not a hole in the schema: a save written before encounters
+     * were placed is a save from a world where nothing had been spent, so the empty reading is the correct
+     * one and no migration is needed to say so.
+     */
+    spawnsSpent?: number[];
   };
   player: { x: number; y: number; heading: number };
   economy: EconomySnapshot;
@@ -191,6 +199,7 @@ function withDefaults(data: Partial<SaveData>): SaveData {
     world: {
       history: data.world?.history ?? [],
       discovered: data.world?.discovered ?? "",
+      spawnsSpent: Array.isArray(data.world?.spawnsSpent) ? data.world.spawnsSpent : [],
     },
     player: {
       x: data.player?.x ?? 0,

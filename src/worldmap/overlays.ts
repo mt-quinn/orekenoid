@@ -43,6 +43,9 @@ export const MARKER_STYLE: Record<Exclude<RoomMarker, "random">, { colour: numbe
   survey: { colour: 0x7ba2cf, name: "survey" },
   procedure: { colour: 0x7fc8d8, name: "procedure" },
   decor: { colour: 0x5d6a6e, name: "decor" },
+  // Danger, in the one colour the palette reserves for it. Warm like the markers that pay, because a
+  // Bounder carries ore and is therefore also a reason to go somewhere.
+  bounder: { colour: 0xff655b, name: "bounder" },
 };
 
 const TIER_STROKE = { hall: 0xf1eadb, chamber: 0xb9d2e8, feature: 0x6f7d82 } as const;

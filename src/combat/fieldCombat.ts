@@ -21,7 +21,7 @@ import {
   stepCreature,
   type Creature,
 } from "./creatures";
-import { hasLineOfSight } from "./sight";
+
 import {
   createBounderDisplay,
   createOreDisplay,
@@ -53,20 +53,24 @@ export const COMBAT = {
   /** Anything beyond this is forgotten, so a fight left behind stays left behind. */
   despawn: 42,
   /**
-   * How often a spawn brings friends, and how many.
+   * Groups are authored now, not rolled for.
    *
-   * Groups are the point rather than a flourish: one Bounder is a puzzle with one answer, and three
-   * arriving from the same direction is the situation the paddle's single deflecting face was designed
-   * to be difficult in. Left to independent rolls a pack is vanishingly unlikely, so it is asked for
-   * explicitly.
+   * There was a `packChance` here that gave two spawns in five a couple of companions placed by offset.
+   * With encounters placed at map creation the same thing is said better by the map: a chamber with three
+   * `bounder` markers in it is a chamber with three Bounders in it, every time, and the player can learn
+   * that a particular room is dangerous instead of discovering it is dangerous today.
    */
-  packChance: 0.4,
-  packMin: 2,
-  packMax: 4,
-  /** How far a pack's members are placed from its anchor, in cells. */
-  packSpread: 5.5,
-  /** Seconds between spawn attempts. */
-  spawnInterval: 0.8,
+  /** Seconds between checks for authored spawns coming into range. */
+  spawnInterval: 0.4,
+  /**
+   * How far from the drone an authored spawn wakes up, in cells.
+   *
+   * Wider than the ring the old spawner used, because these are placed and finite: the point is no
+   * longer to keep a population topped up near the player but to have what the map says is there be
+   * standing there by the time the player arrives. Still outside the viewport's half-diagonal, so
+   * nothing is ever seen appearing.
+   */
+  wakeRange: 34,
   /** How long a corpse is drawn while it sinks. */
   corpseSeconds: 0.45,
   /**
@@ -144,6 +148,27 @@ export class FieldCombat {
   private readonly ore: OrePiece[] = [];
   private readonly random: () => number;
   private spawnTimer = 0;
+  /** Every Bounder the map placed, in world cells. */
+  private spawns: ReadonlyArray<{ x: number; y: number }> = [];
+  /** Which of them have already fired. Spent is spent: nothing here is ever cleared. */
+  private readonly spent = new Set<number>();
+
+  /**
+   * Hand the roster of places over, and restore any already spent.
+   *
+   * `spentIndices` comes from the save. Without it a reload would repopulate every chamber the player
+   * had already cleared, which is the exact promise authored spawns exist to make.
+   */
+  placeSpawns(spawns: ReadonlyArray<{ x: number; y: number }>, spentIndices: readonly number[] = []): void {
+    this.spawns = spawns;
+    this.spent.clear();
+    for (const index of spentIndices) this.spent.add(index);
+  }
+
+  /** Which spawns have fired, for the save. */
+  get spentSpawns(): number[] {
+    return [...this.spent].sort((a, b) => a - b);
+  }
   /**
    * Whether the ambient spawner runs.
    *
@@ -190,7 +215,7 @@ export class FieldCombat {
       remaining -= step;
       this.updateCreatures(step, drone, events, isLit);
       this.updateOre(step, drone, events);
-      if (drone) this.maintainPopulation(step, drone);
+      if (drone) this.wakeSpawns(step, drone);
     }
     return events;
   }
@@ -334,64 +359,36 @@ export class FieldCombat {
    * Spawned out of sight where possible, at a distance in every case, and always attached to rock,
    * because a Bounder that is not on a surface has nothing to walk on and would sit where it was put.
    */
-  private maintainPopulation(dt: number, drone: DronePose): void {
+  /**
+   * Wake the authored spawns the drone has come near, once each, forever.
+   *
+   * This replaces a spawner that kept a population of eleven alive in a ring around the drone and
+   * replaced anything that died. That made the caverns busy and made them meaningless: a chamber could
+   * not be cleared, because walking away and coming back refilled it with strangers who had never been
+   * anywhere. What the map places is what exists, and a spawn that has fired is spent for the rest of
+   * the expedition.
+   */
+  private wakeSpawns(dt: number, drone: DronePose): void {
     if (!this.spawning) return;
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0) return;
     this.spawnTimer = COMBAT.spawnInterval;
-    if (this.liveCreatures >= COMBAT.population) return;
 
-    let fallback: { x: number; y: number; surface: number } | null = null;
-    for (let attempt = 0; attempt < 32; attempt++) {
-      const angle = this.random() * Math.PI * 2;
-      const distance = COMBAT.spawnMin + this.random() * (COMBAT.spawnMax - COMBAT.spawnMin);
-      const x = drone.x + Math.cos(angle) * distance;
-      const y = drone.y + Math.sin(angle) * distance;
-      const surface = this.surfaceNear(x, y);
-      if (surface === null) continue;
-      if (hasLineOfSight(this.world, x, y, drone.x, drone.y)) {
-        fallback ??= { x, y, surface };
-        continue;
-      }
-      this.spawnGroupAt(x, y, surface, drone);
-      return;
-    }
-    // Distance already guarantees off screen, so taking a visible spot beats never spawning -- which
-    // is what insisting on cover produced in wide open chambers.
-    if (fallback) this.spawnGroupAt(fallback.x, fallback.y, fallback.surface, drone);
-  }
-
-  /**
-   * Is there open ground here with rock to hold on to, and if so which way is the rock?
-   */
-  /**
-   * Spawn at a found spot, sometimes with company.
-   *
-   * The extras are placed by looking for their own footing near the anchor rather than by offsetting
-   * blindly: a Bounder dropped into open air slides along whatever surface its re-attach sweep finds
-   * first and arrives somewhere nobody chose. A member with nowhere to stand is simply not spawned, so
-   * a pack in a tight chamber comes out smaller instead of coming out wrong.
-   */
-  private spawnGroupAt(x: number, y: number, surface: number, drone: DronePose): void {
-    this.spawn(x, y, surface);
-    if (this.random() >= COMBAT.packChance) return;
-    const wanted = COMBAT.packMin + Math.floor(this.random() * (COMBAT.packMax - COMBAT.packMin + 1));
-    let placed = 1;
-    for (let attempt = 0; attempt < 24 && placed < wanted; attempt++) {
+    for (let index = 0; index < this.spawns.length; index++) {
+      if (this.spent.has(index)) continue;
+      const spawn = this.spawns[index];
+      const range = Math.hypot(spawn.x - drone.x, spawn.y - drone.y);
+      // Near enough to matter, far enough never to be seen arriving.
+      if (range > COMBAT.wakeRange || range < COMBAT.spawnMin) continue;
+      // The cap is a guard against a pathological map, so it defers rather than discards: a spawn held
+      // back here is *not* marked spent, and wakes on a later pass once there is room for it.
       if (this.liveCreatures >= COMBAT.population) return;
-      const angle = this.random() * Math.PI * 2;
-      const distance = 1.6 + this.random() * (COMBAT.packSpread - 1.6);
-      const px = x + Math.cos(angle) * distance;
-      const py = y + Math.sin(angle) * distance;
-      // A pack member is still a spawn, so it obeys the spawn ring too. Placed by offset alone, one
-      // could land five cells inside the minimum -- which is on screen, in front of the player, and the
-      // one thing the spawner is not allowed to do.
-      const range = Math.hypot(px - drone.x, py - drone.y);
-      if (range < COMBAT.spawnMin || range > COMBAT.spawnMax) continue;
-      const footing = this.surfaceNear(px, py);
-      if (footing === null) continue;
-      this.spawn(px, py, footing);
-      placed++;
+      const surface = this.surfaceNear(spawn.x, spawn.y);
+      // No footing means the player has mined the ground out from under it. That is a spawn spent by
+      // excavation rather than by combat, and it does not come back either.
+      this.spent.add(index);
+      if (surface === null) continue;
+      this.spawn(spawn.x, spawn.y, surface);
     }
   }
 

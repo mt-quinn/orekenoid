@@ -10,10 +10,10 @@ import type { Cell } from "../types";
 import { facetAxisAt, materialFor, resourceFor } from "./assign";
 import { carveCaves, carveCorridor, openComponents, type CaveField, type OpenComponent } from "./caves";
 import { CORNERSTONES, LANDING, LANDING_FEATURES, REQUIRED_NODES, stampCornerstones } from "./landmarks";
-import { DROP, LANDING_REGION, stampLandingArea } from "./landing";
+import { DROP, LANDING_REGION, LANDING_SPAWNS, stampLandingArea } from "./landing";
 import { bandAt, sampleRegion, type RegionSample } from "./regions";
 import { hashString, Rng } from "./rng";
-import { stampRooms, type RoomStampReport } from "./rooms";
+import { stampRooms, type RoomStampReport, type FeatureSite } from "./rooms";
 import { StructureMap } from "./structureMap";
 
 export interface GeneratedWorld {
@@ -22,6 +22,15 @@ export interface GeneratedWorld {
   cells: Cell[][];
   caves: CaveField;
   start: { x: number; y: number };
+  /**
+   * Every Bounder in the world, placed at map creation.
+   *
+   * Finite and one-shot. Encounters used to be a population the spawner maintained in a ring around
+   * the drone, which meant a cavern was never cleared -- walk away, come back, and there were four more.
+   * Authored placement is the opposite promise: what is here is what is here, and killing it empties the
+   * room for good.
+   */
+  spawns: ReadonlyArray<{ x: number; y: number }>;
   cornerstones: typeof CORNERSTONES;
   landingFeatures: typeof LANDING_FEATURES;
   /** Diagnostics from the verification pass, surfaced for tests and debug. */
@@ -227,6 +236,7 @@ export function generateWorld(seedLabel: string): GeneratedWorld {
     landingFeatures: LANDING_FEATURES,
     report,
     rooms,
+    spawns: collectSpawns(rooms.features, cells, rng),
   };
 }
 
@@ -566,4 +576,87 @@ function hasNearby(cells: Cell[][], cx: number, cy: number, radius: number, pred
     }
   }
   return false;
+}
+
+/**
+ * The world's Bounders: the Landing's authored three, plus every room that stamped a `bounder` marker.
+ *
+ * Offset half a cell in and a third of a cell up, which is where a Bounder rides above a floor -- placed
+ * on the cell corner it would start the frame detached and slide along whatever surface its re-attach
+ * sweep found first.
+ */
+function collectSpawns(
+  features: readonly FeatureSite[],
+  cells: Cell[][],
+  rng: Rng,
+): Array<{ x: number; y: number }> {
+  const spawns = LANDING_SPAWNS.map((spawn) => ({ x: spawn.x, y: spawn.y }));
+  for (const feature of features) {
+    if (feature.marker !== "bounder") continue;
+    spawns.push({ x: feature.x + 0.5, y: feature.y + 0.34 });
+  }
+  scatterSpawns(spawns, cells, rng);
+  return spawns;
+}
+
+/**
+ * How many Bounders each depth band gets outside the rooms, and how far apart they stand.
+ *
+ * Rooms alone are not enough. There are about fifty room placements in a world and only a fraction of
+ * their slots resolve to an encounter, which came out at six to ten Bounders for the entire mine -- so
+ * the rooms were occupied and every cavern between them was empty, which is the complaint authored
+ * spawns were supposed to answer rather than cause. These fill the caverns.
+ *
+ * Denser with depth, because depth is the difficulty axis and this is the cheapest honest way to spend
+ * it. `spacing` keeps them from piling into one chamber.
+ */
+const SCATTER_PER_BAND = [26, 34, 44, 52] as const;
+const SCATTER_SPACING = 7;
+
+/**
+ * Stand Bounders on cave floors, deterministically from the seed.
+ *
+ * A valid spot is an open cell with rock directly under it -- a Bounder is groundbound, and one placed in
+ * mid-air slides along whatever surface its re-attach sweep finds first and ends up somewhere nobody
+ * chose. The Landing is skipped entirely: its three are drawn by hand and the opening is not the place
+ * to be surprised.
+ */
+function scatterSpawns(spawns: Array<{ x: number; y: number }>, cells: Cell[][], rng: Rng): void {
+  const inLanding = (x: number, y: number) =>
+    x >= LANDING_REGION.x - 2 && x < LANDING_REGION.x + LANDING_REGION.width + 2
+    && y >= LANDING_REGION.y - 2 && y < LANDING_REGION.y + LANDING_REGION.height + 2;
+
+  const candidates: Array<{ x: number; y: number; band: number }> = [];
+  for (let y = 2; y < WORLD_ROWS - 2; y++) {
+    for (let x = 2; x < WORLD_COLS - 2; x++) {
+      if (inLanding(x, y)) continue;
+      if (cells[y][x].solid || !cells[y + 1][x].solid) continue;
+      // A little headroom, so nothing is placed in a one-cell crack it cannot leave.
+      if (cells[y - 1][x].solid) continue;
+      candidates.push({ x, y, band: Math.min(SCATTER_PER_BAND.length - 1, Math.floor(y / 36)) });
+    }
+  }
+
+  const wanted = [...SCATTER_PER_BAND];
+  // Shuffled rather than scanned in order, so spawns are spread over the map instead of filling the top
+  // of each band first. Fisher-Yates on the seeded generator, so a seed always gets the same mine.
+  for (let index = candidates.length - 1; index > 0; index--) {
+    const swap = Math.floor(rng.range(0, index + 1));
+    const held = candidates[index];
+    candidates[index] = candidates[swap];
+    candidates[swap] = held;
+  }
+
+  const spacing = SCATTER_SPACING * SCATTER_SPACING;
+  for (const candidate of candidates) {
+    if (wanted[candidate.band] <= 0) continue;
+    const tooClose = spawns.some((spawn) => {
+      const dx = spawn.x - (candidate.x + 0.5);
+      const dy = spawn.y - (candidate.y + 0.34);
+      return dx * dx + dy * dy < spacing;
+    });
+    if (tooClose) continue;
+    wanted[candidate.band]--;
+    spawns.push({ x: candidate.x + 0.5, y: candidate.y + 0.34 });
+  }
 }
